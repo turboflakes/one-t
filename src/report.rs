@@ -235,27 +235,29 @@ impl From<RawDataPara> for Report {
                 for peer in data.peers.iter() {
                     v.push((*peer.1.authority_index(), peer.1.points()));
                 }
-                let para_validator_within_group_rank = if let Some(p) =
-                    position(*authority_record.authority_index(), group_by_points(v))
-                {
-                    format!("{}", position_emoji(p, 4))
-                } else {
-                    "?".to_string()
-                };
+                
+                // Print Ranks
                 report.add_raw_text(format!(
-                    "‣ 🪂 Para validator rank → {} (All Groups)",
+                    "‣ 🪂 Para Val. Rank: {}//200 {}",
+                    data.para_validator_rank.unwrap_or_default() + 1,
                     position_emoji(data.para_validator_rank.unwrap_or_default(), 199)
                 ));
                 report.add_raw_text(format!(
-                    "‣ 🎓 Para validator rank → {} (Group {})",
-                    para_validator_within_group_rank,
-                    para_record.group().unwrap_or_default()
-                ));
-                report.add_raw_text(format!(
-                    "‣ 🤝 Group rank → {}",
+                    "‣ 🤝 Val. Group {} Rank: {}//40 {}",
+                    para_record.group().unwrap_or_default(),
+                    data.group_rank.unwrap_or_default() + 1,
                     position_emoji(data.group_rank.unwrap_or_default(), 39)
                 ));
 
+                let para_validator_group_rank =
+                    position(*authority_record.authority_index(), group_by_points(v));
+                report.add_raw_text(format!(
+                    "‣ 🎓 Para Val. Group Rank: {}//5 {}",
+                    para_validator_group_rank.unwrap_or_default() + 1,
+                    position_emoji(para_validator_group_rank.unwrap_or_default(), 4)
+                ));
+
+                // Print breakdown points
                 let mut clode_block = String::from("<pre><code>");
 
                 clode_block.push_str(&format!(
@@ -796,13 +798,13 @@ fn position(a: u32, v: Vec<Vec<(u32, u32)>>) -> Option<usize> {
 
 fn position_emoji(r: usize, last: usize) -> Random {
     if r == last {
-        return Random::Last(r + 1);
+        return Random::Last;
     }
     match r {
         0 => Random::First,
         1 => Random::Second,
         2 => Random::Third,
-        _ => Random::Other(r + 1),
+        _ => Random::Other,
     }
 }
 
@@ -810,8 +812,8 @@ enum Random {
     First,
     Second,
     Third,
-    Other(usize),
-    Last(usize),
+    Other,
+    Last,
 }
 
 impl std::fmt::Display for Random {
@@ -829,13 +831,13 @@ impl std::fmt::Display for Random {
                 let v = vec!["😊", "🙂", "🤔", "🙄", "🤨", "😐", "😑"];
                 write!(f, "🥉 {}", v[random_index(v.len())])
             }
-            Self::Other(r) => {
+            Self::Other => {
                 let v = vec!["😞", "😔", "😟", "😕", "🙁", "😣", "😖", "😢"];
-                write!(f, "{} {}", r, v[random_index(v.len())])
+                write!(f, "{}", v[random_index(v.len())])
             }
-            Self::Last(r) => {
+            Self::Last => {
                 let v = vec!["😫", "😩", "🥺", "😭", "😤", "😠", "😡", "🤬", "😱", "😰"];
-                write!(f, "{} {} ⚠️", r, v[random_index(v.len())])
+                write!(f, "{} ⚠️", v[random_index(v.len())])
             }
         }
     }
