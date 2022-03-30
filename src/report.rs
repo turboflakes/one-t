@@ -22,7 +22,7 @@ use crate::config::CONFIG;
 use crate::errors::OnetError;
 use crate::records::{AuthorityIndex, AuthorityRecord, ParaId, ParaRecord, Points};
 use crate::stats::mean;
-use log::{info, warn};
+use log::info;
 use rand::Rng;
 use regex::Regex;
 use std::{convert::TryInto, result::Result};
@@ -151,7 +151,6 @@ pub struct Report {
 
 impl Report {
     pub fn new() -> Report {
-        let config = CONFIG.clone();
         Report { body: Vec::new() }
     }
 

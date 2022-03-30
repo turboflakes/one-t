@@ -25,23 +25,17 @@ use crate::onet::{
     get_account_id_from_storage_key, get_subscribers, try_fetch_stashes_from_remote_url, Onet,
 };
 use crate::records::{
-    decode_authority_index, AddressKey, AuthoredBlocks, AuthorityIndex, AuthorityRecord,
-    BlockNumber, EpochIndex, EpochKey, EraIndex, ParaId, ParaRecord, ParaStats, Points, Records,
-    Subscribers,
+    decode_authority_index, AuthorityIndex, AuthorityRecord, EpochIndex, EpochKey, EraIndex,
+    ParaId, ParaRecord, ParaStats, Points, Records, Subscribers,
 };
 use crate::report::{
     Network, RawData, RawDataPara, Report, Session, Subset, Validator, Validators,
 };
 use async_recursion::async_recursion;
 use futures::StreamExt;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use std::{
-    collections::{BTreeMap, HashSet},
-    convert::{TryFrom, TryInto},
-    iter::FromIterator,
-    result::Result,
-    str::FromStr,
-    thread, time,
+    collections::BTreeMap, convert::TryInto, iter::FromIterator, result::Result, thread, time,
 };
 use subxt::{sp_runtime::AccountId32, DefaultConfig, DefaultExtra};
 
@@ -123,7 +117,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                     .await?;
 
                     // Network public report
-                    try_run_network_report(&onet, new_session_event.session_index).await?;
+                    try_run_network_report(new_session_event.session_index).await?;
                 }
 
                 // Update current block number
@@ -550,10 +544,7 @@ pub async fn run_para_report(
     Ok(())
 }
 
-pub async fn try_run_network_report(
-    onet: &Onet,
-    new_session_index: EpochIndex,
-) -> Result<(), OnetError> {
+pub async fn try_run_network_report(new_session_index: EpochIndex) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     // Verify if the remainder of the session_index divided by the session rate equals zero
     let remainder = new_session_index as f64 % config.session_rate as f64;

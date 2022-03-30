@@ -190,12 +190,14 @@ impl Onet {
 
     /// Spawn and restart on error
     pub fn spawn() {
+        let config = CONFIG.clone();
+        // Authenticate matrix and spawn lazy load commands
+        spawn_and_restart_matrix_lazy_load_on_error(config.chain_name.into());
+        // Subscribe on-chain events
         spawn_and_restart_on_error();
     }
 
     async fn subscribe_on_chain_events(&self) -> Result<(), OnetError> {
-        let config = CONFIG.clone();
-
         match self.runtime {
             SupportedRuntime::Polkadot => kusama::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
@@ -224,11 +226,9 @@ fn spawn_and_restart_matrix_lazy_load_on_error(chain: SupportedRuntime) {
 fn spawn_and_restart_on_error() {
     let t = async_std::task::spawn(async {
         let config = CONFIG.clone();
-        let t: Onet = Onet::new().await;
-        // Authenticate matrix and spawn lazy load commands
-        spawn_and_restart_matrix_lazy_load_on_error(t.runtime());
-        // Subscribe on chains events
         loop {
+            // Initialize a new instance
+            let t = Onet::new().await;
             if let Err(e) = t.subscribe_on_chain_events().await {
                 match e {
                     OnetError::SubscriptionFinished => warn!("{}", e),
@@ -245,8 +245,6 @@ fn spawn_and_restart_on_error() {
                     }
                 }
                 thread::sleep(time::Duration::from_secs(1));
-                // Initialize a new instance
-                let t = Onet::new().await;
             };
         }
     });

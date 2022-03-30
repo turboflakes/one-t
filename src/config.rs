@@ -42,6 +42,11 @@ lazy_static! {
     pub static ref CONFIG: Config = get_config();
 }
 
+/// provides default value for subscribers_path if ONET_SUBSCRIBERS_PATH env var is not set
+fn default_chain_name() -> String {
+    "kusama".into()
+}
+
 /// provides default value for interval if ONET_INTERVAL env var is not set
 fn default_interval() -> u64 {
     21600
@@ -74,6 +79,8 @@ fn default_session_rate() -> u32 {
 
 #[derive(Clone, Deserialize, Debug)]
 pub struct Config {
+    #[serde(default = "default_chain_name")]
+    pub chain_name: String,
     #[serde(default = "default_interval")]
     pub interval: u64,
     #[serde(default = "default_error_interval")]
@@ -237,10 +244,16 @@ fn get_config() -> Config {
 
     match matches.value_of("CHAIN") {
         Some("kusama") => {
-            env::set_var("ONET_SUBSTRATE_WS_URL", "wss://kusama-rpc.polkadot.io:443");
+            if env::var("ONET_SUBSTRATE_WS_URL").is_err() {
+                env::set_var("ONET_SUBSTRATE_WS_URL", "wss://kusama-rpc.polkadot.io:443");
+            }
+            env::set_var("ONET_CHAIN_NAME", "kusama");
         }
         Some("polkadot") => {
-            env::set_var("ONET_SUBSTRATE_WS_URL", "wss://rpc.polkadot.io:443");
+            if env::var("ONET_SUBSTRATE_WS_URL").is_err() {
+                env::set_var("ONET_SUBSTRATE_WS_URL", "wss://rpc.polkadot.io:443");
+            }
+            env::set_var("ONET_CHAIN_NAME", "polkadot");
         }
         _ => {
             if env::var("ONET_SUBSTRATE_WS_URL").is_err() {

@@ -19,14 +19,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 use crate::matrix::UserID;
-use crate::stats::mean;
 use codec::Decode;
 use log::info;
 use sp_consensus_babe::digests::PreDigest;
-use std::{
-    collections::BTreeMap, collections::HashMap, collections::HashSet, hash::Hash,
-    iter::FromIterator, str::FromStr,
-};
+use std::{collections::BTreeMap, collections::HashMap, collections::HashSet, hash::Hash};
 use subxt::{
     rpc::ChainBlock,
     sp_runtime::{traits::Header as HeaderT, AccountId32, Digest, DigestItem},
@@ -529,6 +525,7 @@ impl Subscribers {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_subscribers() {
@@ -549,10 +546,10 @@ mod tests {
         assert_eq!(subscribers.get(Some(EpochKey(era, 30))).is_none(), true);
         assert_eq!(
             subscribers.get(Some(EpochKey(era, epoch))),
-            Some(&vec![(AccountId32::from_str(
-                "DSov56qpKEc32ZjhCN1qTPmTYW3tM65wmsXVkrrtXV3ywpV"
-            )
-            .unwrap(), "@subscriber:matrix.org".to_string())])
+            Some(&vec![(
+                AccountId32::from_str("DSov56qpKEc32ZjhCN1qTPmTYW3tM65wmsXVkrrtXV3ywpV").unwrap(),
+                "@subscriber:matrix.org".to_string()
+            )])
         );
 
         subscribers.start_new_epoch(era, epoch + 1);

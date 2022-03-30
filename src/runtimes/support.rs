@@ -27,6 +27,16 @@ pub enum SupportedRuntime {
     Kusama,
 }
 
+impl From<String> for SupportedRuntime {
+    fn from(v: String) -> Self {
+        match v.as_str() {
+            "polkadot" => Self::Polkadot,
+            "kusama" => Self::Kusama,
+            _ => unimplemented!("Chain prefix not supported"),
+        }
+    }
+}
+
 impl From<ChainPrefix> for SupportedRuntime {
     fn from(v: ChainPrefix) -> Self {
         match v {

@@ -26,10 +26,7 @@ use async_recursion::async_recursion;
 use base64::encode;
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap, fs, fs::OpenOptions, io::Write, path::Path, result::Result, str::FromStr,
-    thread, time,
-};
+use std::{fs, fs::OpenOptions, io::Write, path::Path, result::Result, str::FromStr, thread, time};
 use subxt::sp_runtime::AccountId32;
 use url::form_urlencoded::byte_serialize;
 
@@ -441,7 +438,6 @@ impl Matrix {
     async fn create_private_room(&self, user_id: &str) -> Result<Option<Room>, MatrixError> {
         match &self.access_token {
             Some(access_token) => {
-                let config = CONFIG.clone();
                 let client = self.client.clone();
                 let room: Room = Room::new_private(self.chain, user_id);
                 let req = CreateRoomRequest {
