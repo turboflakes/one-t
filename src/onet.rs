@@ -20,7 +20,7 @@
 // SOFTWARE.
 use crate::config::{Config, CONFIG};
 use crate::errors::OnetError;
-use crate::matrix::{Matrix, UserID};
+use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
 use crate::runtimes::{
     kusama,
     support::{ChainPrefix, SupportedRuntime},
@@ -150,10 +150,6 @@ impl Onet {
             client,
             matrix,
         }
-    }
-
-    pub fn runtime(&self) -> SupportedRuntime {
-        self.runtime
     }
 
     pub fn client(&self) -> &Client<DefaultConfig> {
@@ -287,8 +283,9 @@ pub fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {
 
 pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID)>, OnetError> {
     let config = CONFIG.clone();
+    let subscribers_filename = format!("{}{}", config.data_path, MATRIX_SUBSCRIBERS_FILENAME);
     let mut out: Vec<(AccountId32, UserID)> = Vec::new();
-    let file = File::open(&config.subscribers_path)?;
+    let file = File::open(&subscribers_filename)?;
 
     // Read each subscriber (stash,user-id) and parse it to account
     for line in BufReader::new(file).lines() {

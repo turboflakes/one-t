@@ -18,7 +18,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-
+#![allow(dead_code)]
 use crate::config::CONFIG;
 use crate::errors::MatrixError;
 use crate::runtimes::support::SupportedRuntime;
@@ -33,6 +33,7 @@ use url::form_urlencoded::byte_serialize;
 const MATRIX_URL: &str = "https://matrix.org/_matrix/client/r0";
 const MATRIX_BOT_NAME: &str = "ONE-T";
 const MATRIX_NEXT_BATCH_FILENAME: &str = ".next_batch";
+pub const MATRIX_SUBSCRIBERS_FILENAME: &str = ".subscribers";
 
 type AccessToken = String;
 type SyncToken = String;
@@ -338,6 +339,8 @@ impl Matrix {
 
     pub async fn lazy_load_and_process_commands(&self) -> Result<(), MatrixError> {
         let config = CONFIG.clone();
+        let subscribers_filename = format!("{}{}", config.data_path, MATRIX_SUBSCRIBERS_FILENAME);
+        let next_batch_filename = format!("{}{}", config.data_path, MATRIX_NEXT_BATCH_FILENAME);
         while let Some(token) = self.get_next_or_sync().await? {
             if let Some((commands, _, next_token)) =
                 self.get_commands_from_public_room(&token).await?
@@ -350,8 +353,8 @@ impl Matrix {
                             if let Ok(_) = AccountId32::from_str(&stash) {
                                 // Write stash,user in subscribers file if doesn't already exist
                                 let subscriber = format!("{stash},{who}\n");
-                                if Path::new(&config.subscribers_path).exists() {
-                                    let subscribers = fs::read_to_string(&config.subscribers_path)?;
+                                if Path::new(&subscribers_filename).exists() {
+                                    let subscribers = fs::read_to_string(&subscribers_filename)?;
                                     let mut x = 0;
                                     for _ in subscribers.lines() {
                                         x += 1;
@@ -368,11 +371,11 @@ impl Matrix {
                                     if !subscribers.contains(&subscriber) {
                                         let mut file = OpenOptions::new()
                                             .append(true)
-                                            .open(&config.subscribers_path)?;
+                                            .open(&subscribers_filename)?;
                                         file.write_all(subscriber.as_bytes())?;
                                     }
                                 } else {
-                                    fs::write(&config.subscribers_path, subscriber)?;
+                                    fs::write(&subscribers_filename, subscriber)?;
                                 }
                                 let message = format!("📥 {who} subscribed report for {stash}");
                                 self.send_public_message(&message, None).await?;
@@ -384,11 +387,13 @@ impl Matrix {
                         Commands::Unsubscribe(stash, who) => {
                             // Remove stash,user from subscribers file
                             let subscriber = format!("{stash},{who}\n");
-                            if Path::new(&config.subscribers_path).exists() {
-                                let subscribers = fs::read_to_string(&config.subscribers_path)?;
+                            let subscribers_filename =
+                                format!("{}{}", config.data_path, MATRIX_SUBSCRIBERS_FILENAME);
+                            if Path::new(&subscribers_filename).exists() {
+                                let subscribers = fs::read_to_string(&subscribers_filename)?;
                                 if subscribers.contains(&subscriber) {
                                     fs::write(
-                                        &config.subscribers_path,
+                                        &subscribers_filename,
                                         subscribers.replace(&subscriber, ""),
                                     )?;
                                     let message = format!("🗑️ {who} unsubscribed {stash} report");
@@ -400,7 +405,7 @@ impl Matrix {
                     }
                 }
                 // Cache next token
-                fs::write(MATRIX_NEXT_BATCH_FILENAME, next_token)?;
+                fs::write(&next_batch_filename, next_token)?;
             }
             thread::sleep(time::Duration::from_secs(6));
         }
@@ -522,8 +527,10 @@ impl Matrix {
     // Sync
     // https://spec.matrix.org/v1.2/client-server-api/#syncing
     async fn get_next_or_sync(&self) -> Result<Option<SyncToken>, MatrixError> {
+        let config = CONFIG.clone();
+        let next_batch_filename = format!("{}{}", config.data_path, MATRIX_NEXT_BATCH_FILENAME);
         // Try to read first cached token from file
-        match fs::read_to_string(MATRIX_NEXT_BATCH_FILENAME) {
+        match fs::read_to_string(&next_batch_filename) {
             Ok(token) => Ok(Some(token)),
             _ => {
                 match &self.access_token {
@@ -537,7 +544,7 @@ impl Matrix {
                             reqwest::StatusCode::OK => {
                                 let response = res.json::<SyncResponse>().await?;
                                 // Persist token to file in case we need to restore commands from previously attempt
-                                fs::write(MATRIX_NEXT_BATCH_FILENAME, &response.next_batch)
+                                fs::write(&next_batch_filename, &response.next_batch)
                                     .expect("Unable to write .matrix.next_batch file");
                                 Ok(Some(response.next_batch))
                             }

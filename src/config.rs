@@ -57,9 +57,9 @@ fn default_error_interval() -> u64 {
     5
 }
 
-/// provides default value for subscribers_path if ONET_SUBSCRIBERS_PATH env var is not set
-fn default_subscribers_path() -> String {
-    ".subscribers".into()
+/// provides default value for data_path if ONET_DATA_PATH env var is not set
+fn default_data_path() -> String {
+    "./".into()
 }
 
 /// provides default value for maximum_subscribers if ONET_MAXIMUM_SUBSCRIBERS env var is not set
@@ -86,8 +86,8 @@ pub struct Config {
     #[serde(default = "default_error_interval")]
     pub error_interval: u64,
     pub substrate_ws_url: String,
-    #[serde(default = "default_subscribers_path")]
-    pub subscribers_path: String,
+    #[serde(default = "default_data_path")]
+    pub data_path: String,
     #[serde(default = "default_maximum_subscribers")]
     pub maximum_subscribers: u32,
     #[serde(default = "default_maximum_history_eras")]
@@ -131,15 +131,6 @@ fn get_config() -> Config {
         .long("debug")
         .help("Prints debug information verbosely.")
       )
-    .arg(
-      Arg::with_name("subscribers-path")
-        .long("subscribers-path")
-        .takes_value(true)
-        .value_name("FILE")
-        .help(
-          "Sets a custom subscribers file path. The subscribers file contains stashes and matrix user ids that have subscribed to receive the report.",
-        ),
-    )
     .arg(
       Arg::with_name("maximum-subscribers")
             .long("maximum-subscribers")
@@ -225,7 +216,16 @@ fn get_config() -> Config {
         .value_name("FILE")
         .default_value(".env")
         .help(
-          "Sets a custom config file path. The config file contains 'onet' configuration variables.",
+          "Sets a custom config file path. The config file contains 'one-t' configuration variables.",
+        ),
+    )
+    .arg(
+      Arg::with_name("data-path")
+        .long("data-path")
+        .takes_value(true)
+        .default_value("./")
+        .help(
+          "Sets a custom directory path to store data files. The data directory contains 'one-t' data files.",
         ),
     )
     .get_matches();
@@ -262,8 +262,8 @@ fn get_config() -> Config {
         }
     }
 
-    if let Some(subscribers_path) = matches.value_of("subscribers-path") {
-        env::set_var("ONET_SUBSCRIBERS_PATH", subscribers_path);
+    if let Some(data_path) = matches.value_of("data-path") {
+        env::set_var("ONET_DATA_PATH", data_path);
     }
 
     if let Some(substrate_ws_url) = matches.value_of("substrate-ws-url") {

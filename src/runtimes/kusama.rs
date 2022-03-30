@@ -123,7 +123,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                 // Update current block number
                 records.set_current_block_number(block_number.into());
 
-                track_records(&onet, authority_index, &mut records, &subscribers).await?;
+                track_records(&onet, authority_index, &mut records).await?;
             }
         }
     }
@@ -332,7 +332,6 @@ pub async fn track_records(
     onet: &Onet,
     authority_index: AuthorityIndex,
     records: &mut Records,
-    subscribers: &Subscribers,
 ) -> Result<(), OnetError> {
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
