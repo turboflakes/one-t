@@ -543,16 +543,16 @@ mod tests {
         // Subscribe
         let account =
             AccountId32::from_str("DSov56qpKEc32ZjhCN1qTPmTYW3tM65wmsXVkrrtXV3ywpV").unwrap();
-        subscribers.subscribe(account);
+        subscribers.subscribe(account, "@subscriber:matrix.org".to_string());
         assert_eq!(subscribers.get(None).is_some(), true);
         assert_eq!(subscribers.get(Some(EpochKey(era, epoch))).is_some(), true);
         assert_eq!(subscribers.get(Some(EpochKey(era, 30))).is_none(), true);
         assert_eq!(
             subscribers.get(Some(EpochKey(era, epoch))),
-            Some(&vec![AccountId32::from_str(
+            Some(&vec![(AccountId32::from_str(
                 "DSov56qpKEc32ZjhCN1qTPmTYW3tM65wmsXVkrrtXV3ywpV"
             )
-            .unwrap()])
+            .unwrap(), "@subscriber:matrix.org".to_string())])
         );
 
         subscribers.start_new_epoch(era, epoch + 1);
