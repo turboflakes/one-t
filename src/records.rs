@@ -38,7 +38,6 @@ pub type EraIndex = u32;
 pub type EpochIndex = u32;
 pub type GroupIndex = u32;
 pub type CoreIndex = u32;
-pub type ValidatorIndex = u32;
 pub type ParaId = u32;
 pub type Points = u32;
 pub type AuthoredBlocks = u32;
@@ -444,13 +443,17 @@ impl ParaRecord {
     pub fn get_para_id_stats(&self, para_id: ParaId) -> Option<&ParaStats> {
         self.para_stats.get(&para_id)
     }
+
+    pub fn para_stats(&self) -> &BTreeMap<ParaId, ParaStats> {
+        &self.para_stats
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ParaStats {
-    points: Points,
-    core_assignments: u32,
-    authored_blocks: AuthoredBlocks,
+    pub points: Points,
+    pub core_assignments: u32,
+    pub authored_blocks: AuthoredBlocks,
 }
 
 impl ParaStats {

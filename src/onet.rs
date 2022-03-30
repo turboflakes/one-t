@@ -237,7 +237,9 @@ fn spawn_and_restart_on_error() {
                         error!("{}", e);
                         let message = format!("On hold for {} min!", config.error_interval);
                         let formatted_message = format!("<br/>🚨 An error was raised -> <code>onet</code> on hold for {} min while rescue is on the way 🚁 🚒 🚑 🚓<br/><br/>", config.error_interval);
-                        t.send_public_message(&message, &formatted_message).await.unwrap();
+                        t.send_public_message(&message, &formatted_message)
+                            .await
+                            .unwrap();
                         thread::sleep(time::Duration::from_secs(60 * config.error_interval));
                         continue;
                     }
@@ -249,11 +251,6 @@ fn spawn_and_restart_on_error() {
         }
     });
     async_std::task::block_on(t);
-}
-
-fn skip_serializing_stash<String: std::fmt::Display + std::fmt::Debug>(stash: &String) -> bool {
-    warn!("skip_serializing_stash_ {:?}", stash);
-    true
 }
 
 type ValidatorsFromTVP = Vec<ValidatorFromTVP>;

@@ -139,6 +139,8 @@ pub struct RawDataPara {
     pub authority_record: Option<AuthorityRecord>,
     pub para_record: Option<ParaRecord>,
     pub parachains: Vec<ParaId>,
+    pub para_validator_rank: Option<usize>,
+    pub group_rank: Option<usize>,
 }
 
 type Body = Vec<String>;
@@ -199,12 +201,14 @@ impl From<RawDataPara> for Report {
         // Network info
         report.add_break();
         report.add_raw_text(format!(
-            "📮 <b>{}</b> → Validator performance report for epoch {} era {}",
-            data.network.name, data.session.current_session_index, data.session.active_era_index
+            "📮 Validator performance report → <b>{}//{}//{}</b>",
+            data.network.name, data.session.active_era_index, data.session.current_session_index
         ));
         report.add_raw_text(format!(
-            "<i>Points recorded from block #{} to block #{}</i>",
-            data.session.start_block, data.session.end_block
+            "<i>{} blocks recorded from #{} to #{}</i>",
+            data.session.end_block - data.session.start_block,
+            data.session.start_block,
+            data.session.end_block
         ));
         report.add_break();
 
@@ -232,15 +236,26 @@ impl From<RawDataPara> for Report {
                 for peer in data.peers.iter() {
                     v.push((*peer.1.authority_index(), peer.1.points()));
                 }
-                let position_str = if let Some(p) =
+                let para_validator_within_group_rank = if let Some(p) =
                     position(*authority_record.authority_index(), group_by_points(v))
                 {
-                    format!(" → {}", position_emoji(p))
+                    format!("{}", position_emoji(p, 4))
                 } else {
-                    "".to_string()
+                    "?".to_string()
                 };
-                // TODO add group rank!
-                report.add_raw_text(format!("‣ 🪂 Para validator rank{}", position_str));
+                report.add_raw_text(format!(
+                    "‣ 🪂 Para validator rank → {} (All Groups)",
+                    position_emoji(data.para_validator_rank.unwrap_or_default(), 199)
+                ));
+                report.add_raw_text(format!(
+                    "‣ 🎓 Para validator rank → {} (Group {})",
+                    para_validator_within_group_rank,
+                    para_record.group().unwrap_or_default()
+                ));
+                report.add_raw_text(format!(
+                    "‣ 🤝 Group rank → {}",
+                    position_emoji(data.group_rank.unwrap_or_default(), 39)
+                ));
 
                 let mut clode_block = String::from("<pre><code>");
 
@@ -358,11 +373,11 @@ impl From<RawData> for Report {
         // Network info
         report.add_break();
         report.add_raw_text(format!(
-            "⛓️ <b>{}</b> -> Performance report at era {}",
-            data.network.name, data.session.active_era_index
+            "📒 Network on-chain report → <b>{}//{}</b>",
+            data.network.name, data.session.active_era_index,
         ));
         report.add_raw_text(format!(
-            "<i>TVP validators are shown in bold (<b>TVP</b> · non-tvp · 100% Commission).</i>",
+            "<i>TVP validators are shown in bold (<b>TVP</b> • non-tvp • 100% Commission).</i>",
         ));
 
         // --- Specific report sections here [START] -->
@@ -411,7 +426,7 @@ fn total_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a
         .len();
 
     report.add_raw_text(format!(
-        "{} validators in total {}: <b>{} ({:.2}%)</b> · {} ({:.2}%) · {} ({:.2}%)",
+        "{} validators in total {}: <b>{} ({:.2}%)</b> • {} ({:.2}%) • {} ({:.2}%)",
         data.network.name,
         total,
         total_tvp,
@@ -455,7 +470,7 @@ fn active_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'
         .len();
 
     report.add_raw_text(format!(
-        "Currently active {} ({:.2}%): <b>{} ({:.2}%)</b> · {} ({:.2}%) · {} ({:.2}%)",
+        "Currently active {} ({:.2}%): <b>{} ({:.2}%)</b> • {} ({:.2}%) • {} ({:.2}%)",
         total_active,
         (total_active as f32 / total as f32) * 100.0,
         total_tvp,
@@ -500,7 +515,7 @@ fn own_stake_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
     let avg_c100: u128 = c100.iter().sum::<u128>() / c100.len() as u128;
 
     report.add_raw_text(format!(
-        "Average, Minimum and Maximum validator self stake in {}: <b>{} [{:.2}, {:.0}]</b> · {} [{:.2}, {:.0}] · {} [{:.2}, {:.0}]",
+        "Average, Minimum and Maximum validator self stake in {}: <b>{} [{:.2}, {:.0}]</b> • {} [{:.2}, {:.0}] • {} [{:.2}, {:.0}]",
         data.network.token_symbol,
         avg_tvp / 10u128.pow(data.network.token_decimals as u32),
         *tvp.iter().min().unwrap() as f64 / 10u128.pow(data.network.token_decimals as u32) as f64,
@@ -513,7 +528,7 @@ fn own_stake_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         *c100.iter().max().unwrap() as f64 / 10u128.pow(data.network.token_decimals as u32) as f64
     ));
     report.add_raw_text(format!(
-        "Validator contributions for network security: <b>{:.2}%</b> · {:.2}% · {:.2}%",
+        "Validator contributions for network security: <b>{:.2}%</b> • {:.2}% • {:.2}%",
         (tvp.iter().sum::<u128>() as f64 / total as f64) * 100.0,
         (non_tvp.iter().sum::<u128>() as f64 / total as f64) * 100.0,
         (c100.iter().sum::<u128>() as f64 / total as f64) * 100.0,
@@ -556,7 +571,7 @@ fn oversubscribed_validators_report<'a>(report: &'a mut Report, data: &'a RawDat
         .len();
 
     report.add_raw_text(format!(
-        "Oversubscribed {} ({:.2}%): <b>{} ({:.2}%)</b> · {} ({:.2}%) · {} ({:.2}%)",
+        "Oversubscribed {} ({:.2}%): <b>{} ({:.2}%)</b> • {} ({:.2}%) • {} ({:.2}%)",
         total_over,
         (total_over as f32 / total as f32) * 100.0,
         total_tvp,
@@ -613,7 +628,7 @@ fn avg_points_collected_report<'a>(report: &'a mut Report, data: &'a RawData) ->
     let avg_total_eras_points_c100 = total_eras_points_c100.1 / total_eras_points_c100.0;
 
     report.add_raw_text(format!(
-        "On average {} points/validator/era collected in the last {} eras: <b>{} {}</b> · {} {} · {} {}",
+        "On average {} points/validator/era collected in the last {} eras: <b>{} {}</b> • {} {} • {} {}",
         avg_total_eras_points,
         config.maximum_history_eras,
         avg_total_eras_points_tvp,
@@ -673,7 +688,7 @@ fn inclusion_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         .len();
 
     report.add_raw_text(format!(
-        "Participation in the last {} eras: <b>{:.2}%</b> · {:.2}% · {:.2}%",
+        "Participation in the last {} eras: <b>{:.2}%</b> • {:.2}% • {:.2}%",
         config.maximum_history_eras,
         (total_tvp_with_points as f32 / total_tvp as f32) * 100.0,
         (total_non_tvp_with_points as f32 / total_non_tvp as f32) * 100.0,
@@ -780,13 +795,15 @@ fn position(a: u32, v: Vec<Vec<(u32, u32)>>) -> Option<usize> {
     None
 }
 
-fn position_emoji(r: usize) -> Random {
+fn position_emoji(r: usize, last: usize) -> Random {
+    if r == last {
+        return Random::Last(r + 1);
+    }
     match r {
         0 => Random::First,
         1 => Random::Second,
         2 => Random::Third,
-        3 => Random::Fourth,
-        _ => Random::Other,
+        _ => Random::Other(r + 1),
     }
 }
 
@@ -794,8 +811,8 @@ enum Random {
     First,
     Second,
     Third,
-    Fourth,
-    Other,
+    Other(usize),
+    Last(usize),
 }
 
 impl std::fmt::Display for Random {
@@ -813,15 +830,13 @@ impl std::fmt::Display for Random {
                 let v = vec!["😊", "🙂", "🤔", "🙄", "🤨", "😐", "😑"];
                 write!(f, "🥉 {}", v[random_index(v.len())])
             }
-            Self::Fourth => {
-                let v = vec!["😞", "😔", "😟", "😕", "🙁", "😣", "😖"];
-                write!(f, "⓸ {}", v[random_index(v.len())])
+            Self::Other(r) => {
+                let v = vec!["😞", "😔", "😟", "😕", "🙁", "😣", "😖", "😢"];
+                write!(f, "{} {}", r, v[random_index(v.len())])
             }
-            Self::Other => {
-                let v = vec![
-                    "😫", "😩", "🥺", "😢", "😭", "😤", "😠", "😡", "🤬", "😱", "😰",
-                ];
-                write!(f, "⓹ {} ⚠️", v[random_index(v.len())])
+            Self::Last(r) => {
+                let v = vec!["😫", "😩", "🥺", "😭", "😤", "😠", "😡", "🤬", "😱", "😰"];
+                write!(f, "{} {} ⚠️", r, v[random_index(v.len())])
             }
         }
     }

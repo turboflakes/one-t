@@ -57,6 +57,11 @@ fn default_subscribers_path() -> String {
     ".subscribers".into()
 }
 
+/// provides default value for maximum_subscribers if ONET_MAXIMUM_SUBSCRIBERS env var is not set
+fn default_maximum_subscribers() -> u32 {
+    1000
+}
+
 /// provides default value for maximum_eras if ONET_MAXIMUM_HISTORY_ERAS env var is not set
 fn default_maximum_history_eras() -> u32 {
     8
@@ -76,6 +81,8 @@ pub struct Config {
     pub substrate_ws_url: String,
     #[serde(default = "default_subscribers_path")]
     pub subscribers_path: String,
+    #[serde(default = "default_maximum_subscribers")]
+    pub maximum_subscribers: u32,
     #[serde(default = "default_maximum_history_eras")]
     pub maximum_history_eras: u32,
     #[serde(default = "default_session_rate")]
@@ -125,6 +132,12 @@ fn get_config() -> Config {
         .help(
           "Sets a custom subscribers file path. The subscribers file contains stashes and matrix user ids that have subscribed to receive the report.",
         ),
+    )
+    .arg(
+      Arg::with_name("maximum-subscribers")
+            .long("maximum-subscribers")
+            .takes_value(true)
+            .help("Maximum number of subscribers allowed. [default: 1000]")
     )
     .arg(
       Arg::with_name("matrix-public-room")
@@ -242,6 +255,10 @@ fn get_config() -> Config {
 
     if let Some(substrate_ws_url) = matches.value_of("substrate-ws-url") {
         env::set_var("ONET_SUBSTRATE_WS_URL", substrate_ws_url);
+    }
+
+    if let Some(maximum_subscribers) = matches.value_of("maximum-subscribers") {
+        env::set_var("ONET_MAXIMUM_SUBSCRIBERS", maximum_subscribers);
     }
 
     if let Some(maximum_history_eras) = matches.value_of("maximum-history-eras") {

@@ -355,6 +355,19 @@ impl Matrix {
                                 let subscriber = format!("{stash},{who}\n");
                                 if Path::new(&config.subscribers_path).exists() {
                                     let subscribers = fs::read_to_string(&config.subscribers_path)?;
+                                    let mut x = 0;
+                                    for _ in subscribers.lines() {
+                                        x += 1;
+                                    }
+                                    if x == config.maximum_subscribers {
+                                        let message = format!(
+                                            "⛔ The maximum of subscribers have been reached → {}",
+                                            config.maximum_subscribers
+                                        );
+                                        self.send_public_message(&message, None).await?;
+                                        continue;
+                                    }
+
                                     if !subscribers.contains(&subscriber) {
                                         let mut file = OpenOptions::new()
                                             .append(true)
@@ -365,10 +378,10 @@ impl Matrix {
                                     fs::write(&config.subscribers_path, subscriber)?;
                                 }
                                 let message = format!("📥 {who} subscribed report for {stash}");
-                                self.send_public_message(&message, None).await;
+                                self.send_public_message(&message, None).await?;
                             } else {
                                 let message = format!("{who} supplied an invalid address.");
-                                self.send_public_message(&message, None).await;
+                                self.send_public_message(&message, None).await?;
                             }
                         }
                         Commands::Unsubscribe(stash, who) => {
@@ -382,7 +395,7 @@ impl Matrix {
                                         subscribers.replace(&subscriber, ""),
                                     )?;
                                     let message = format!("🗑️ {who} unsubscribed {stash} report");
-                                    self.send_public_message(&message, None).await;
+                                    self.send_public_message(&message, None).await?;
                                 }
                             }
                         }

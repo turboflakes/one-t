@@ -26,17 +26,19 @@ use crate::onet::{
 };
 use crate::records::{
     decode_authority_index, AddressKey, AuthoredBlocks, AuthorityIndex, AuthorityRecord,
-    BlockNumber, EpochIndex, EpochKey, EraIndex, ParaId, ParaRecord, Points, Records, Subscribers,
+    BlockNumber, EpochIndex, EpochKey, EraIndex, ParaId, ParaRecord, ParaStats, Points, Records,
+    Subscribers,
 };
 use crate::report::{
     Network, RawData, RawDataPara, Report, Session, Subset, Validator, Validators,
 };
 use async_recursion::async_recursion;
 use futures::StreamExt;
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use std::{
     collections::{BTreeMap, HashSet},
     convert::{TryFrom, TryInto},
+    iter::FromIterator,
     result::Result,
     str::FromStr,
     thread, time,
@@ -108,23 +110,26 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                 let block_number = signed_block.block.header.number;
                 info!("Finalized block #{block_number} received");
 
-                let new_session_event = events.find_first::<NewSession>()?;
+                if let Some(new_session_event) = events.find_first::<NewSession>()? {
+                    info!("{:?}", new_session_event);
 
-                track_new_session_event(
-                    &onet,
-                    block_number,
-                    new_session_event,
-                    &mut subscribers,
-                    &mut records,
-                )
-                .await?;
+                    switch_new_session(
+                        &onet,
+                        block_number,
+                        new_session_event.session_index,
+                        &mut subscribers,
+                        &mut records,
+                    )
+                    .await?;
+
+                    // Network public report
+                    try_run_network_report(&onet, new_session_event.session_index).await?;
+                }
 
                 // Update current block number
                 records.set_current_block_number(block_number.into());
 
                 track_records(&onet, authority_index, &mut records, &subscribers).await?;
-
-                // try_run_report(&onet, ev).await?;
             }
         }
     }
@@ -268,66 +273,64 @@ pub async fn initialize_records(onet: &Onet, records: &mut Records) -> Result<()
     Ok(())
 }
 
-pub async fn track_new_session_event<'a>(
+pub async fn switch_new_session(
     onet: &Onet,
     block_number: u32,
-    event: Option<NewSession>,
+    new_session_index: EpochIndex,
     subscribers: &mut Subscribers,
     records: &mut Records,
 ) -> Result<(), OnetError> {
-    if let Some(ev) = event {
-        let client = onet.client();
-        let api = client.clone().to_runtime_api::<Api>();
+    let client = onet.client();
+    let api = client.clone().to_runtime_api::<Api>();
 
-        let previous_era_index = records.current_era().clone();
+    let previous_era_index = records.current_era().clone();
 
-        // Fetch active era index
-        let current_era_index = match api.storage().staking().active_era(None).await? {
-            Some(active_era_info) => active_era_info.index,
-            None => return Err("Active era not available".into()),
-        };
+    // Fetch active era index
+    let current_era_index = match api.storage().staking().active_era(None).await? {
+        Some(active_era_info) => active_era_info.index,
+        None => return Err("Active era not available".into()),
+    };
 
-        // Update records current Era and Epoch
-        records.start_new_epoch(current_era_index, ev.session_index);
-        // Update records current block number
-        records.set_current_block_number(block_number.into());
+    // Update records current Era and Epoch
+    records.start_new_epoch(current_era_index, new_session_index);
+    // Update records current block number
+    records.set_current_block_number(block_number.into());
 
-        // Update subscribers current Era and Epoch
-        subscribers.start_new_epoch(current_era_index, ev.session_index);
+    // Update subscribers current Era and Epoch
+    subscribers.start_new_epoch(current_era_index, new_session_index);
 
-        if let Ok(subs) = get_subscribers() {
-            for (account, user_id) in subs.iter() {
-                subscribers.subscribe(account.clone(), user_id.to_string());
-            }
+    if let Ok(subs) = get_subscribers() {
+        for (account, user_id) in subs.iter() {
+            subscribers.subscribe(account.clone(), user_id.to_string());
         }
-
-        // Initialize records for new
-        initialize_records(&onet, records).await?;
-
-        // Send report from previous session
-        let era_index: u32 = if current_era_index != previous_era_index {
-            previous_era_index
-        } else {
-            current_era_index
-        };
-
-        let records_cloned = records.clone();
-        let subscribers_cloned = subscribers.clone();
-        async_std::task::spawn(async move {
-            let t: Onet = Onet::new().await;
-            try_run_para_report(
-                &t,
-                era_index,
-                records_cloned.current_epoch() - 1,
-                &records_cloned,
-                &subscribers_cloned,
-            )
-            .await
-            .unwrap();
-        });
-
-        // TODO: if new era clear previous era sessions from cache
     }
+
+    // Initialize records for new
+    initialize_records(&onet, records).await?;
+
+    // Send report from previous session
+    let era_index: u32 = if current_era_index != previous_era_index {
+        previous_era_index
+    } else {
+        current_era_index
+    };
+
+    let records_cloned = records.clone();
+    let subscribers_cloned = subscribers.clone();
+    async_std::task::spawn(async move {
+        let epoch_index = records_cloned.current_epoch() - 1;
+        if let Err(e) =
+            run_para_report(era_index, epoch_index, &records_cloned, &subscribers_cloned).await
+        {
+            error!(
+                "Para report error for era_index: {} epoch_index: {} error: {:?}",
+                era_index, epoch_index, e
+            );
+        }
+    });
+
+    // TODO: if new era clear previous era sessions from cache
+
     Ok(())
 }
 
@@ -401,40 +404,18 @@ pub async fn track_records(
         }
     }
 
-    // // TEST report
-    // let block_number = *records.current_block().unwrap_or(&0);
-    // let block_number: i64 = i64::try_from(block_number).unwrap();
-    // warn!("block_number {}", block_number);
-    // let remainder = block_number as f64 % 8.0_f64;
-    // if remainder == 0.0_f64 {
-    //     let mut records = records.clone();
-    //     let mut subscribers = subscribers.clone();
-    //     async_std::task::spawn(async move {
-    //         let t: Onet = Onet::new().await;
-    //         try_run_para_report(
-    //             &t,
-    //             records.current_era(),
-    //             records.current_epoch(),
-    //             &records,
-    //             &subscribers,
-    //         )
-    //         .await
-    //         .unwrap();
-    //     });
-    // }
-
     debug!("records {:?}", records);
 
     Ok(())
 }
 
-pub async fn try_run_para_report(
-    onet: &Onet,
+pub async fn run_para_report(
     era_index: EraIndex,
     epoch_index: EpochIndex,
     records: &Records,
     subscribers: &Subscribers,
 ) -> Result<(), OnetError> {
+    let onet: Onet = Onet::new().await;
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
 
@@ -460,6 +441,41 @@ pub async fn try_run_para_report(
         ..Default::default()
     };
 
+    // Populate some maps to get ranks
+    let mut group_stats_map: BTreeMap<u32, ParaStats> = BTreeMap::new();
+    let mut para_validator_points_map: BTreeMap<u32, Points> = BTreeMap::new();
+
+    if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
+        for authority_idx in authorities.iter() {
+            if let Some(para_record) =
+                records.get_para_record(*authority_idx, Some(EpochKey(era_index, epoch_index)))
+            {
+                if let Some(group_idx) = para_record.group() {
+                    let mut stats = group_stats_map
+                        .entry(group_idx)
+                        .or_insert(ParaStats::default());
+                    for (_, s) in para_record.para_stats().iter() {
+                        stats.points += s.points();
+                        stats.core_assignments += s.core_assignments();
+                        stats.core_assignments += s.authored_blocks();
+                    }
+                }
+                // get points per authorities that are para validators
+                if let Some(authority_record) = records
+                    .get_authority_record(*authority_idx, Some(EpochKey(era_index, epoch_index)))
+                {
+                    para_validator_points_map.insert(*authority_idx, authority_record.points());
+                }
+            }
+        }
+    }
+    // Convert maps to vec and sort by points
+    let mut group_sorted_by_points_vec = Vec::from_iter(group_stats_map);
+    group_sorted_by_points_vec.sort_by(|(_, a), (_, b)| b.points.cmp(&a.points));
+    let mut para_validator_sorted_by_points = Vec::from_iter(para_validator_points_map);
+    para_validator_sorted_by_points.sort_by(|(_, a), (_, b)| b.cmp(&a));
+
+    // Prepare data for each valisator subscriber
     if let Some(subs) = subscribers.get(Some(EpochKey(era_index, epoch_index))) {
         for (stash, user_id) in subs.iter() {
             let mut validator = Validator::new(stash.clone());
@@ -472,6 +488,8 @@ pub async fn try_run_para_report(
                 authority_record: None,
                 para_record: None,
                 peers: Vec::new(),
+                para_validator_rank: None,
+                group_rank: None,
             };
 
             if let Some(authority_record) = records
@@ -483,6 +501,18 @@ pub async fn try_run_para_report(
                     .get_para_record_with_address(&stash, Some(EpochKey(era_index, epoch_index)))
                 {
                     data.para_record = Some(para_record.clone());
+
+                    // Get para validator rank
+                    data.para_validator_rank = para_validator_sorted_by_points
+                        .iter()
+                        .position(|&(a, _)| a == *authority_record.authority_index());
+
+                    // Get group rank
+                    if let Some(group_idx) = para_record.group() {
+                        data.group_rank = group_sorted_by_points_vec
+                            .iter()
+                            .position(|&(g, _)| g == group_idx);
+                    }
 
                     // Collect peers information
                     for peer_authority_index in para_record.peers().iter() {
@@ -508,8 +538,6 @@ pub async fn try_run_para_report(
                     }
                 }
             }
-            // TODO: get subscribers accounts
-
             let report = Report::from(data);
 
             onet.send_private_message(user_id, &report.message(), &report.formatted_message())
@@ -522,22 +550,27 @@ pub async fn try_run_para_report(
     Ok(())
 }
 
-pub async fn try_run_report(onet: &Onet, event: Option<NewSession>) -> Result<(), OnetError> {
-    if let Some(ev) = event {
-        // ev =  NewSession { session_index: 19848 }
-        let config = CONFIG.clone();
-        info!("Event: {:?}", ev);
-        // Verify if the remainder of the session_index divided by the session rate equals zero
-        let remainder = ev.session_index as f64 % config.session_rate as f64;
-        if remainder == 0.0_f64 {
-            // Trigger report
-            run_report(&onet).await?;
-        }
+pub async fn try_run_network_report(
+    onet: &Onet,
+    new_session_index: EpochIndex,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    // Verify if the remainder of the session_index divided by the session rate equals zero
+    let remainder = new_session_index as f64 % config.session_rate as f64;
+    if remainder == 0.0_f64 {
+        // Trigger report
+        async_std::task::spawn(async move {
+            if let Err(e) = run_network_report().await {
+                error!("Network report error: {:?}", e);
+            }
+        });
     }
+
     Ok(())
 }
 
-pub async fn run_report(onet: &Onet) -> Result<(), OnetError> {
+pub async fn run_network_report() -> Result<(), OnetError> {
+    let onet: Onet = Onet::new().await;
     let config = CONFIG.clone();
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
