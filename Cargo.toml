@@ -2,7 +2,7 @@
 name = "onet"
 version = "0.1.0"
 authors = ["Paulo <paulo@turboflakes.io>"]
-description = "One-T is a performance report bot for the Polkadot and Kusama network with a special focus on the One Thousand validator programme" 
+description = "ONE-T is a performance report bot for the Polkadot and Kusama network with a special focus on the One Thousand validator programme" 
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

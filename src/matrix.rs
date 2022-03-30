@@ -26,23 +26,38 @@ use async_recursion::async_recursion;
 use base64::encode;
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, result::Result, thread, time};
+use std::{
+    collections::HashMap, fs, fs::OpenOptions, io::Write, path::Path, result::Result, str::FromStr,
+    thread, time,
+};
+use subxt::sp_runtime::AccountId32;
 use url::form_urlencoded::byte_serialize;
 
 const MATRIX_URL: &str = "https://matrix.org/_matrix/client/r0";
 const MATRIX_BOT_NAME: &str = "ONE-T";
+const MATRIX_NEXT_BATCH_FILENAME: &str = ".next_batch";
 
 type AccessToken = String;
+type SyncToken = String;
 type RoomID = String;
 type EventID = String;
+type Stash = String;
+pub type UserID = String;
 
 impl SupportedRuntime {
     fn public_room_alias(&self) -> String {
-        format!(
-            "#{}-onet-bot:matrix.org",
-            self.to_string().to_lowercase()
-        )
+        let config = CONFIG.clone();
+        format!("#{}", config.matrix_public_room)
     }
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+enum Commands {
+    Help,
+    Subscribe(Stash, UserID),
+    Unsubscribe(Stash, UserID),
+    // Report(String),
+    NotSupported,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -73,12 +88,12 @@ fn define_private_room_alias_name(
 }
 
 impl Room {
-    fn new_private(chain: SupportedRuntime) -> Room {
+    fn new_private(chain: SupportedRuntime, user_id: &str) -> Room {
         let config = CONFIG.clone();
         let room_alias_name = define_private_room_alias_name(
             env!("CARGO_PKG_NAME"),
             &chain.to_string(),
-            &config.matrix_user,
+            &user_id,
             &config.matrix_bot_user,
         );
         let v: Vec<&str> = config.matrix_bot_user.split(":").collect();
@@ -120,12 +135,46 @@ struct CreateRoomRequest {
     is_direct: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 struct SendRoomMessageRequest {
     msgtype: String,
     body: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     format: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     formatted_body: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct RoomEventFilter {
+    types: Vec<String>,
+    rooms: Vec<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct RoomEventsResponse {
+    chunk: Vec<ClientEvent>,
+    start: SyncToken,
+    end: SyncToken,
+}
+
+#[derive(Deserialize, Debug)]
+struct ClientEvent {
+    content: EventContent,
+    origin_server_ts: u64,
+    room_id: String,
+    sender: String,
+    r#type: String,
+    // unsigned
+    event_id: String,
+    user_id: String,
+    age: u32,
+}
+
+#[derive(Deserialize, Debug)]
+struct EventContent {
+    body: String,
+    msgtype: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -139,6 +188,11 @@ struct JoinedRoomsResponse {
 }
 
 #[derive(Deserialize, Debug)]
+struct SyncResponse {
+    next_batch: String,
+}
+
+#[derive(Deserialize, Debug)]
 struct ErrorResponse {
     _errcode: String,
     error: String,
@@ -149,7 +203,6 @@ pub struct Matrix {
     pub client: reqwest::Client,
     access_token: Option<String>,
     chain: SupportedRuntime,
-    private_room_id: String,
     public_room_id: String,
     disabled: bool,
 }
@@ -160,7 +213,6 @@ impl Default for Matrix {
             client: reqwest::Client::new(),
             access_token: None,
             chain: SupportedRuntime::Kusama,
-            private_room_id: String::from(""),
             public_room_id: String::from(""),
             disabled: false,
         }
@@ -246,7 +298,7 @@ impl Matrix {
         }
     }
 
-    // Login user, get or create private room and join public room
+    // Login user and join public room
     pub async fn authenticate(&mut self, chain: SupportedRuntime) -> Result<(), MatrixError> {
         if self.disabled {
             return Ok(());
@@ -256,14 +308,6 @@ impl Matrix {
         self.chain = chain;
         // Login
         self.login().await?;
-        // Get or create user private room
-        if let Some(private_room) = self.get_or_create_private_room().await? {
-            self.private_room_id = private_room.room_id;
-            info!(
-                "Messages will be sent to room {} (Private)",
-                private_room.room_alias
-            );
-        }
         // Verify if user did not disabled public room in config
         if !config.matrix_public_room_disabled {
             // Join public room if not a member
@@ -292,48 +336,65 @@ impl Matrix {
                 self.chain.public_room_alias()
             );
         }
-        // Change Bot display name
-        if !config.matrix_bot_display_name_disabled {
-            self.change_bot_display_name().await?;
-        }
         Ok(())
     }
 
-    async fn change_bot_display_name(&self) -> Result<(), MatrixError> {
-        match &self.access_token {
-            Some(access_token) => {
-                let config = CONFIG.clone();
-                let client = self.client.clone();
-                let v: Vec<&str> = config.matrix_user.split(":").collect();
-                let username = v.first().unwrap();
-                let display_name = format!("{} Bot ({})", MATRIX_BOT_NAME, &username[1..]);
-                let mut data = HashMap::new();
-                data.insert("displayname", &display_name);
-                let user_id_encoded: String =
-                    byte_serialize(config.matrix_bot_user.as_bytes()).collect();
-                let res = client
-                    .put(format!(
-                        "{}/profile/{}/displayname?access_token={}",
-                        MATRIX_URL, user_id_encoded, access_token
-                    ))
-                    .json(&data)
-                    .send()
-                    .await?;
-
-                debug!("response {:?}", res);
-                match res.status() {
-                    reqwest::StatusCode::OK => {
-                        info!("{} * Matrix bot display name changed", &display_name);
-                        Ok(())
-                    }
-                    _ => {
-                        let response = res.json::<ErrorResponse>().await?;
-                        Err(MatrixError::Other(response.error))
+    pub async fn lazy_load_and_process_commands(&self) -> Result<(), MatrixError> {
+        let config = CONFIG.clone();
+        while let Some(token) = self.get_next_or_sync().await? {
+            if let Some((commands, _, next_token)) =
+                self.get_commands_from_public_room(&token).await?
+            {
+                for cmd in commands.iter() {
+                    match cmd {
+                        Commands::Help => self.reply_help().await?,
+                        Commands::Subscribe(stash, who) => {
+                            // Verify stash
+                            if let Ok(_) = AccountId32::from_str(&stash) {
+                                // Write stash,user in subscribers file if doesn't already exist
+                                let subscriber = format!("{stash},{who}\n");
+                                if Path::new(&config.subscribers_path).exists() {
+                                    let subscribers = fs::read_to_string(&config.subscribers_path)?;
+                                    if !subscribers.contains(&subscriber) {
+                                        let mut file = OpenOptions::new()
+                                            .append(true)
+                                            .open(&config.subscribers_path)?;
+                                        file.write_all(subscriber.as_bytes())?;
+                                    }
+                                } else {
+                                    fs::write(&config.subscribers_path, subscriber)?;
+                                }
+                                let message = format!("📥 {who} subscribed report for {stash}");
+                                self.send_public_message(&message, None).await;
+                            } else {
+                                let message = format!("{who} supplied an invalid address.");
+                                self.send_public_message(&message, None).await;
+                            }
+                        }
+                        Commands::Unsubscribe(stash, who) => {
+                            // Remove stash,user from subscribers file
+                            let subscriber = format!("{stash},{who}\n");
+                            if Path::new(&config.subscribers_path).exists() {
+                                let subscribers = fs::read_to_string(&config.subscribers_path)?;
+                                if subscribers.contains(&subscriber) {
+                                    fs::write(
+                                        &config.subscribers_path,
+                                        subscribers.replace(&subscriber, ""),
+                                    )?;
+                                    let message = format!("🗑️ {who} unsubscribed {stash} report");
+                                    self.send_public_message(&message, None).await;
+                                }
+                            }
+                        }
+                        _ => (),
                     }
                 }
+                // Cache next token
+                fs::write(MATRIX_NEXT_BATCH_FILENAME, next_token)?;
             }
-            None => Err(MatrixError::Other("access_token not defined".to_string())),
+            thread::sleep(time::Duration::from_secs(6));
         }
+        Ok(())
     }
 
     async fn get_room_id_by_room_alias(
@@ -364,18 +425,18 @@ impl Matrix {
         }
     }
 
-    async fn create_private_room(&self) -> Result<Option<Room>, MatrixError> {
+    async fn create_private_room(&self, user_id: &str) -> Result<Option<Room>, MatrixError> {
         match &self.access_token {
             Some(access_token) => {
                 let config = CONFIG.clone();
                 let client = self.client.clone();
-                let room: Room = Room::new_private(self.chain);
+                let room: Room = Room::new_private(self.chain, user_id);
                 let req = CreateRoomRequest {
                     name: format!("{} {} Bot (Private)", self.chain, MATRIX_BOT_NAME),
                     room_alias_name: room.room_alias_name.to_string(),
                     topic: format!("{} Bot <> Performance report bot for the {} network with a focus on the One Thousand validator programme", MATRIX_BOT_NAME, self.chain),
                     preset: "trusted_private_chat".to_string(),
-                    invite: vec![config.matrix_user],
+                    invite: vec![user_id.to_string()],
                     is_direct: true,
                 };
                 let res = client
@@ -406,16 +467,16 @@ impl Matrix {
         }
     }
 
-    async fn get_or_create_private_room(&self) -> Result<Option<Room>, MatrixError> {
+    async fn get_or_create_private_room(&self, user_id: &str) -> Result<Option<Room>, MatrixError> {
         match &self.access_token {
             Some(_) => {
-                let mut room: Room = Room::new_private(self.chain);
+                let mut room: Room = Room::new_private(self.chain, user_id);
                 match self.get_room_id_by_room_alias(&room.room_alias).await? {
                     Some(room_id) => {
                         room.room_id = room_id;
                         Ok(Some(room))
                     }
-                    None => Ok(self.create_private_room().await?),
+                    None => Ok(self.create_private_room(user_id).await?),
                 }
             }
             None => Err(MatrixError::Other("access_token not defined".to_string())),
@@ -438,6 +499,108 @@ impl Matrix {
                     reqwest::StatusCode::OK => {
                         let response = res.json::<JoinedRoomsResponse>().await?;
                         Ok(response.joined_rooms)
+                    }
+                    _ => {
+                        let response = res.json::<ErrorResponse>().await?;
+                        Err(MatrixError::Other(response.error))
+                    }
+                }
+            }
+            None => Err(MatrixError::Other("access_token not defined".to_string())),
+        }
+    }
+
+    // Sync
+    // https://spec.matrix.org/v1.2/client-server-api/#syncing
+    async fn get_next_or_sync(&self) -> Result<Option<SyncToken>, MatrixError> {
+        // Try to read first cached token from file
+        match fs::read_to_string(MATRIX_NEXT_BATCH_FILENAME) {
+            Ok(token) => Ok(Some(token)),
+            _ => {
+                match &self.access_token {
+                    Some(access_token) => {
+                        let client = self.client.clone();
+                        let res = client
+                            .get(format!("{}/sync?access_token={}", MATRIX_URL, access_token))
+                            .send()
+                            .await?;
+                        match res.status() {
+                            reqwest::StatusCode::OK => {
+                                let response = res.json::<SyncResponse>().await?;
+                                // Persist token to file in case we need to restore commands from previously attempt
+                                fs::write(MATRIX_NEXT_BATCH_FILENAME, &response.next_batch)
+                                    .expect("Unable to write .matrix.next_batch file");
+                                Ok(Some(response.next_batch))
+                            }
+                            _ => {
+                                let response = res.json::<ErrorResponse>().await?;
+                                Err(MatrixError::Other(response.error))
+                            }
+                        }
+                    }
+                    None => Err(MatrixError::Other("access_token not defined".to_string())),
+                }
+            }
+        }
+    }
+
+    // Getting events for a room
+    // https://spec.matrix.org/v1.2/client-server-api/#get_matrixclientv3roomsroomidmessages
+    async fn get_commands_from_public_room(
+        &self,
+        from_token: &str,
+    ) -> Result<Option<(Vec<Commands>, SyncToken, SyncToken)>, MatrixError> {
+        match &self.access_token {
+            Some(access_token) => {
+                let client = self.client.clone();
+                let room_id_encoded: String =
+                    byte_serialize(self.public_room_id.as_bytes()).collect();
+                let filter = RoomEventFilter {
+                    types: vec!["m.room.message".to_string()],
+                    rooms: vec![self.public_room_id.to_string()],
+                };
+                let filter_str = serde_json::to_string(&filter)?;
+                let filter_encoded: String = byte_serialize(filter_str.as_bytes()).collect();
+                let res = client
+                    .get(format!(
+                        "{}/rooms/{}/messages?access_token={}&from={}&filter={}",
+                        MATRIX_URL, room_id_encoded, access_token, from_token, filter_encoded
+                    ))
+                    .send()
+                    .await?;
+                match res.status() {
+                    reqwest::StatusCode::OK => {
+                        let events = res.json::<RoomEventsResponse>().await?;
+                        let mut commands: Vec<Commands> = Vec::new();
+                        // Parse message to commands
+                        for message in events.chunk.iter() {
+                            if message.content.msgtype == "m.text" {
+                                match message.content.body.split_once(' ') {
+                                    None => {
+                                        if message.content.body == "!help" {
+                                            commands.push(Commands::Help);
+                                        }
+                                    }
+                                    Some((cmd, stash)) => {
+                                        match cmd {
+                                            "!subscribe" => commands.push(Commands::Subscribe(
+                                                stash.to_string(),
+                                                message.sender.to_string(),
+                                            )),
+                                            "!unsubscribe" => commands.push(Commands::Unsubscribe(
+                                                stash.to_string(),
+                                                message.sender.to_string(),
+                                            )),
+                                            // "!report" => {
+                                            //     commands.push(Commands::Report(stash.to_string()))
+                                            // }
+                                            _ => commands.push(Commands::NotSupported),
+                                        }
+                                    }
+                                };
+                            }
+                        }
+                        Ok(Some((commands, events.start, events.end)))
                     }
                     _ => {
                         let response = res.json::<ErrorResponse>().await?;
@@ -485,18 +648,45 @@ impl Matrix {
         }
     }
 
-    pub async fn send_message(
+    pub async fn reply_help(&self) -> Result<(), MatrixError> {
+        let mut message = String::from("✨ Supported commands:\n");
+        message.push_str("!subscribe <Stash Address> - Subscribe to validator <Stash Address> performance report. Sent at the end of an epoch.\n");
+        message.push_str(
+            "!unsubscribe <Stash Address> - Unsubscribe to the validator <Stash Address> performance report.\n",
+        );
+        // message.push_str("!report - Send validator \\<Stash Address\\> performance report for the current epoch.\n");
+        message.push_str("!help - Print this message.\n");
+        return self.send_public_message(&message, None).await;
+    }
+
+    pub async fn send_private_message(
+        &self,
+        to_user_id: &str,
+        message: &str,
+        formatted_message: Option<&str>,
+    ) -> Result<(), MatrixError> {
+        if self.disabled {
+            return Ok(());
+        }
+        // Get or create user private room
+        if let Some(private_room) = self.get_or_create_private_room(to_user_id).await? {
+            // Send message to the private room (bot <=> user)
+            self.dispatch_message(&private_room.room_id, &message, &formatted_message)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn send_public_message(
         &self,
         message: &str,
-        formatted_message: &str,
+        formatted_message: Option<&str>,
     ) -> Result<(), MatrixError> {
         if self.disabled {
             return Ok(());
         }
         let config = CONFIG.clone();
-        // Send message to private room (private assigned to the matrix_username in config)
-        self.dispatch_message(&self.private_room_id, &message, &formatted_message)
-            .await?;
         // Send message to public room (public room available for the connected chain)
         if !config.matrix_public_room_disabled {
             self.dispatch_message(&self.public_room_id, &message, &formatted_message)
@@ -511,7 +701,7 @@ impl Matrix {
         &self,
         room_id: &str,
         message: &str,
-        formatted_message: &str,
+        formatted_message: &Option<&str>,
     ) -> Result<Option<EventID>, MatrixError> {
         if self.disabled {
             return Ok(None);
@@ -519,11 +709,19 @@ impl Matrix {
         match &self.access_token {
             Some(access_token) => {
                 let client = self.client.clone();
-                let req = SendRoomMessageRequest {
-                    msgtype: "m.text".to_string(),
-                    body: message.to_string(),
-                    format: "org.matrix.custom.html".to_string(),
-                    formatted_body: formatted_message.to_string(),
+                let req = if let Some(formatted_msg) = formatted_message {
+                    SendRoomMessageRequest {
+                        msgtype: "m.text".to_string(),
+                        body: message.to_string(),
+                        format: "org.matrix.custom.html".to_string(),
+                        formatted_body: formatted_msg.to_string(),
+                    }
+                } else {
+                    SendRoomMessageRequest {
+                        msgtype: "m.text".to_string(),
+                        body: message.to_string(),
+                        ..Default::default()
+                    }
                 };
 
                 let res = client

@@ -21,11 +21,9 @@
 
 use crate::config::CONFIG;
 use crate::errors::OnetError;
-// use crate::para::{
-//     decode_authority_index, AuthorityIndex, BlockNumber, Blocks, CoreAssignment, EraIndex, ParaId,
-//     ParaRecord, Points, Record, SessionIndex, Subscribers,
-// };
-use crate::onet::{get_account_id_from_storage_key, try_fetch_stashes_from_remote_url, Onet};
+use crate::onet::{
+    get_account_id_from_storage_key, get_subscribers, try_fetch_stashes_from_remote_url, Onet,
+};
 use crate::records::{
     decode_authority_index, AddressKey, AuthoredBlocks, AuthorityIndex, AuthorityRecord,
     BlockNumber, EpochIndex, EpochKey, EraIndex, ParaId, ParaRecord, Points, Records, Subscribers,
@@ -37,8 +35,11 @@ use async_recursion::async_recursion;
 use futures::StreamExt;
 use log::{debug, info, warn};
 use std::{
-    collections::BTreeMap, collections::HashSet, convert::TryFrom, convert::TryInto,
-    result::Result, str::FromStr, thread, time,
+    collections::{BTreeMap, HashSet},
+    convert::{TryFrom, TryInto},
+    result::Result,
+    str::FromStr,
+    thread, time,
 };
 use subxt::{sp_runtime::AccountId32, DefaultConfig, DefaultExtra};
 
@@ -58,21 +59,6 @@ use node_runtime::{
 };
 
 type Api = node_runtime::RuntimeApi<DefaultConfig, DefaultExtra<DefaultConfig>>;
-
-macro_rules! vec_of_accounts {
-    ($($x:expr),*) => (vec![$(AccountId32::from_str($x).unwrap()),*]);
-}
-
-pub fn get_subscribers() -> Result<Vec<AccountId32>, OnetError> {
-    let config = CONFIG.clone();
-    let mut out: Vec<AccountId32> = Vec::new();
-    for stash in config.stashes {
-        let acc = AccountId32::from_str(&stash)?;
-        out.push(acc);
-    }
-
-    Ok(out)
-}
 
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
     let client = onet.client().clone();
@@ -97,9 +83,10 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     // Subscribers
     let mut subscribers = Subscribers::with_era_and_epoch(era_index, session_index);
     // Initialized subscribers
-    let accounts = get_subscribers()?;
-    for account in accounts.iter() {
-        subscribers.subscribe(account.clone());
+    if let Ok(subs) = get_subscribers() {
+        for (account, user_id) in subs.iter() {
+            subscribers.subscribe(account.clone(), user_id.to_string());
+        }
     }
 
     // Records
@@ -307,10 +294,11 @@ pub async fn track_new_session_event<'a>(
 
         // Update subscribers current Era and Epoch
         subscribers.start_new_epoch(current_era_index, ev.session_index);
-        // TODO: Pull new latest subscriber list ???
-        let accounts = get_subscribers()?;
-        for account in accounts.iter() {
-            subscribers.subscribe(account.clone());
+
+        if let Ok(subs) = get_subscribers() {
+            for (account, user_id) in subs.iter() {
+                subscribers.subscribe(account.clone(), user_id.to_string());
+            }
         }
 
         // Initialize records for new
@@ -422,7 +410,7 @@ pub async fn track_records(
     //     let mut records = records.clone();
     //     let mut subscribers = subscribers.clone();
     //     async_std::task::spawn(async move {
-    //         let t: Thor = Thor::new().await;
+    //         let t: Onet = Onet::new().await;
     //         try_run_para_report(
     //             &t,
     //             records.current_era(),
@@ -472,8 +460,8 @@ pub async fn try_run_para_report(
         ..Default::default()
     };
 
-    if let Some(stash_accounts) = subscribers.get(Some(EpochKey(era_index, epoch_index))) {
-        for stash in stash_accounts.iter() {
+    if let Some(subs) = subscribers.get(Some(EpochKey(era_index, epoch_index))) {
+        for (stash, user_id) in subs.iter() {
             let mut validator = Validator::new(stash.clone());
             validator.name = get_display_name(&onet, &stash, None).await?;
             let mut data = RawDataPara {
@@ -524,7 +512,7 @@ pub async fn try_run_para_report(
 
             let report = Report::from(data);
 
-            onet.send_message(&report.message(), &report.formatted_message())
+            onet.send_private_message(user_id, &report.message(), &report.formatted_message())
                 .await?;
             // NOTE: To not overflow matrix with messages just send maximum 2 per second
             thread::sleep(time::Duration::from_millis(500));
@@ -645,7 +633,7 @@ pub async fn run_report(onet: &Onet) -> Result<(), OnetError> {
     };
 
     let report = Report::from(data);
-    onet.send_message(&report.message(), &report.formatted_message())
+    onet.send_public_message(&report.message(), &report.formatted_message())
         .await?;
 
     Ok(())

@@ -18,6 +18,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+use crate::matrix::UserID;
 use crate::stats::mean;
 use codec::Decode;
 use log::info;
@@ -470,7 +471,7 @@ impl ParaStats {
 pub struct Subscribers {
     current_era: EraIndex,
     current_epoch: EpochIndex,
-    subscribers: HashMap<EpochKey, Vec<AccountId32>>,
+    subscribers: HashMap<EpochKey, Vec<(AccountId32, UserID)>>,
 }
 
 impl Subscribers {
@@ -495,22 +496,24 @@ impl Subscribers {
         self.current_epoch
     }
 
-    pub fn subscribe(&mut self, account: AccountId32) {
+    pub fn subscribe(&mut self, account: AccountId32, user_id: UserID) {
         let key = EpochKey(self.current_era, self.current_epoch);
         if let Some(s) = self.subscribers.get_mut(&key) {
-            s.push(account.clone());
+            s.push((account.clone(), user_id.to_string()));
         } else {
-            self.subscribers.insert(key, vec![account.clone()]);
+            self.subscribers
+                .insert(key, vec![(account.clone(), user_id.to_string())]);
         }
         info!(
-            "Account {} subscribed for epoch {} era {}",
+            "{} subscribed ({}) report for epoch {} era {}",
+            user_id.to_string(),
             account.to_string(),
             self.current_epoch(),
             self.current_era(),
         );
     }
 
-    pub fn get(&self, key: Option<EpochKey>) -> Option<&Vec<AccountId32>> {
+    pub fn get(&self, key: Option<EpochKey>) -> Option<&Vec<(AccountId32, UserID)>> {
         if let Some(key) = key {
             self.subscribers.get(&key)
         } else {

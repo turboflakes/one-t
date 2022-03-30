@@ -44,6 +44,8 @@ pub enum OnetError {
     ReqwestError(#[from] reqwest::Error),
     #[error("ParseError error: {0}")]
     ParseError(#[from] url::ParseError),
+    #[error("IOError error: {0}")]
+    IOError(#[from] std::io::Error),
     #[error("Other error: {0}")]
     Other(String),
 }
@@ -62,6 +64,10 @@ pub enum MatrixError {
     ReqwestError(#[from] reqwest::Error),
     #[error("ParseError error: {0}")]
     ParseError(#[from] url::ParseError),
+    #[error("SerdeError error: {0}")]
+    SerdeError(#[from] serde_json::Error),
+    #[error("IOError error: {0}")]
+    IOError(#[from] std::io::Error),
     #[error("{0}")]
     Other(String),
 }

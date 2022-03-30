@@ -20,7 +20,7 @@
 // SOFTWARE.
 use crate::config::{Config, CONFIG};
 use crate::errors::OnetError;
-use crate::matrix::Matrix;
+use crate::matrix::{Matrix, UserID};
 use crate::runtimes::{
     kusama,
     support::{ChainPrefix, SupportedRuntime},
@@ -28,7 +28,14 @@ use crate::runtimes::{
 use log::{debug, error, info, warn};
 use reqwest::Url;
 use serde::Deserialize;
-use std::{convert::TryInto, result::Result, str::FromStr, thread, time};
+use std::{
+    convert::TryInto,
+    fs::File,
+    io::{BufRead, BufReader},
+    result::Result,
+    str::FromStr,
+    thread, time,
+};
 use subxt::{
     sp_core::{crypto, storage::StorageKey},
     sp_runtime::AccountId32,
@@ -145,6 +152,10 @@ impl Onet {
         }
     }
 
+    pub fn runtime(&self) -> SupportedRuntime {
+        self.runtime
+    }
+
     pub fn client(&self) -> &Client<DefaultConfig> {
         &self.client
     }
@@ -154,20 +165,32 @@ impl Onet {
         &self.matrix
     }
 
-    pub async fn send_message(
+    pub async fn send_private_message(
+        &self,
+        user_id: &str,
+        message: &str,
+        formatted_message: &str,
+    ) -> Result<(), OnetError> {
+        self.matrix()
+            .send_private_message(user_id, message, Some(formatted_message))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn send_public_message(
         &self,
         message: &str,
         formatted_message: &str,
     ) -> Result<(), OnetError> {
         self.matrix()
-            .send_message(message, formatted_message)
+            .send_public_message(message, Some(formatted_message))
             .await?;
         Ok(())
     }
 
-    /// Spawn and restart subscription on error
-    pub fn subscribe() {
-        spawn_and_restart_subscription_on_error();
+    /// Spawn and restart on error
+    pub fn spawn() {
+        spawn_and_restart_on_error();
     }
 
     async fn subscribe_on_chain_events(&self) -> Result<(), OnetError> {
@@ -180,11 +203,32 @@ impl Onet {
     }
 }
 
-fn spawn_and_restart_subscription_on_error() {
-    let t = async_std::task::spawn(async {
+fn spawn_and_restart_matrix_lazy_load_on_error(chain: SupportedRuntime) {
+    async_std::task::spawn(async move {
         let config = CONFIG.clone();
         loop {
-            let t: Onet = Onet::new().await;
+            let mut m = Matrix::new();
+            m.authenticate(chain).await.unwrap_or_else(|e| {
+                error!("{}", e);
+                Default::default()
+            });
+            if let Err(e) = m.lazy_load_and_process_commands().await {
+                error!("{}", e);
+                thread::sleep(time::Duration::from_secs(60 * config.error_interval));
+                continue;
+            }
+        }
+    });
+}
+
+fn spawn_and_restart_on_error() {
+    let t = async_std::task::spawn(async {
+        let config = CONFIG.clone();
+        let t: Onet = Onet::new().await;
+        // Authenticate matrix and spawn lazy load commands
+        spawn_and_restart_matrix_lazy_load_on_error(t.runtime());
+        // Subscribe on chains events
+        loop {
             if let Err(e) = t.subscribe_on_chain_events().await {
                 match e {
                     OnetError::SubscriptionFinished => warn!("{}", e),
@@ -193,12 +237,14 @@ fn spawn_and_restart_subscription_on_error() {
                         error!("{}", e);
                         let message = format!("On hold for {} min!", config.error_interval);
                         let formatted_message = format!("<br/>🚨 An error was raised -> <code>onet</code> on hold for {} min while rescue is on the way 🚁 🚒 🚑 🚓<br/><br/>", config.error_interval);
-                        t.send_message(&message, &formatted_message).await.unwrap();
+                        t.send_public_message(&message, &formatted_message).await.unwrap();
                         thread::sleep(time::Duration::from_secs(60 * config.error_interval));
                         continue;
                     }
                 }
                 thread::sleep(time::Duration::from_secs(1));
+                // Initialize a new instance
+                let t = Onet::new().await;
             };
         }
     });
@@ -242,4 +288,21 @@ pub fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {
     let s = &key.0[key.0.len() - 32..];
     let v: [u8; 32] = s.try_into().expect("slice with incorrect length");
     AccountId32::new(v)
+}
+
+pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID)>, OnetError> {
+    let config = CONFIG.clone();
+    let mut out: Vec<(AccountId32, UserID)> = Vec::new();
+    let file = File::open(&config.subscribers_path)?;
+
+    // Read each subscriber (stash,user-id) and parse it to account
+    for line in BufReader::new(file).lines() {
+        if let Ok(s) = line {
+            let v: Vec<&str> = s.split(',').collect();
+            let acc = AccountId32::from_str(&v[0])?;
+            out.push((acc, v[1].to_string()));
+        }
+    }
+
+    Ok(out)
 }

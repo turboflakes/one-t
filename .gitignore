@@ -1,4 +1,6 @@
 /target
 Cargo.lock
 .env
+.next_batch
+.subscribers
 bump-version.sh

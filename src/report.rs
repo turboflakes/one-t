@@ -199,7 +199,7 @@ impl From<RawDataPara> for Report {
         // Network info
         report.add_break();
         report.add_raw_text(format!(
-            "⛓️ <b>{}</b> → Subscription report for epoch {} era {}",
+            "📮 <b>{}</b> → Validator performance report for epoch {} era {}",
             data.network.name, data.session.current_session_index, data.session.active_era_index
         ));
         report.add_raw_text(format!(
@@ -239,6 +239,7 @@ impl From<RawDataPara> for Report {
                 } else {
                     "".to_string()
                 };
+                // TODO add group rank!
                 report.add_raw_text(format!("‣ 🪂 Para validator rank{}", position_str));
 
                 let mut clode_block = String::from("<pre><code>");

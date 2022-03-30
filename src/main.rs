@@ -49,5 +49,5 @@ fn main() {
         env!("CARGO_PKG_DESCRIPTION")
     );
 
-    Onet::subscribe()
+    Onet::spawn()
 }

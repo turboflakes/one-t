@@ -52,6 +52,11 @@ fn default_error_interval() -> u64 {
     5
 }
 
+/// provides default value for subscribers_path if ONET_SUBSCRIBERS_PATH env var is not set
+fn default_subscribers_path() -> String {
+    ".subscribers".into()
+}
+
 /// provides default value for maximum_eras if ONET_MAXIMUM_HISTORY_ERAS env var is not set
 fn default_maximum_history_eras() -> u32 {
     8
@@ -69,7 +74,8 @@ pub struct Config {
     #[serde(default = "default_error_interval")]
     pub error_interval: u64,
     pub substrate_ws_url: String,
-    pub stashes: Vec<String>,
+    #[serde(default = "default_subscribers_path")]
+    pub subscribers_path: String,
     #[serde(default = "default_maximum_history_eras")]
     pub maximum_history_eras: u32,
     #[serde(default = "default_session_rate")]
@@ -78,7 +84,7 @@ pub struct Config {
     pub is_debug: bool,
     // matrix configuration
     #[serde(default)]
-    pub matrix_user: String,
+    pub matrix_public_room: String,
     #[serde(default)]
     pub matrix_bot_user: String,
     #[serde(default)]
@@ -112,8 +118,17 @@ fn get_config() -> Config {
         .help("Prints debug information verbosely.")
       )
     .arg(
-      Arg::with_name("matrix-user")
-        .long("matrix-user")
+      Arg::with_name("subscribers-path")
+        .long("subscribers-path")
+        .takes_value(true)
+        .value_name("FILE")
+        .help(
+          "Sets a custom subscribers file path. The subscribers file contains stashes and matrix user ids that have subscribed to receive the report.",
+        ),
+    )
+    .arg(
+      Arg::with_name("matrix-public-room")
+        .long("matrix-public-room")
         .takes_value(true)
         .help("Your regular matrix user. e.g. '@your-regular-matrix-account:matrix.org' this user account will receive notifications from your other 'Onet Bot' matrix account.")
       )
@@ -140,7 +155,7 @@ fn get_config() -> Config {
       Arg::with_name("disable-public-matrix-room")
         .long("disable-public-matrix-room")
         .help(
-          "Disable notifications to matrix public rooms for 'onet'. (e.g. with this flag active 'onet' will not send messages/notifications about claimed or unclaimed staking rewards to any public 'Onet Bot' room)",
+          "Disable notification reports to be sent to the matrix public room",
         ),
       )
     .arg(
@@ -161,15 +176,6 @@ fn get_config() -> Config {
         .takes_value(true)
         .help("Interval value (in minutes) from which 'onet' will restart again in case of a critical error.")
       )
-    .arg(
-      Arg::with_name("stashes")
-        .short("s")
-        .long("stashes")
-        .takes_value(true)
-        .help(
-          "Validator stash addresses for which 'onet' will be applied. If needed specify more than one (e.g. stash_1,stash_2,stash_3).",
-        ),
-    )
     .arg(
       Arg::with_name("substrate-ws-url")
         .short("w")
@@ -230,6 +236,10 @@ fn get_config() -> Config {
         }
     }
 
+    if let Some(subscribers_path) = matches.value_of("subscribers-path") {
+        env::set_var("ONET_SUBSCRIBERS_PATH", subscribers_path);
+    }
+
     if let Some(substrate_ws_url) = matches.value_of("substrate-ws-url") {
         env::set_var("ONET_SUBSTRATE_WS_URL", substrate_ws_url);
     }
@@ -246,8 +256,8 @@ fn get_config() -> Config {
         env::set_var("ONET_MATRIX_PUBLIC_ROOM_DISABLED", "true");
     }
 
-    if let Some(matrix_user) = matches.value_of("matrix-user") {
-        env::set_var("ONET_MATRIX_ACCOUNT", matrix_user);
+    if let Some(matrix_public_room) = matches.value_of("matrix-public-room") {
+        env::set_var("ONET_MATRIX_PUBLIC_ROOM", matrix_public_room);
     }
 
     if let Some(matrix_bot_user) = matches.value_of("matrix-bot-user") {
