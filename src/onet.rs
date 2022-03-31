@@ -22,7 +22,7 @@ use crate::config::{Config, CONFIG};
 use crate::errors::OnetError;
 use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
 use crate::runtimes::{
-    kusama,
+    kusama, polkadot,
     support::{ChainPrefix, SupportedRuntime},
 };
 use log::{debug, error, info, warn};
@@ -172,7 +172,7 @@ impl Onet {
 
     async fn subscribe_on_chain_events(&self) -> Result<(), OnetError> {
         match self.runtime {
-            SupportedRuntime::Polkadot => kusama::init_and_subscribe_on_chain_events(self).await,
+            SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
         }
     }
