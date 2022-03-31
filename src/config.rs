@@ -100,6 +100,8 @@ pub struct Config {
     #[serde(default)]
     pub matrix_public_room: String,
     #[serde(default)]
+    pub matrix_callout_public_rooms: Vec<String>,
+    #[serde(default)]
     pub matrix_bot_user: String,
     #[serde(default)]
     pub matrix_bot_password: String,
@@ -141,25 +143,31 @@ fn get_config() -> Config {
       Arg::with_name("matrix-public-room")
         .long("matrix-public-room")
         .takes_value(true)
-        .help("Your regular matrix user. e.g. '@your-regular-matrix-account:matrix.org' this user account will receive notifications from your other 'Onet Bot' matrix account.")
+        .help("Matrix public room where 'ONE-T' will publish reports and listen for subscriptions.")
       )
+    .arg(
+      Arg::with_name("matrix-callout-public-rooms")
+        .long("matrix-callout-public-rooms")
+        .takes_value(true)
+        .help("Matrix public rooms where 'ONE-T' will publish callout messages.")
+    )
     .arg(
       Arg::with_name("matrix-bot-user")
         .long("matrix-bot-user")
         .takes_value(true)
-        .help("Your new 'Onet Bot' matrix user. e.g. '@your-own-bot-account:matrix.org' this user account will be your 'Onet Bot' which will be responsible to send messages/notifications to your private or public 'Onet Bot' rooms.")
+        .help("'ONE-T'  matrix user. e.g. '@your-own-bot-account:matrix.org' this user account will be your 'ONE-T' which will be responsible to send messages/notifications to your private or public 'ONE-T' rooms.")
       )
     .arg(
       Arg::with_name("matrix-bot-password")
         .long("matrix-bot-password")
         .takes_value(true)
-        .help("Password for the 'Onet Bot' matrix user sign in.")
+        .help("Password for the 'ONE-T' matrix user sign in.")
       )
     .arg(
       Arg::with_name("disable-matrix")
         .long("disable-matrix")
         .help(
-          "Disable matrix bot for 'onet'. (e.g. with this flag active 'onet' will not send messages/notifications about claimed or unclaimed staking rewards to your private or public 'Onet Bot' rooms) (https://matrix.org/)",
+          "Disable matrix bot for 'onet'. (e.g. with this flag active 'onet' will not send messages/notifications about claimed or unclaimed staking rewards to your private or public 'ONE-T' rooms) (https://matrix.org/)",
         ),
       )
     .arg(
@@ -288,6 +296,13 @@ fn get_config() -> Config {
 
     if let Some(matrix_public_room) = matches.value_of("matrix-public-room") {
         env::set_var("ONET_MATRIX_PUBLIC_ROOM", matrix_public_room);
+    }
+
+    if let Some(matrix_callout_public_rooms) = matches.value_of("matrix-callout-public-rooms") {
+        env::set_var(
+            "ONET_MATRIX_CALLOUT_PUBLIC_ROOMS",
+            matrix_callout_public_rooms,
+        );
     }
 
     if let Some(matrix_bot_user) = matches.value_of("matrix-bot-user") {

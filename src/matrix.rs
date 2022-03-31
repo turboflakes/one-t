@@ -202,6 +202,7 @@ pub struct Matrix {
     access_token: Option<String>,
     chain: SupportedRuntime,
     public_room_id: String,
+    callout_public_room_ids: Vec<String>,
     disabled: bool,
 }
 
@@ -212,6 +213,7 @@ impl Default for Matrix {
             access_token: None,
             chain: SupportedRuntime::Kusama,
             public_room_id: String::from(""),
+            callout_public_room_ids: Vec::new(),
             disabled: false,
         }
     }
@@ -321,6 +323,10 @@ impl Matrix {
                         self.join_room(&public_room_id).await?;
                     }
                     self.public_room_id = public_room_id;
+                    info!(
+                        "Messages will be sent to room {} (Public)",
+                        self.chain.public_room_alias()
+                    );
                 }
                 None => {
                     return Err(MatrixError::Other(format!(
@@ -329,10 +335,32 @@ impl Matrix {
                     )))
                 }
             }
-            info!(
-                "Messages will be sent to room {} (Public)",
-                self.chain.public_room_alias()
-            );
+            // Callout public rooms
+            for r in config.matrix_callout_public_rooms.iter() {
+                // Join public room if not a member
+                let public_room = format!("#{}", r);
+                match self.get_room_id_by_room_alias(&public_room).await? {
+                    Some(public_room_id) => {
+                        // Join room if not already a member
+                        let joined_rooms = self.get_joined_rooms().await?;
+                        debug!("joined_rooms {:?}", joined_rooms);
+                        if !joined_rooms.contains(&public_room_id) {
+                            self.join_room(&public_room_id).await?;
+                        }
+                        self.callout_public_room_ids.push(public_room_id);
+                        info!(
+                            "Callout messages will be sent to room {} (Public)",
+                            public_room
+                        );
+                    }
+                    None => {
+                        return Err(MatrixError::Other(format!(
+                            "Public room {} not found.",
+                            public_room
+                        )))
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -707,6 +735,26 @@ impl Matrix {
         if !config.matrix_public_room_disabled {
             self.dispatch_message(&self.public_room_id, &message, &formatted_message)
                 .await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn send_callout_message(
+        &self,
+        message: &str,
+        formatted_message: Option<&str>,
+    ) -> Result<(), MatrixError> {
+        if self.disabled {
+            return Ok(());
+        }
+        let config = CONFIG.clone();
+        // Send message to callout public rooms
+        if !config.matrix_public_room_disabled {
+            for room_id in self.callout_public_room_ids.iter() {
+                self.dispatch_message(&room_id, &message, &formatted_message)
+                    .await?;
+            }
         }
 
         Ok(())

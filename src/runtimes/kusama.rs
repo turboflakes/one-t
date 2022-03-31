@@ -29,8 +29,9 @@ use crate::records::{
     ParaId, ParaRecord, ParaStats, Points, Records, Subscribers,
 };
 use crate::report::{
-    Network, RawData, RawDataPara, Report, Session, Subset, Validator, Validators,
+    Callout, Network, RawData, RawDataPara, Report, Session, Subset, Validator, Validators,
 };
+
 use async_recursion::async_recursion;
 use futures::StreamExt;
 use log::{debug, error, info};
@@ -533,7 +534,12 @@ pub async fn run_para_report(
             }
             let report = Report::from(data);
 
-            onet.send_private_message(user_id, &report.message(), &report.formatted_message())
+            onet.matrix()
+                .send_private_message(
+                    user_id,
+                    &report.message(),
+                    Some(&report.formatted_message()),
+                )
                 .await?;
             // NOTE: To not overflow matrix with messages just send maximum 2 per second
             thread::sleep(time::Duration::from_millis(500));
@@ -545,6 +551,7 @@ pub async fn run_para_report(
 
 pub async fn try_run_network_report(new_session_index: EpochIndex) -> Result<(), OnetError> {
     let config = CONFIG.clone();
+    // Note: For now just trigger the callout message and network report once a day for Polkadot and Kusama
     // Verify if the remainder of the session_index divided by the session rate equals zero
     let remainder = new_session_index as f64 % config.session_rate as f64;
     if remainder == 0.0_f64 {
@@ -655,8 +662,15 @@ pub async fn run_network_report() -> Result<(), OnetError> {
         session,
     };
 
-    let report = Report::from(data);
-    onet.send_public_message(&report.message(), &report.formatted_message())
+    let report = Report::from(data.clone());
+    onet.matrix()
+        .send_public_message(&report.message(), Some(&report.formatted_message()))
+        .await?;
+
+    // Trigger callout message to public rooms
+    let callout = Report::callout(data);
+    onet.matrix()
+        .send_callout_message(&callout.message(), Some(&callout.formatted_message()))
         .await?;
 
     Ok(())

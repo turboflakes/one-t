@@ -161,29 +161,6 @@ impl Onet {
         &self.matrix
     }
 
-    pub async fn send_private_message(
-        &self,
-        user_id: &str,
-        message: &str,
-        formatted_message: &str,
-    ) -> Result<(), OnetError> {
-        self.matrix()
-            .send_private_message(user_id, message, Some(formatted_message))
-            .await?;
-        Ok(())
-    }
-
-    pub async fn send_public_message(
-        &self,
-        message: &str,
-        formatted_message: &str,
-    ) -> Result<(), OnetError> {
-        self.matrix()
-            .send_public_message(message, Some(formatted_message))
-            .await?;
-        Ok(())
-    }
-
     /// Spawn and restart on error
     pub fn spawn() {
         let config = CONFIG.clone();
@@ -233,7 +210,8 @@ fn spawn_and_restart_on_error() {
                         error!("{}", e);
                         let message = format!("On hold for {} min!", config.error_interval);
                         let formatted_message = format!("<br/>🚨 An error was raised -> <code>onet</code> on hold for {} min while rescue is on the way 🚁 🚒 🚑 🚓<br/><br/>", config.error_interval);
-                        t.send_public_message(&message, &formatted_message)
+                        t.matrix()
+                            .send_public_message(&message, Some(&formatted_message))
                             .await
                             .unwrap();
                         thread::sleep(time::Duration::from_secs(60 * config.error_interval));
