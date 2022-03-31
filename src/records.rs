@@ -306,6 +306,75 @@ impl Records {
             None
         }
     }
+
+    pub fn remove(&mut self, epoch_key: EpochKey) {
+        // Maps that need to be cleaned up
+        // blocks: HashMap<BlockKey, BlockNumber>,
+        // authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
+        // addresses: HashMap<AddressKey, AuthorityIndex>,
+        // authority_records: HashMap<RecordKey, AuthorityRecord>,
+        // para_records: HashMap<RecordKey, ParaRecord>,
+
+        let mut counter = 0;
+        // Remove blocks map
+        if self
+            .blocks
+            .remove(&BlockKey(epoch_key.clone(), BlockKind::Start))
+            .is_some()
+        {
+            counter += 1;
+        }
+        if self
+            .blocks
+            .remove(&BlockKey(epoch_key.clone(), BlockKind::End))
+            .is_some()
+        {
+            counter += 1;
+        }
+
+        if let Some(authority_indexes) = self.authorities.get(&epoch_key.clone()) {
+            for auth_idx in authority_indexes.iter() {
+                // get authority address first
+                if let Some(authority_record) = self
+                    .authority_records
+                    .get(&RecordKey(epoch_key.clone(), *auth_idx))
+                {
+                    // remove authority address from addresses map
+                    if self
+                        .addresses
+                        .remove(&AddressKey(
+                            epoch_key.clone(),
+                            authority_record.address.to_string(),
+                        ))
+                        .is_some()
+                    {
+                        counter += 1;
+                    }
+                    // remove para record
+                    if self
+                        .para_records
+                        .remove(&RecordKey(epoch_key.clone(), *auth_idx))
+                        .is_some()
+                    {
+                        counter += 1;
+                    }
+                }
+                // remove authority records
+                if self
+                    .authority_records
+                    .remove(&RecordKey(epoch_key.clone(), *auth_idx))
+                    .is_some()
+                {
+                    counter += 1;
+                }
+            }
+        }
+        // remove authorities
+        if self.authorities.remove(&epoch_key.clone()).is_some() {
+            counter += 1;
+        }
+        info!("Removed {} keys from records for {:?}", counter, epoch_key);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -520,6 +589,21 @@ impl Subscribers {
             let key = EpochKey(self.current_era, self.current_epoch);
             self.subscribers.get(&key)
         }
+    }
+
+    pub fn remove(&mut self, epoch_key: EpochKey) {
+        // Maps that need to be cleaned up
+        // subscribers: HashMap<EpochKey, Vec<(AccountId32, UserID)>>,
+
+        let mut counter = 0;
+        // remove subscribers
+        if self.subscribers.remove(&epoch_key.clone()).is_some() {
+            counter += 1;
+        }
+        info!(
+            "Removed {} keys from subscribers for {:?}",
+            counter, epoch_key
+        );
     }
 }
 
