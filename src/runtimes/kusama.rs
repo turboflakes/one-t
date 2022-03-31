@@ -540,19 +540,21 @@ pub async fn run_para_report(
                             }
                         }
                     }
+
+                    // Send report only if para records available
+                    let report = Report::from(data);
+
+                    onet.matrix()
+                        .send_private_message(
+                            user_id,
+                            &report.message(),
+                            Some(&report.formatted_message()),
+                        )
+                        .await?;
+                    // NOTE: To not overflow matrix with messages just send maximum 2 per second
+                    thread::sleep(time::Duration::from_millis(500));
                 }
             }
-            let report = Report::from(data);
-
-            onet.matrix()
-                .send_private_message(
-                    user_id,
-                    &report.message(),
-                    Some(&report.formatted_message()),
-                )
-                .await?;
-            // NOTE: To not overflow matrix with messages just send maximum 2 per second
-            thread::sleep(time::Duration::from_millis(500));
         }
     }
 
