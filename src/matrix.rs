@@ -695,7 +695,7 @@ impl Matrix {
 
     pub async fn reply_help(&self) -> Result<(), MatrixError> {
         let mut message = String::from("✨ Supported commands:\n");
-        message.push_str("!subscribe <Stash Address> - Subscribe to validator performance report. At the end of an epoch, if the validator was acting as Para Validator for the previous epoch, then a report is sent via DM.\n");
+        message.push_str("!subscribe <Stash Address> - Subscribe the <Stash Address> to the Validator Performance Report. At the end of an epoch, if the validator was acting as Para Validator for the previous epoch then a report is sent via DM.\n");
         message.push_str(
             "!unsubscribe <Stash Address> - Unsubscribe the <Stash Address> from the validator performance report subscribers list.\n",
         );
