@@ -378,7 +378,7 @@ impl From<RawData> for Report {
         // Network info
         report.add_break();
         report.add_raw_text(format!(
-            "📒 Era Report → <b>{}//{}</b>",
+            "📒 Network Report → <b>{}//{}</b>",
             data.network.name, data.session.active_era_index,
         ));
         report.add_raw_text(format!(
