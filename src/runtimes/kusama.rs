@@ -610,10 +610,7 @@ pub async fn run_network_report() -> Result<(), OnetError> {
     let mut validators: Validators = Vec::new();
 
     // Load TVP stashes
-    let tvp_stashes: Vec<AccountId32> = match try_fetch_stashes_from_remote_url("kusama").await? {
-        Some(stashes) => stashes,
-        None => Vec::new(), // TODO load stashes from previoust request saved in a local temp file
-    };
+    let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url().await?;
 
     // Fetch all validators
     let mut all_validators = api.storage().staking().validators_iter(None).await?;

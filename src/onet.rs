@@ -27,11 +27,13 @@ use crate::runtimes::{
 };
 use log::{debug, error, info, warn};
 use reqwest::Url;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     convert::TryInto,
+    fs,
     fs::File,
     io::{BufRead, BufReader},
+    path::Path,
     result::Result,
     str::FromStr,
     thread, time,
@@ -41,6 +43,8 @@ use subxt::{
     sp_runtime::AccountId32,
     Client, ClientBuilder, DefaultConfig,
 };
+
+const TVP_VALIDATORS_FILENAME: &str = ".tvp";
 
 type Message = Vec<String>;
 
@@ -225,32 +229,60 @@ fn spawn_and_restart_on_error() {
     async_std::task::block_on(t);
 }
 
-type ValidatorsFromTVP = Vec<ValidatorFromTVP>;
-
-#[derive(Deserialize, Debug)]
-struct ValidatorFromTVP {
+#[derive(Serialize, Deserialize, Debug)]
+struct Validator {
     #[serde(default)]
     stash: String,
 }
 
+fn read_tvp_cached_filename(filename: &str) -> Result<Vec<Validator>, OnetError> {
+    // Try to read from cached file
+    if Path::new(filename).exists() {
+        let serialized = fs::read_to_string(filename)?;
+        let validators: Vec<Validator> = serde_json::from_str(&serialized).unwrap();
+        Ok(validators)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
 /// Fetch stashes from 1kv endpoint https://polkadot.w3f.community/candidates
-pub async fn try_fetch_stashes_from_remote_url(
-    chain_name: &str,
-) -> Result<Option<Vec<AccountId32>>, OnetError> {
+pub async fn try_fetch_stashes_from_remote_url() -> Result<Vec<AccountId32>, OnetError> {
+    let config = CONFIG.clone();
     let url = format!(
         "https://{}.w3f.community/candidates",
-        chain_name.to_lowercase()
+        config.chain_name.to_lowercase()
     );
     let url = Url::parse(&*url)?;
 
-    let validators: ValidatorsFromTVP = reqwest::get(url).await?.json().await?;
-    debug!("validators {:?}", validators);
+    let tvp_validators_filename = format!(
+        "{}{}_{}",
+        config.data_path,
+        TVP_VALIDATORS_FILENAME,
+        config.chain_name.to_lowercase()
+    );
 
+    let validators: Vec<Validator> = if let Ok(request) = reqwest::get(url).await {
+        if let Ok(validators) = request.json::<Vec<Validator>>().await {
+            debug!("validators {:?}", validators);
+            // Serialize and cache
+            let serialized = serde_json::to_string(&validators)?;
+            fs::write(&tvp_validators_filename, serialized)?;
+            validators
+        } else {
+            // Try to read from cached file
+            read_tvp_cached_filename(&tvp_validators_filename)?
+        }
+    } else {
+        read_tvp_cached_filename(&tvp_validators_filename)?
+    };
+
+    // Parse stashes
     let v: Vec<AccountId32> = validators
         .iter()
         .map(|x| AccountId32::from_str(&x.stash).unwrap())
         .collect();
-    Ok(Some(v))
+    Ok(v)
 }
 
 pub fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {
