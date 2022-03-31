@@ -405,8 +405,9 @@ impl Matrix {
                                 } else {
                                     fs::write(&subscribers_filename, subscriber)?;
                                 }
-                                let message = format!("📥 {who} subscribed report for {stash}");
-                                self.send_public_message(&message, None).await?;
+                                let message = format!("📥 {who} subscribed <i>Val. Performance Report</i> for {stash}");
+                                self.send_private_message(who, &message, Some(&message))
+                                    .await?;
                             } else {
                                 let message = format!("{who} supplied an invalid address.");
                                 self.send_public_message(&message, None).await?;
@@ -424,8 +425,8 @@ impl Matrix {
                                         &subscribers_filename,
                                         subscribers.replace(&subscriber, ""),
                                     )?;
-                                    let message = format!("🗑️ {who} unsubscribed {stash} report");
-                                    self.send_public_message(&message, None).await?;
+                                    let message = format!("🗑️ {who} unsubscribed {stash}");
+                                    self.send_private_message(who, &message, None).await?;
                                 }
                             }
                         }
@@ -694,9 +695,9 @@ impl Matrix {
 
     pub async fn reply_help(&self) -> Result<(), MatrixError> {
         let mut message = String::from("✨ Supported commands:\n");
-        message.push_str("!subscribe <Stash Address> - Subscribe to validator <Stash Address> performance report. Sent at the end of an epoch.\n");
+        message.push_str("!subscribe <Stash Address> - Subscribe to validator performance report. At the end of an epoch, if the validator was acting as Para Validator for the previous epoch, then a report is sent via DM.\n");
         message.push_str(
-            "!unsubscribe <Stash Address> - Unsubscribe to the validator <Stash Address> performance report.\n",
+            "!unsubscribe <Stash Address> - Unsubscribe the <Stash Address> from the validator performance report subscribers list.\n",
         );
         // message.push_str("!report - Send validator \\<Stash Address\\> performance report for the current epoch.\n");
         message.push_str("!help - Print this message.\n");
