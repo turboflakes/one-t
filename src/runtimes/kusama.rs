@@ -300,8 +300,18 @@ pub async fn switch_new_session(
         }
     }
 
-    // Initialize records for new
+    // Initialize records for new epoch
     initialize_records(&onet, records).await?;
+
+    // Remove older keys, default is to a maximum of 2 completed eras
+    records.remove(EpochKey(
+        records.current_era() - 2,
+        records.current_epoch() - 12,
+    ));
+    subscribers.remove(EpochKey(
+        records.current_era() - 2,
+        records.current_epoch() - 12,
+    ));
 
     // Send report from previous session
     let era_index: u32 = if current_era_index != previous_era_index {
@@ -549,13 +559,9 @@ pub async fn run_para_report(
     Ok(())
 }
 
-pub async fn try_run_network_report(new_session_index: EpochIndex) -> Result<(), OnetError> {
-    let config = CONFIG.clone();
-    // Note: For now just trigger the callout message and network report once a day for Polkadot and Kusama
-    // Verify if the remainder of the session_index divided by the session rate equals zero
-    let remainder = new_session_index as f64 % config.session_rate as f64;
-    if remainder == 0.0_f64 {
-        // Trigger report
+pub async fn try_run_network_report(epoch_index: EpochIndex) -> Result<(), OnetError> {
+    // Trigger network report every 6 epochs (every era)
+    if (epoch_index as f64 % 6.0_f64) == 0.0_f64 {
         async_std::task::spawn(async move {
             if let Err(e) = run_network_report().await {
                 error!("Network report error: {:?}", e);
@@ -580,6 +586,9 @@ pub async fn run_network_report() -> Result<(), OnetError> {
         None => return Err("Active era not available".into()),
     };
 
+    // Fetch current epoch
+    let current_session_index = api.storage().session().current_index(None).await?;
+
     // Fetch active era total stake
 
     let active_era_total_stake = api
@@ -591,6 +600,7 @@ pub async fn run_network_report() -> Result<(), OnetError> {
     // Set era/session details
     let session = Session {
         active_era_index,
+        current_session_index,
         active_era_total_stake,
         ..Default::default()
     };
@@ -667,12 +677,14 @@ pub async fn run_network_report() -> Result<(), OnetError> {
         .send_public_message(&report.message(), Some(&report.formatted_message()))
         .await?;
 
-    // Trigger callout message to public rooms
-    let callout = Report::callout(data);
-    onet.matrix()
-        .send_callout_message(&callout.message(), Some(&callout.formatted_message()))
-        .await?;
-
+    // Trigger callout message to public rooms at the rate defined in config
+    let r = current_session_index as f64 % config.matrix_callout_epoch_rate as f64;
+    if r == 0.0_f64 {
+        let callout = Report::callout(data);
+        onet.matrix()
+            .send_callout_message(&callout.message(), Some(&callout.formatted_message()))
+            .await?;
+    }
     Ok(())
 }
 

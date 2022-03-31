@@ -72,8 +72,8 @@ fn default_maximum_history_eras() -> u32 {
     8
 }
 
-/// provides default value for session_rate if ONET_SESSION_RATE env var is not set
-fn default_session_rate() -> u32 {
+/// provides default value for callout_epoch_rate if ONET_MATRIX_CALLOUT_EPOCH_RATE env var is not set
+fn default_matrix_callout_epoch_rate() -> u32 {
     6
 }
 
@@ -92,8 +92,6 @@ pub struct Config {
     pub maximum_subscribers: u32,
     #[serde(default = "default_maximum_history_eras")]
     pub maximum_history_eras: u32,
-    #[serde(default = "default_session_rate")]
-    pub session_rate: u32,
     #[serde(default)]
     pub is_debug: bool,
     // matrix configuration
@@ -101,6 +99,8 @@ pub struct Config {
     pub matrix_public_room: String,
     #[serde(default)]
     pub matrix_callout_public_rooms: Vec<String>,
+    #[serde(default = "default_matrix_callout_epoch_rate")]
+    pub matrix_callout_epoch_rate: u32,
     #[serde(default)]
     pub matrix_bot_user: String,
     #[serde(default)]
@@ -211,10 +211,10 @@ fn get_config() -> Config {
             .help("Maximum number of history eras for which `onet` will calculate the average of points collected. The maximum value supported is the one defined by the constant history_depth which normal value is 84. [default: 8]")
     )
     .arg(
-      Arg::with_name("session-rate")
-            .long("session-rate")
+      Arg::with_name("matrix-callout-epoch-rate")
+            .long("matrix-callout-epoch-rate")
             .takes_value(true)
-            .help("The frequency at which the full report is triggered. Recommended every 6 sessions on Polkadot (24 hours) and every 24 sessions on Kusama (24 hours). [default: 6]")
+            .help("The frequency at which the callout message is triggered. Recommended every 6 sessions on Polkadot (24 hours) and every 24 sessions on Kusama (24 hours). [default: 6]")
     )
     .arg(
       Arg::with_name("config-path")
@@ -303,6 +303,10 @@ fn get_config() -> Config {
             "ONET_MATRIX_CALLOUT_PUBLIC_ROOMS",
             matrix_callout_public_rooms,
         );
+    }
+
+    if let Some(matrix_callout_epoch_rate) = matches.value_of("matrix-callout-epoch-rate") {
+        env::set_var("ONET_MATRIX_CALLOUT_EPOCH_RATE", matrix_callout_epoch_rate);
     }
 
     if let Some(matrix_bot_user) = matches.value_of("matrix-bot-user") {
