@@ -455,9 +455,11 @@ fn total_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a
         .len();
 
     report.add_raw_text(format!(
-        "{} validators in total {}: {} ({:.2}%) • {} ({:.2}%) • <b>{} ({:.2}%)</b>",
-        data.network.name,
-        total,
+        "{} validators in total {}:",
+        data.network.name, total,
+    ));
+    report.add_raw_text(format!(
+        "‣ {} ({:.2}%) • {} ({:.2}%) • <b>{} ({:.2}%)</b>",
         total_c100,
         (total_c100 as f32 / total as f32) * 100.0,
         total_non_tvp,
@@ -465,6 +467,7 @@ fn total_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a
         total_tvp,
         (total_tvp as f32 / total as f32) * 100.0,
     ));
+    report.add_break();
 
     report
 }
@@ -503,10 +506,13 @@ fn active_validators_report<'a>(
         .len();
 
     report.add_raw_text(format!(
-        "Active {}{} ({:.2}%): {} ({:.2}%) • {} ({:.2}%) • <b>{} ({:.2}%)</b>",
+        "Active {}{} ({:.2}%):",
         start_with.unwrap_or_default(),
         total_active,
         (total_active as f32 / total as f32) * 100.0,
+    ));
+    report.add_raw_text(format!(
+        "‣ {} ({:.2}%) • {} ({:.2}%) • <b>{} ({:.2}%)</b>",
         total_c100,
         (total_c100 as f32 / total_active as f32) * 100.0,
         total_non_tvp,
@@ -514,6 +520,7 @@ fn active_validators_report<'a>(
         total_tvp,
         (total_tvp as f32 / total_active as f32) * 100.0,
     ));
+    report.add_break();
 
     report
 }
@@ -549,24 +556,33 @@ fn own_stake_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
     let avg_c100: u128 = c100.iter().sum::<u128>() / c100.len() as u128;
 
     report.add_raw_text(format!(
-        "Average, minimum and maximum validator self stake in {}: {} ({:.2}, {:.0}) • {} ({:.2}, {:.0}) • <b>{} ({:.2}, {:.0})</b>",
+        "Average, minimum and maximum validator self stake in {}:",
         data.network.token_symbol,
+    ));
+    report.add_raw_text(format!(
+        "‣ {} ({:.2}, {:.0}) • {} ({:.2}, {:.0}) • <b>{} ({:.2}, {:.0})</b>",
         avg_c100 / 10u128.pow(data.network.token_decimals as u32),
         *c100.iter().min().unwrap() as f64 / 10u128.pow(data.network.token_decimals as u32) as f64,
         *c100.iter().max().unwrap() as f64 / 10u128.pow(data.network.token_decimals as u32) as f64,
         avg_non_tvp / 10u128.pow(data.network.token_decimals as u32),
-        *non_tvp.iter().min().unwrap() as f64 / 10u128.pow(data.network.token_decimals as u32) as f64,
-        *non_tvp.iter().max().unwrap() as f64 / 10u128.pow(data.network.token_decimals as u32) as f64,
+        *non_tvp.iter().min().unwrap() as f64
+            / 10u128.pow(data.network.token_decimals as u32) as f64,
+        *non_tvp.iter().max().unwrap() as f64
+            / 10u128.pow(data.network.token_decimals as u32) as f64,
         avg_tvp / 10u128.pow(data.network.token_decimals as u32),
         *tvp.iter().min().unwrap() as f64 / 10u128.pow(data.network.token_decimals as u32) as f64,
         *tvp.iter().max().unwrap() as f64 / 10u128.pow(data.network.token_decimals as u32) as f64,
     ));
+    report.add_break();
+
+    report.add_raw_text(format!("Validator contributions for network security:"));
     report.add_raw_text(format!(
-        "Validator contributions for network security: {:.2}% • {:.2}% • <b>{:.2}%</b>",
+        "‣ {:.2}% • {:.2}% • <b>{:.2}%</b>",
         (c100.iter().sum::<u128>() as f64 / total as f64) * 100.0,
         (non_tvp.iter().sum::<u128>() as f64 / total as f64) * 100.0,
         (tvp.iter().sum::<u128>() as f64 / total as f64) * 100.0,
     ));
+    report.add_break();
 
     report
 }
@@ -605,9 +621,12 @@ fn oversubscribed_validators_report<'a>(report: &'a mut Report, data: &'a RawDat
         .len();
 
     report.add_raw_text(format!(
-        "Oversubscribed {} ({:.2}%): {} ({:.2}%) • {} ({:.2}%) • <b>{} ({:.2}%)</b>",
+        "Oversubscribed {} ({:.2}%):",
         total_over,
-        (total_over as f32 / total as f32) * 100.0,
+        (total_over as f32 / total as f32) * 100.0
+    ));
+    report.add_raw_text(format!(
+        "‣ {} ({:.2}%) • {} ({:.2}%) • <b>{} ({:.2}%)</b>",
         total_c100,
         (total_c100 as f32 / total_over as f32) * 100.0,
         total_non_tvp,
@@ -615,6 +634,7 @@ fn oversubscribed_validators_report<'a>(report: &'a mut Report, data: &'a RawDat
         total_tvp,
         (total_tvp as f32 / total_over as f32) * 100.0,
     ));
+    report.add_break();
 
     report
 }
@@ -662,16 +682,28 @@ fn avg_points_collected_report<'a>(report: &'a mut Report, data: &'a RawData) ->
     let avg_total_eras_points_c100 = total_eras_points_c100.1 / total_eras_points_c100.0;
 
     report.add_raw_text(format!(
-        "On average {} points/validator/era collected in the last {} eras: {} {} • {} {} • <b>{} {}</b>",
-        avg_total_eras_points,
-        config.maximum_history_eras,
-        trend(avg_total_eras_points_c100.into(), avg_total_eras_points.into()),
+        "On average {} points/validator/era collected in the last {} eras:",
+        avg_total_eras_points, config.maximum_history_eras,
+    ));
+    report.add_raw_text(format!(
+        "‣ {} {} • {} {} • <b>{} {}</b>",
+        trend(
+            avg_total_eras_points_c100.into(),
+            avg_total_eras_points.into()
+        ),
         avg_total_eras_points_c100,
-        trend(avg_total_eras_points_non_tvp.into(), avg_total_eras_points.into()),
+        trend(
+            avg_total_eras_points_non_tvp.into(),
+            avg_total_eras_points.into()
+        ),
         avg_total_eras_points_non_tvp,
-        trend(avg_total_eras_points_tvp.into(), avg_total_eras_points.into()),
+        trend(
+            avg_total_eras_points_tvp.into(),
+            avg_total_eras_points.into()
+        ),
         avg_total_eras_points_tvp,
     ));
+    report.add_break();
 
     report
 }
@@ -722,19 +754,21 @@ fn inclusion_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         .len();
 
     report.add_raw_text(format!(
-        "Participation in the last {} eras: {:.2}% • {:.2}% • <b>{:.2}%</b>",
+        "Participation in the last {} eras:",
         config.maximum_history_eras,
+    ));
+    report.add_raw_text(format!(
+        "‣ {:.2}% • {:.2}% • <b>{:.2}%</b>",
         (total_c100_with_points as f32 / total_c100 as f32) * 100.0,
         (total_non_tvp_with_points as f32 / total_non_tvp as f32) * 100.0,
         (total_tvp_with_points as f32 / total_tvp as f32) * 100.0,
     ));
+    report.add_break();
 
     report
 }
 
 fn top_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a Report {
-    report.add_break();
-
     let config = CONFIG.clone();
 
     // Sort TVP by avg points for validators that had at least 1/3 of max eras
