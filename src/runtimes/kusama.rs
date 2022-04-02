@@ -29,7 +29,8 @@ use crate::records::{
     ParaId, ParaRecord, ParaStats, Points, Records, Subscribers,
 };
 use crate::report::{
-    Callout, Network, RawData, RawDataPara, Report, Session, Subset, Validator, Validators,
+    Callout, Network, RawData, RawDataGroup, RawDataPara, Report, Session, Subset, Validator,
+    Validators,
 };
 
 use async_recursion::async_recursion;
@@ -559,6 +560,90 @@ pub async fn run_para_report(
     }
 
     Ok(())
+}
+
+pub async fn run_group_report(
+    era_index: EraIndex,
+    epoch_index: EpochIndex,
+    records: &Records,
+    // subscribers: &Subscribers,
+) -> Result<(), OnetError> {
+    let onet: Onet = Onet::new().await;
+    let client = onet.client();
+    
+    let network = Network::load(client).await?;
+
+    // Set era/session details
+    let start_block = records
+        .start_block(EpochKey(era_index, epoch_index))
+        .unwrap_or(&0);
+    let end_block = records
+        .end_block(EpochKey(era_index, epoch_index))
+        .unwrap_or(&0);
+    let session = Session {
+        active_era_index: era_index,
+        current_session_index: epoch_index,
+        start_block: *start_block,
+        end_block: *end_block,
+        ..Default::default()
+    };
+
+    // Populate some maps to get ranks
+    let mut group_authorities_map: BTreeMap<u32, Vec<(AuthorityRecord, String, u32)>> = BTreeMap::new();
+
+    if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
+        for authority_idx in authorities.iter() {
+            if let Some(para_record) =
+                records.get_para_record(*authority_idx, Some(EpochKey(era_index, epoch_index)))
+            {
+                if let Some(group_idx) = para_record.group() {
+                    if let Some(authority_record) = records.get_authority_record(
+                        *authority_idx,
+                        Some(EpochKey(era_index, epoch_index)),
+                    ) {
+                        // collect core_assignments
+                        let core_assignments: u32 = para_record
+                            .para_stats()
+                            .iter()
+                            .map(|(_, s)| s.core_assignments())
+                            .sum();
+
+                        // get validator name
+                        let name =
+                            get_display_name(&onet, &authority_record.address(), None).await?;
+                        let auths = group_authorities_map.entry(group_idx).or_insert(Vec::new());
+                        auths.push((authority_record.clone(), name, core_assignments));
+                        auths.sort_by(|(a, _, _), (b, _, _)| b.points().cmp(&a.points()));
+                    }
+                }
+            }
+        }
+    }
+
+    // Convert map to vec and sort group by points
+    let mut group_authorities_sorted = Vec::from_iter(group_authorities_map);
+    group_authorities_sorted.sort_by(|(_, a), (_, b)| {
+        b.iter()
+            .map(|x| x.0.points())
+            .sum::<Points>()
+            .cmp(&a.iter().map(|x| x.0.points()).sum::<Points>())
+    });
+
+    let data = RawDataGroup {
+        network: network.clone(),
+        session: session.clone(),
+        groups: group_authorities_sorted.clone(),
+    };
+
+    // Send report only if para records available
+    let report = Report::from(data);
+
+    onet.matrix()
+        .send_public_message(&report.message(), Some(&report.formatted_message()))
+        .await?;
+
+    Ok(())
+
 }
 
 pub async fn try_run_network_report(epoch_index: EpochIndex) -> Result<(), OnetError> {

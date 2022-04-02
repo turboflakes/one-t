@@ -497,7 +497,7 @@ impl ParaRecord {
         self.core = Some(core);
 
         // increment current points, increment core assignments and increment authored blocks
-        let mut stats = self
+        let stats = self
             .para_stats
             .entry(para_id)
             .or_insert(ParaStats::default());
