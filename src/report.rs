@@ -20,7 +20,7 @@
 // SOFTWARE.
 use crate::config::CONFIG;
 use crate::errors::OnetError;
-use crate::records::{AuthorityIndex, AuthorityRecord, ParaId, ParaRecord, Points};
+use crate::records::{AuthorityIndex, AuthorityRecord, ParaId, ParaRecord, ParaStats, Points};
 use crate::stats::mean;
 use log::info;
 use rand::Rng;
@@ -150,6 +150,13 @@ pub struct RawDataGroup {
     pub groups: Vec<(u32, Vec<(AuthorityRecord, String, u32)>)>,
 }
 
+#[derive(Debug)]
+pub struct RawDataParachains {
+    pub network: Network,
+    pub session: Session,
+    pub parachains: Vec<(ParaId, ParaStats)>,
+}
+
 type Body = Vec<String>;
 
 pub struct Report {
@@ -243,6 +250,62 @@ impl From<RawDataGroup> for Report {
                 ));
             }
             clode_block.push_str("\n");
+        }
+        clode_block.push_str("\n</code></pre>");
+        report.add_raw_text(clode_block);
+
+        report.add_raw_text("___".into());
+        report.add_break();
+
+        // Log report
+        report.log();
+
+        report
+    }
+}
+
+impl From<RawDataParachains> for Report {
+    /// Converts a ONE-T `RawData` into a [`Report`].
+    fn from(data: RawDataParachains) -> Report {
+        let mut report = Report::new();
+
+        // Thor package
+        report.add_raw_text(format!(
+            "🤖 <code>{} v{}</code>",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION")
+        ));
+
+        // Network info
+        report.add_break();
+        report.add_raw_text(format!(
+            "📮 Parachains Performance Report → <b>{}//{}//{}</b>",
+            data.network.name, data.session.active_era_index, data.session.current_session_index
+        ));
+        report.add_raw_text(format!(
+            "<i>{} blocks recorded from #{} to #{}</i>",
+            data.session.end_block - data.session.start_block,
+            data.session.start_block,
+            data.session.end_block
+        ));
+        report.add_break();
+
+        // Parachains info
+        let mut clode_block = String::from("<pre><code>");
+
+        clode_block.push_str(&format!(
+            "{:<5}{:<9}{:>6}{:>8}{:>8}\n",
+            "#", "PARACHAIN", "↻", "❒", "PTS"
+        ));
+        for (i, (para_id, stats)) in data.parachains.iter().enumerate() {
+            clode_block.push_str(&format!(
+                "{:<5}{:<9}{:>6}{:>8}{:>8}\n",
+                format!("#{}", i + 1),
+                para_id,
+                stats.core_assignments() / 5,
+                stats.authored_blocks(),
+                stats.points()
+            ));
         }
         clode_block.push_str("\n</code></pre>");
         report.add_raw_text(clode_block);

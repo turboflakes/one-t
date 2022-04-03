@@ -29,8 +29,8 @@ use crate::records::{
     ParaId, ParaRecord, ParaStats, Points, Records, Subscribers,
 };
 use crate::report::{
-    Callout, Network, RawData, RawDataGroup, RawDataPara, Report, Session, Subset, Validator,
-    Validators,
+    Callout, Network, RawData, RawDataGroup, RawDataPara, RawDataParachains, Report, Session,
+    Subset, Validator, Validators,
 };
 
 use async_recursion::async_recursion;
@@ -326,10 +326,10 @@ pub async fn switch_new_session(
     async_std::task::spawn(async move {
         let epoch_index = records_cloned.current_epoch() - 1;
         if let Err(e) =
-            run_para_report(era_index, epoch_index, &records_cloned, &subscribers_cloned).await
+            run_val_perf_report(era_index, epoch_index, &records_cloned, &subscribers_cloned).await
         {
             error!(
-                "Para report error for era_index: {} epoch_index: {} error: {:?}",
+                "Val. Performance Report error for era_index: {} epoch_index: {} error: {:?}",
                 era_index, epoch_index, e
             );
         }
@@ -414,7 +414,7 @@ pub async fn track_records(
     Ok(())
 }
 
-pub async fn run_para_report(
+pub async fn run_val_perf_report(
     era_index: EraIndex,
     epoch_index: EpochIndex,
     records: &Records,
@@ -570,7 +570,7 @@ pub async fn run_group_report(
 ) -> Result<(), OnetError> {
     let onet: Onet = Onet::new().await;
     let client = onet.client();
-    
+
     let network = Network::load(client).await?;
 
     // Set era/session details
@@ -589,7 +589,8 @@ pub async fn run_group_report(
     };
 
     // Populate some maps to get ranks
-    let mut group_authorities_map: BTreeMap<u32, Vec<(AuthorityRecord, String, u32)>> = BTreeMap::new();
+    let mut group_authorities_map: BTreeMap<u32, Vec<(AuthorityRecord, String, u32)>> =
+        BTreeMap::new();
 
     if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
         for authority_idx in authorities.iter() {
@@ -643,7 +644,79 @@ pub async fn run_group_report(
         .await?;
 
     Ok(())
+}
 
+pub async fn run_parachains_report(
+    era_index: EraIndex,
+    epoch_index: EpochIndex,
+    records: &Records,
+    // subscribers: &Subscribers,
+) -> Result<(), OnetError> {
+    let onet: Onet = Onet::new().await;
+    let client = onet.client();
+    let api = client.clone().to_runtime_api::<Api>();
+
+    // Fetch parachains list
+    // TODO: get parachains names
+    let mut parachains: Vec<ParaId> = Vec::new();
+    for Id(para_id) in api.storage().paras().parachains(None).await? {
+        parachains.push(para_id);
+    }
+    let network = Network::load(client).await?;
+
+    // Set era/session details
+    let start_block = records
+        .start_block(EpochKey(era_index, epoch_index))
+        .unwrap_or(&0);
+    let end_block = records
+        .end_block(EpochKey(era_index, epoch_index))
+        .unwrap_or(&0);
+    let session = Session {
+        active_era_index: era_index,
+        current_session_index: epoch_index,
+        start_block: *start_block,
+        end_block: *end_block,
+        ..Default::default()
+    };
+
+    // Populate some maps to get ranks
+    let mut parachains_map: BTreeMap<ParaId, ParaStats> = BTreeMap::new();
+
+    if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
+        for authority_idx in authorities.iter() {
+            if let Some(para_record) =
+                records.get_para_record(*authority_idx, Some(EpochKey(era_index, epoch_index)))
+            {
+                for (para_id, stats) in para_record.para_stats().iter() {
+                    let s = parachains_map
+                        .entry(*para_id)
+                        .or_insert(ParaStats::default());
+                    s.points += stats.points();
+                    s.core_assignments += stats.core_assignments();
+                    s.authored_blocks += stats.authored_blocks();
+                }
+            }
+        }
+    }
+
+    // Convert map to vec and sort group by points
+    let mut parachains_sorted = Vec::from_iter(parachains_map);
+    parachains_sorted.sort_by(|(_, a), (_, b)| b.points().cmp(&a.points()));
+
+    let data = RawDataParachains {
+        network: network.clone(),
+        session: session.clone(),
+        parachains: parachains_sorted.clone(),
+    };
+
+    // Send report only if para records available
+    let report = Report::from(data);
+
+    onet.matrix()
+        .send_public_message(&report.message(), Some(&report.formatted_message()))
+        .await?;
+
+    Ok(())
 }
 
 pub async fn try_run_network_report(epoch_index: EpochIndex) -> Result<(), OnetError> {
