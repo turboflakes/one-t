@@ -1,6 +1,6 @@
 [package]
 name = "onet"
-version = "0.3.2"
+version = "0.3.3"
 authors = ["Paulo <paulo@turboflakes.io>"]
 description = "ONE-T is a performance report bot for the Polkadot and Kusama network with a special focus on the One Thousand validator programme" 
 edition = "2018"
@@ -14,7 +14,7 @@ log = "0.4"
 clap = "2.33"
 lazy_static = "1.4"
 derive_more = "0.99"
-async-recursion = "0.3.2"
+async-recursion = "0.3.3"
 serde = "1.0.132"
 serde_json = "1.0.68"
 thiserror = "^1.0.24"
