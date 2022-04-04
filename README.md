@@ -96,4 +96,4 @@ Tips are welcome
 
 __
 
-Enjoy `ONE-T`
+Enjoy ONE-T
