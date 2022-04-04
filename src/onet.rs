@@ -318,7 +318,7 @@ pub fn get_subscribers_by_epoch(
     let config = CONFIG.clone();
     let subscribers_filename = format!(
         "{}{}.{}.{}",
-        config.data_path, MATRIX_SUBSCRIBERS_FILENAME, report_type, epoch
+        config.data_path, MATRIX_SUBSCRIBERS_FILENAME, report_type.to_string().to_lowercase(), epoch
     );
     let mut out: Vec<UserID> = Vec::new();
     let file = File::open(&subscribers_filename)?;
