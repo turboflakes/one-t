@@ -251,6 +251,7 @@ impl From<RawDataGroup> for Report {
             }
             clode_block.push_str("\n");
         }
+
         clode_block.push_str("\n</code></pre>");
         report.add_raw_text(clode_block);
 

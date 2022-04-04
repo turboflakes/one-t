@@ -21,8 +21,10 @@
 
 use crate::config::CONFIG;
 use crate::errors::OnetError;
+use crate::matrix::ReportType;
 use crate::onet::{
-    get_account_id_from_storage_key, get_subscribers, try_fetch_stashes_from_remote_url, Onet,
+    get_account_id_from_storage_key, get_subscribers, get_subscribers_by_epoch,
+    try_fetch_stashes_from_remote_url, Onet, EPOCH_FILENAME,
 };
 use crate::records::{
     decode_authority_index, AuthorityIndex, AuthorityRecord, EpochIndex, EpochKey, EraIndex,
@@ -37,7 +39,7 @@ use async_recursion::async_recursion;
 use futures::StreamExt;
 use log::{debug, error, info};
 use std::{
-    collections::BTreeMap, convert::TryInto, iter::FromIterator, result::Result, thread, time,
+    collections::BTreeMap, convert::TryInto, fs, iter::FromIterator, result::Result, thread, time,
 };
 use subxt::{sp_runtime::AccountId32, DefaultConfig, DefaultExtra};
 
@@ -59,6 +61,7 @@ use node_runtime::{
 type Api = node_runtime::RuntimeApi<DefaultConfig, DefaultExtra<DefaultConfig>>;
 
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
     let client = onet.client().clone();
     let api = client.to_runtime_api::<Api>();
 
@@ -77,6 +80,9 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
     // Fetch current session index
     let session_index = api.storage().session().current_index(None).await?;
+    // Cache current epoch
+    let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
+    fs::write(&epoch_filename, session_index.to_string())?;
 
     // Subscribers
     let mut subscribers = Subscribers::with_era_and_epoch(era_index, session_index);
@@ -125,7 +131,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                 // Update current block number
                 records.set_current_block_number(block_number.into());
 
-                track_records(&onet, authority_index, &mut records).await?;
+                track_records(&onet, authority_index, &mut records, &subscribers).await?;
             }
         }
     }
@@ -276,6 +282,7 @@ pub async fn switch_new_session(
     subscribers: &mut Subscribers,
     records: &mut Records,
 ) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
 
@@ -333,9 +340,23 @@ pub async fn switch_new_session(
                 era_index, epoch_index, e
             );
         }
+        if let Err(e) = run_groups_report(era_index, epoch_index, &records_cloned).await {
+            error!(
+                "Val. Groups Performance Report error for era_index: {} epoch_index: {} error: {:?}",
+                era_index, epoch_index, e
+            );
+        }
+        if let Err(e) = run_parachains_report(era_index, epoch_index, &records_cloned).await {
+            error!(
+                "Parachains Performance Report error for era_index: {} epoch_index: {} error: {:?}",
+                era_index, epoch_index, e
+            );
+        }
     });
 
-    // TODO: if new era clear previous era sessions from cache
+    // Cache current epoch
+    let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
+    fs::write(&epoch_filename, new_session_index.to_string())?;
 
     Ok(())
 }
@@ -344,6 +365,7 @@ pub async fn track_records(
     onet: &Onet,
     authority_index: AuthorityIndex,
     records: &mut Records,
+    subscribers: &Subscribers,
 ) -> Result<(), OnetError> {
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
@@ -562,11 +584,10 @@ pub async fn run_val_perf_report(
     Ok(())
 }
 
-pub async fn run_group_report(
+pub async fn run_groups_report(
     era_index: EraIndex,
     epoch_index: EpochIndex,
     records: &Records,
-    // subscribers: &Subscribers,
 ) -> Result<(), OnetError> {
     let onet: Onet = Onet::new().await;
     let client = onet.client();
@@ -636,12 +657,21 @@ pub async fn run_group_report(
         groups: group_authorities_sorted.clone(),
     };
 
-    // Send report only if para records available
     let report = Report::from(data);
 
-    onet.matrix()
-        .send_public_message(&report.message(), Some(&report.formatted_message()))
-        .await?;
+    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Groups, epoch_index) {
+        for user_id in subs.iter() {
+            onet.matrix()
+                .send_private_message(
+                    user_id,
+                    &report.message(),
+                    Some(&report.formatted_message()),
+                )
+                .await?;
+            // NOTE: To not overflow matrix with messages just send maximum 2 per second
+            thread::sleep(time::Duration::from_millis(500));
+        }
+    }
 
     Ok(())
 }
@@ -650,7 +680,6 @@ pub async fn run_parachains_report(
     era_index: EraIndex,
     epoch_index: EpochIndex,
     records: &Records,
-    // subscribers: &Subscribers,
 ) -> Result<(), OnetError> {
     let onet: Onet = Onet::new().await;
     let client = onet.client();
@@ -712,9 +741,19 @@ pub async fn run_parachains_report(
     // Send report only if para records available
     let report = Report::from(data);
 
-    onet.matrix()
-        .send_public_message(&report.message(), Some(&report.formatted_message()))
-        .await?;
+    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Parachains, epoch_index) {
+        for user_id in subs.iter() {
+            onet.matrix()
+                .send_private_message(
+                    user_id,
+                    &report.message(),
+                    Some(&report.formatted_message()),
+                )
+                .await?;
+            // NOTE: To not overflow matrix with messages just send maximum 2 per second
+            thread::sleep(time::Duration::from_millis(500));
+        }
+    }
 
     Ok(())
 }

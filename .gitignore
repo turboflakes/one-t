@@ -4,4 +4,5 @@ Cargo.lock
 .next_batch
 .subscribers*
 .tvp*
+.epoch*
 bump-version.sh

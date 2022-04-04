@@ -72,6 +72,11 @@ fn default_maximum_history_eras() -> u32 {
     8
 }
 
+/// provides default value for maximum_reports if ONET_MAXIMUM_REPORTS env var is not set
+fn default_maximum_reports() -> u32 {
+    6
+}
+
 /// provides default value for callout_epoch_rate if ONET_MATRIX_CALLOUT_EPOCH_RATE env var is not set
 fn default_matrix_callout_epoch_rate() -> u32 {
     6
@@ -92,6 +97,8 @@ pub struct Config {
     pub maximum_subscribers: u32,
     #[serde(default = "default_maximum_history_eras")]
     pub maximum_history_eras: u32,
+    #[serde(default = "default_maximum_reports")]
+    pub maximum_reports: u32,
     #[serde(default)]
     pub is_debug: bool,
     // matrix configuration
@@ -211,6 +218,12 @@ fn get_config() -> Config {
             .help("Maximum number of history eras for which `onet` will calculate the average of points collected. The maximum value supported is the one defined by the constant history_depth which normal value is 84. [default: 8]")
     )
     .arg(
+      Arg::with_name("maximum-reports")
+            .long("maximum-reports")
+            .takes_value(true)
+            .help("Maximum number of reports subscribed. [default: 6]")
+    )
+    .arg(
       Arg::with_name("matrix-callout-epoch-rate")
             .long("matrix-callout-epoch-rate")
             .takes_value(true)
@@ -284,6 +297,10 @@ fn get_config() -> Config {
 
     if let Some(maximum_history_eras) = matches.value_of("maximum-history-eras") {
         env::set_var("ONET_MAXIMUM_HISTORY_ERAS", maximum_history_eras);
+    }
+
+    if let Some(maximum_reports) = matches.value_of("maximum-reports") {
+        env::set_var("ONET_MAXIMUM_REPORTS", maximum_reports);
     }
 
     if matches.is_present("disable-matrix") {
