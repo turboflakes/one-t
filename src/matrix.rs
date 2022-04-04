@@ -167,6 +167,7 @@ struct ClientEvent {
     // unsigned
     event_id: String,
     user_id: String,
+    #[serde(skip)]
     age: u32,
 }
 
