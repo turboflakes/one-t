@@ -16,7 +16,7 @@ To know how well validators are performing compared to their peers while assigne
 
 To get a glimpse of which _Parachains_ are validators earning more points from.
 
-To help to identify validators that are not healthly contributing for the overall network performance.
+To help to identify validators that are not healthily contributing for the overall network performance.
 
 ## How to subscribe for ONE-T reports
 
