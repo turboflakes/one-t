@@ -20,6 +20,7 @@
 // SOFTWARE.
 use crate::config::CONFIG;
 use crate::errors::OnetError;
+use crate::onet::ReportType;
 use crate::records::{AuthorityIndex, AuthorityRecord, ParaId, ParaRecord, ParaStats, Points};
 use crate::stats::mean;
 use log::info;
@@ -133,7 +134,8 @@ pub struct RawData {
 pub struct RawDataPara {
     pub network: Network,
     pub session: Session,
-    // pub validators: Validators,
+    pub report_type: ReportType,
+    pub is_first_record: bool,
     pub validator: Validator,
     pub peers: Vec<(String, AuthorityRecord, ParaRecord)>,
     pub authority_record: Option<AuthorityRecord>,
@@ -147,6 +149,8 @@ pub struct RawDataPara {
 pub struct RawDataGroup {
     pub network: Network,
     pub session: Session,
+    pub report_type: ReportType,
+    pub is_first_record: bool,
     pub groups: Vec<(u32, Vec<(AuthorityRecord, String, u32)>)>,
 }
 
@@ -154,6 +158,8 @@ pub struct RawDataGroup {
 pub struct RawDataParachains {
     pub network: Network,
     pub session: Session,
+    pub report_type: ReportType,
+    pub is_first_record: bool,
     pub parachains: Vec<(ParaId, ParaStats)>,
 }
 
@@ -208,18 +214,29 @@ impl From<RawDataGroup> for Report {
     fn from(data: RawDataGroup) -> Report {
         let mut report = Report::new();
 
-        // Thor package
-        report.add_raw_text(format!(
-            "🤖 <code>{} v{}</code>",
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION")
-        ));
+        // Skip the full report if it's the initial record since the epoch is not fully recorded
+        if data.is_first_record {
+            report.add_raw_text(format!(
+                "💤 Skipping {} for {}//{}//{} due to epoch not being fully recorded.",
+                data.report_type.name(),
+                data.network.name,
+                data.session.active_era_index,
+                data.session.current_session_index
+            ));
+            // Log report
+            report.log();
+
+            return report;
+        }
 
         // Network info
         report.add_break();
         report.add_raw_text(format!(
-            "📮 Val. Groups Performance Report → <b>{}//{}//{}</b>",
-            data.network.name, data.session.active_era_index, data.session.current_session_index
+            "📮 {} → <b>{}//{}//{}</b>",
+            data.report_type.name(),
+            data.network.name,
+            data.session.active_era_index,
+            data.session.current_session_index
         ));
         report.add_raw_text(format!(
             "<i>{} blocks recorded from #{} to #{}</i>",
@@ -255,7 +272,13 @@ impl From<RawDataGroup> for Report {
         clode_block.push_str("\n</code></pre>");
         report.add_raw_text(clode_block);
 
-        report.add_raw_text("___".into());
+        report.add_raw_text("——".into());
+        report.add_raw_text(format!(
+            "{} v{} ♡ turboflakes.io",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION")
+        ));
+
         report.add_break();
 
         // Log report
@@ -270,18 +293,29 @@ impl From<RawDataParachains> for Report {
     fn from(data: RawDataParachains) -> Report {
         let mut report = Report::new();
 
-        // Thor package
-        report.add_raw_text(format!(
-            "🤖 <code>{} v{}</code>",
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION")
-        ));
+        // Skip the full report if it's the initial record since the epoch is not fully recorded
+        if data.is_first_record {
+            report.add_raw_text(format!(
+                "💤 Skipping {} for {}//{}//{} due to epoch not being fully recorded.",
+                data.report_type.name(),
+                data.network.name,
+                data.session.active_era_index,
+                data.session.current_session_index
+            ));
+            // Log report
+            report.log();
+
+            return report;
+        }
 
         // Network info
         report.add_break();
         report.add_raw_text(format!(
-            "📮 Parachains Performance Report → <b>{}//{}//{}</b>",
-            data.network.name, data.session.active_era_index, data.session.current_session_index
+            "📮 {} → <b>{}//{}//{}</b>",
+            data.report_type.name(),
+            data.network.name,
+            data.session.active_era_index,
+            data.session.current_session_index
         ));
         report.add_raw_text(format!(
             "<i>{} blocks recorded from #{} to #{}</i>",
@@ -311,7 +345,12 @@ impl From<RawDataParachains> for Report {
         clode_block.push_str("\n</code></pre>");
         report.add_raw_text(clode_block);
 
-        report.add_raw_text("___".into());
+        report.add_raw_text("——".into());
+        report.add_raw_text(format!(
+            "{} v{} ♡ turboflakes.io",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION")
+        ));
         report.add_break();
 
         // Log report
@@ -326,18 +365,29 @@ impl From<RawDataPara> for Report {
     fn from(data: RawDataPara) -> Report {
         let mut report = Report::new();
 
-        // Thor package
-        report.add_raw_text(format!(
-            "🤖 <code>{} v{}</code>",
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION")
-        ));
+        // Skip the full report if it's the initial record since the epoch is not fully recorded
+        if data.is_first_record {
+            report.add_raw_text(format!(
+                "💤 Skipping {} for {}//{}//{} due to epoch not being fully recorded.",
+                data.report_type.name(),
+                data.network.name,
+                data.session.active_era_index,
+                data.session.current_session_index
+            ));
+            // Log report
+            report.log();
+
+            return report;
+        }
 
         // Network info
         report.add_break();
         report.add_raw_text(format!(
-            "📮 Val. Performance Report → <b>{}//{}//{}</b>",
-            data.network.name, data.session.active_era_index, data.session.current_session_index
+            "📮 {} → <b>{}//{}//{}</b>",
+            data.report_type.name(),
+            data.network.name,
+            data.session.active_era_index,
+            data.session.current_session_index
         ));
         report.add_raw_text(format!(
             "<i>{} blocks recorded from #{} to #{}</i>",
@@ -476,7 +526,12 @@ impl From<RawDataPara> for Report {
         }
         // --- Specific parachains report here [END] ---|
 
-        report.add_raw_text("___".into());
+        report.add_raw_text("——".into());
+        report.add_raw_text(format!(
+            "{} v{} ♡ turboflakes.io",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION")
+        ));
         report.add_break();
 
         // Log report
@@ -490,13 +545,6 @@ impl From<RawData> for Report {
     /// Converts a ONE-T `RawData` into a [`Report`].
     fn from(data: RawData) -> Report {
         let mut report = Report::new();
-
-        // Onet package
-        report.add_raw_text(format!(
-            "🤖 <code>{} v{}</code>",
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION")
-        ));
 
         // Network info
         report.add_break();
@@ -520,7 +568,12 @@ impl From<RawData> for Report {
 
         // --- Specific report sections here [END] ---|
 
-        report.add_raw_text("___".into());
+        report.add_raw_text("——".into());
+        report.add_raw_text(format!(
+            "{} v{} ♡ turboflakes.io",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION")
+        ));
         report.add_break();
 
         // Log report

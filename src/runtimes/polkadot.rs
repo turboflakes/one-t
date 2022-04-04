@@ -21,7 +21,7 @@
 
 use crate::config::CONFIG;
 use crate::errors::OnetError;
-use crate::matrix::ReportType;
+use crate::onet::ReportType;
 use crate::onet::{
     get_account_id_from_storage_key, get_subscribers, get_subscribers_by_epoch,
     try_fetch_stashes_from_remote_url, Onet, EPOCH_FILENAME,
@@ -131,7 +131,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                 // Update current block number
                 records.set_current_block_number(block_number.into());
 
-                track_records(&onet, authority_index, &mut records, &subscribers).await?;
+                track_records(&onet, authority_index, &mut records).await?;
             }
         }
     }
@@ -365,7 +365,6 @@ pub async fn track_records(
     onet: &Onet,
     authority_index: AuthorityIndex,
     records: &mut Records,
-    subscribers: &Subscribers,
 ) -> Result<(), OnetError> {
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
@@ -446,12 +445,6 @@ pub async fn run_val_perf_report(
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
 
-    // Fetch parachains list
-    // TODO: get parachains names
-    let mut parachains: Vec<ParaId> = Vec::new();
-    for Id(para_id) in api.storage().paras().parachains(None).await? {
-        parachains.push(para_id);
-    }
     let network = Network::load(client).await?;
     // Set era/session details
     let start_block = records
@@ -467,6 +460,13 @@ pub async fn run_val_perf_report(
         end_block: *end_block,
         ..Default::default()
     };
+
+    // Fetch parachains list
+    // TODO: get parachains names
+    let mut parachains: Vec<ParaId> = Vec::new();
+    for Id(para_id) in api.storage().paras().parachains(None).await? {
+        parachains.push(para_id);
+    }
 
     // Populate some maps to get ranks
     let mut group_stats_map: BTreeMap<u32, ParaStats> = BTreeMap::new();
@@ -510,6 +510,8 @@ pub async fn run_val_perf_report(
             let mut data = RawDataPara {
                 network: network.clone(),
                 session: session.clone(),
+                report_type: ReportType::Validator,
+                is_first_record: records.is_initial_epoch(epoch_index),
                 parachains: parachains.clone(),
                 validator,
                 authority_record: None,
@@ -654,6 +656,8 @@ pub async fn run_groups_report(
     let data = RawDataGroup {
         network: network.clone(),
         session: session.clone(),
+        report_type: ReportType::Groups,
+        is_first_record: records.is_initial_epoch(epoch_index),
         groups: group_authorities_sorted.clone(),
     };
 
@@ -683,14 +687,7 @@ pub async fn run_parachains_report(
 ) -> Result<(), OnetError> {
     let onet: Onet = Onet::new().await;
     let client = onet.client();
-    let api = client.clone().to_runtime_api::<Api>();
 
-    // Fetch parachains list
-    // TODO: get parachains names
-    let mut parachains: Vec<ParaId> = Vec::new();
-    for Id(para_id) in api.storage().paras().parachains(None).await? {
-        parachains.push(para_id);
-    }
     let network = Network::load(client).await?;
 
     // Set era/session details
@@ -735,6 +732,8 @@ pub async fn run_parachains_report(
     let data = RawDataParachains {
         network: network.clone(),
         session: session.clone(),
+        report_type: ReportType::Parachains,
+        is_first_record: records.is_initial_epoch(epoch_index),
         parachains: parachains_sorted.clone(),
     };
 

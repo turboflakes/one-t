@@ -20,7 +20,7 @@
 // SOFTWARE.
 use crate::config::{Config, CONFIG};
 use crate::errors::OnetError;
-use crate::matrix::{Matrix, ReportType, UserID, MATRIX_SUBSCRIBERS_FILENAME};
+use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
 use crate::records::EpochIndex;
 use crate::runtimes::{
     kusama, polkadot,
@@ -71,6 +71,33 @@ impl MessageTrait for Message {
         if !hidden {
             self.push(value);
             self.log();
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+pub enum ReportType {
+    Groups,
+    Parachains,
+    Validator,
+}
+
+impl ReportType {
+    pub fn name(&self) -> String {
+        match self {
+            Self::Groups => "Val. Groups Performance Report".to_string(),
+            Self::Parachains => "Parachains Performance Report".to_string(),
+            Self::Validator => "Validator Performance Report".to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for ReportType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Groups => write!(f, "Groups"),
+            Self::Parachains => write!(f, "Parachains"),
+            Self::Validator => write!(f, "Validator"),
         }
     }
 }
@@ -318,7 +345,10 @@ pub fn get_subscribers_by_epoch(
     let config = CONFIG.clone();
     let subscribers_filename = format!(
         "{}{}.{}.{}",
-        config.data_path, MATRIX_SUBSCRIBERS_FILENAME, report_type.to_string().to_lowercase(), epoch
+        config.data_path,
+        MATRIX_SUBSCRIBERS_FILENAME,
+        report_type.to_string().to_lowercase(),
+        epoch
     );
     let mut out: Vec<UserID> = Vec::new();
     let file = File::open(&subscribers_filename)?;

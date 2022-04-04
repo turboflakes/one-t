@@ -21,7 +21,7 @@
 #![allow(dead_code)]
 use crate::config::CONFIG;
 use crate::errors::MatrixError;
-use crate::onet::EPOCH_FILENAME;
+use crate::onet::{ReportType, EPOCH_FILENAME};
 use crate::runtimes::support::SupportedRuntime;
 use async_recursion::async_recursion;
 use base64::encode;
@@ -57,33 +57,6 @@ enum Commands {
     Subscribe(ReportType, UserID, Option<Stash>),
     Unsubscribe(Stash, UserID),
     NotSupported,
-}
-
-#[derive(Debug, Deserialize, Clone, PartialEq)]
-pub enum ReportType {
-    Groups,
-    Parachains,
-    Validator,
-}
-
-impl ReportType {
-    fn name(&self) -> String {
-        match self {
-            Self::Groups => "Val. Groups Performance Report".to_string(),
-            Self::Parachains => "Parachains Performance Report".to_string(),
-            Self::Validator => "Validator Performance Report".to_string(),
-        }
-    }
-}
-
-impl std::fmt::Display for ReportType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Groups => write!(f, "Groups"),
-            Self::Parachains => write!(f, "Parachains"),
-            Self::Validator => write!(f, "Validator"),
-        }
-    }
 }
 
 #[derive(Deserialize, Debug, Default)]

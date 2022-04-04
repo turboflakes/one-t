@@ -82,6 +82,7 @@ pub fn decode_authority_index(chain_block: &ChainBlock<DefaultConfig>) -> Option
 pub struct Records {
     current_era: EraIndex,
     current_epoch: EpochIndex,
+    initial_epoch_recorded: EpochIndex,
     blocks: HashMap<BlockKey, BlockNumber>,
     authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
     addresses: HashMap<AddressKey, AuthorityIndex>,
@@ -103,6 +104,7 @@ impl Records {
         Self {
             current_era,
             current_epoch,
+            initial_epoch_recorded: current_epoch,
             blocks,
             authorities: HashMap::new(),
             addresses: HashMap::new(),
@@ -113,6 +115,10 @@ impl Records {
 
     pub fn current_era(&self) -> EraIndex {
         self.current_era
+    }
+
+    pub fn is_initial_epoch(&self, index: EpochIndex) -> bool {
+        self.initial_epoch_recorded == index
     }
 
     pub fn current_epoch(&self) -> EpochIndex {
