@@ -18,6 +18,8 @@ To get a glimpse of which _Parachains_ are validators earning more points from.
 
 To help to identify validators that are not healthily contributing for the overall network performance.
 
+To give any token holder an additional tool when researching by Validators to Nominate.
+
 ## How to subscribe for ONE-T reports
 
 ONE-T is a [Matrix](https://matrix.org/) bot. Therefore the only place to subscribe for ONE-T reports is to join the Matrix public rooms below. 
