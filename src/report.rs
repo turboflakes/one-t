@@ -20,7 +20,7 @@
 // SOFTWARE.
 use crate::config::CONFIG;
 use crate::errors::OnetError;
-use crate::records::{AuthorityIndex, AuthorityRecord, ParaId, ParaRecord, Points};
+use crate::records::{AuthorityIndex, AuthorityRecord, ParaId, ParaRecord, ParaStats, Points};
 use crate::stats::mean;
 use log::info;
 use rand::Rng;
@@ -143,6 +143,20 @@ pub struct RawDataPara {
     pub group_rank: Option<usize>,
 }
 
+#[derive(Debug)]
+pub struct RawDataGroup {
+    pub network: Network,
+    pub session: Session,
+    pub groups: Vec<(u32, Vec<(AuthorityRecord, String, u32)>)>,
+}
+
+#[derive(Debug)]
+pub struct RawDataParachains {
+    pub network: Network,
+    pub session: Session,
+    pub parachains: Vec<(ParaId, ParaStats)>,
+}
+
 type Body = Vec<String>;
 
 pub struct Report {
@@ -187,6 +201,124 @@ impl Report {
 
 pub trait Callout<T>: Sized {
     fn callout(_: T) -> Self;
+}
+
+impl From<RawDataGroup> for Report {
+    /// Converts a ONE-T `RawData` into a [`Report`].
+    fn from(data: RawDataGroup) -> Report {
+        let mut report = Report::new();
+
+        // Thor package
+        report.add_raw_text(format!(
+            "🤖 <code>{} v{}</code>",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION")
+        ));
+
+        // Network info
+        report.add_break();
+        report.add_raw_text(format!(
+            "📮 Val. Groups Performance Report → <b>{}//{}//{}</b>",
+            data.network.name, data.session.active_era_index, data.session.current_session_index
+        ));
+        report.add_raw_text(format!(
+            "<i>{} blocks recorded from #{} to #{}</i>",
+            data.session.end_block - data.session.start_block,
+            data.session.start_block,
+            data.session.end_block
+        ));
+        report.add_break();
+
+        // Groups info
+        let mut clode_block = String::from("<pre><code>");
+
+        for (i, group) in data.groups.iter().enumerate() {
+            clode_block.push_str(&format!(
+                "{:<21}{:>4}{:>4}{:>7}\n",
+                format!("#{} VAL. GROUP {}", i + 1, group.0),
+                "↻",
+                "❒",
+                "PTS"
+            ));
+            for (authority_record, val_name, core_assignments) in group.1.iter() {
+                clode_block.push_str(&format!(
+                    "{:<21}{:>4}{:>4}{:>7}\n",
+                    slice(&replace_emoji(&val_name, "_"), 21),
+                    core_assignments,
+                    authority_record.authored_blocks(),
+                    authority_record.points()
+                ));
+            }
+            clode_block.push_str("\n");
+        }
+
+        clode_block.push_str("\n</code></pre>");
+        report.add_raw_text(clode_block);
+
+        report.add_raw_text("___".into());
+        report.add_break();
+
+        // Log report
+        report.log();
+
+        report
+    }
+}
+
+impl From<RawDataParachains> for Report {
+    /// Converts a ONE-T `RawData` into a [`Report`].
+    fn from(data: RawDataParachains) -> Report {
+        let mut report = Report::new();
+
+        // Thor package
+        report.add_raw_text(format!(
+            "🤖 <code>{} v{}</code>",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION")
+        ));
+
+        // Network info
+        report.add_break();
+        report.add_raw_text(format!(
+            "📮 Parachains Performance Report → <b>{}//{}//{}</b>",
+            data.network.name, data.session.active_era_index, data.session.current_session_index
+        ));
+        report.add_raw_text(format!(
+            "<i>{} blocks recorded from #{} to #{}</i>",
+            data.session.end_block - data.session.start_block,
+            data.session.start_block,
+            data.session.end_block
+        ));
+        report.add_break();
+
+        // Parachains info
+        let mut clode_block = String::from("<pre><code>");
+
+        clode_block.push_str(&format!(
+            "{:<5}{:<9}{:>6}{:>8}{:>8}\n",
+            "#", "PARACHAIN", "↻", "❒", "PTS"
+        ));
+        for (i, (para_id, stats)) in data.parachains.iter().enumerate() {
+            clode_block.push_str(&format!(
+                "{:<5}{:<9}{:>6}{:>8}{:>8}\n",
+                format!("#{}", i + 1),
+                para_id,
+                stats.core_assignments() / 5,
+                stats.authored_blocks(),
+                stats.points()
+            ));
+        }
+        clode_block.push_str("\n</code></pre>");
+        report.add_raw_text(clode_block);
+
+        report.add_raw_text("___".into());
+        report.add_break();
+
+        // Log report
+        report.log();
+
+        report
+    }
 }
 
 impl From<RawDataPara> for Report {
@@ -268,22 +400,13 @@ impl From<RawDataPara> for Report {
                     "{:<2}{:<21}{:>6}{:>7}\n",
                     "#",
                     format!("VAL. GROUP {}", para_record.group().unwrap_or_default()),
-                    "BLOCKS",
-                    "POINTS"
+                    "❒",
+                    "PTS"
                 ));
 
-                fn slice(name: &str, maximum_length: usize) -> String {
-                    let cut = if name.len() <= maximum_length {
-                        name.len()
-                    } else {
-                        maximum_length
-                    };
-                    String::from(&name[..cut])
-                }
                 // Print out subscriber
                 clode_block.push_str(&format!(
                     "{:<2}{:<21}{:>6}{:>7}\n",
-                    // "✸",
                     "*",
                     slice(&replace_emoji(&data.validator.name, "_"), 21),
                     authority_record.authored_blocks(),
@@ -303,7 +426,7 @@ impl From<RawDataPara> for Report {
                 clode_block.push_str("\nPARACHAINS POINTS BREAKDOWN\n");
                 // Print out parachains breakdown
                 clode_block.push_str(&format!(
-                    "{:<5}{:^3}{:>7}{:>7}{:>7}{:>7}{:>7}\n",
+                    "{:<6}{:^5}{:>5}{:>5}{:>5}{:>5}{:>5}\n",
                     "#", "↻", "*", "A", "B", "C", "D",
                 ));
                 for para_id in data.parachains.iter() {
@@ -323,7 +446,7 @@ impl From<RawDataPara> for Report {
                                 .collect(),
                         );
                         let mut line: String = format!(
-                            "{:<5}{:^3}{:>7}",
+                            "{:<6}{:^5}{:>5}",
                             para_id,
                             stats.core_assignments(),
                             format!(
@@ -334,7 +457,7 @@ impl From<RawDataPara> for Report {
                         );
                         for peer in data.peers.iter() {
                             if let Some(peer_stats) = peer.2.get_para_id_stats(*para_id) {
-                                line.push_str(&format!("{:>7}", peer_stats.points()));
+                                line.push_str(&format!("{:>5}", peer_stats.points()));
                             }
                         }
                         clode_block.push_str(&format!("{line}\n"));
@@ -914,6 +1037,15 @@ impl std::fmt::Display for Random {
 fn random_index(len: usize) -> usize {
     let mut rng = rand::thread_rng();
     rng.gen_range(0..len - 1)
+}
+
+fn slice(name: &str, maximum_length: usize) -> String {
+    let cut = if name.len() <= maximum_length {
+        name.len()
+    } else {
+        maximum_length
+    };
+    String::from(&name[..cut])
 }
 
 #[cfg(test)]

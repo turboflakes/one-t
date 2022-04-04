@@ -21,6 +21,7 @@
 #![allow(dead_code)]
 use crate::config::CONFIG;
 use crate::errors::MatrixError;
+use crate::onet::EPOCH_FILENAME;
 use crate::runtimes::support::SupportedRuntime;
 use async_recursion::async_recursion;
 use base64::encode;
@@ -52,10 +53,37 @@ impl SupportedRuntime {
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 enum Commands {
     Help,
-    Subscribe(Stash, UserID),
+    Legends,
+    Subscribe(ReportType, UserID, Option<Stash>),
     Unsubscribe(Stash, UserID),
-    // Report(String),
     NotSupported,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+pub enum ReportType {
+    Groups,
+    Parachains,
+    Validator,
+}
+
+impl ReportType {
+    fn name(&self) -> String {
+        match self {
+            Self::Groups => "Val. Groups Performance Report".to_string(),
+            Self::Parachains => "Parachains Performance Report".to_string(),
+            Self::Validator => "Validator Performance Report".to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for ReportType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Groups => write!(f, "Groups"),
+            Self::Parachains => write!(f, "Parachains"),
+            Self::Validator => write!(f, "Validator"),
+        }
+    }
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -369,6 +397,7 @@ impl Matrix {
         let config = CONFIG.clone();
         let subscribers_filename = format!("{}{}", config.data_path, MATRIX_SUBSCRIBERS_FILENAME);
         let next_batch_filename = format!("{}{}", config.data_path, MATRIX_NEXT_BATCH_FILENAME);
+        let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
         while let Some(token) = self.get_next_or_sync().await? {
             if let Some((commands, _, next_token)) =
                 self.get_commands_from_public_room(&token).await?
@@ -376,41 +405,136 @@ impl Matrix {
                 for cmd in commands.iter() {
                     match cmd {
                         Commands::Help => self.reply_help().await?,
-                        Commands::Subscribe(stash, who) => {
-                            // Verify stash
-                            if let Ok(_) = AccountId32::from_str(&stash) {
-                                // Write stash,user in subscribers file if doesn't already exist
-                                let subscriber = format!("{stash},{who}\n");
-                                if Path::new(&subscribers_filename).exists() {
-                                    let subscribers = fs::read_to_string(&subscribers_filename)?;
-                                    let mut x = 0;
-                                    for _ in subscribers.lines() {
-                                        x += 1;
-                                    }
-                                    if x == config.maximum_subscribers {
-                                        let message = format!(
-                                            "⛔ The maximum of subscribers have been reached → {}",
-                                            config.maximum_subscribers
-                                        );
-                                        self.send_public_message(&message, None).await?;
-                                        continue;
-                                    }
+                        Commands::Legends => self.reply_legends().await?,
+                        Commands::Subscribe(report, who, stash) => {
+                            match report {
+                                ReportType::Validator => {
+                                    if let Some(stash) = stash {
+                                        // Verify stash
+                                        if let Ok(_) = AccountId32::from_str(&stash) {
+                                            // Write stash,user in subscribers file if doesn't already exist
+                                            let subscriber = format!("{stash},{who}\n");
+                                            if Path::new(&subscribers_filename).exists() {
+                                                let subscribers =
+                                                    fs::read_to_string(&subscribers_filename)?;
+                                                let mut x = 0;
+                                                for _ in subscribers.lines() {
+                                                    x += 1;
+                                                }
+                                                if x == config.maximum_subscribers {
+                                                    let message = format!("⛔ The maximum number of subscribers have been reached → {}", config.maximum_subscribers);
+                                                    self.send_public_message(&message, None)
+                                                        .await?;
+                                                    continue;
+                                                }
 
-                                    if !subscribers.contains(&subscriber) {
-                                        let mut file = OpenOptions::new()
-                                            .append(true)
-                                            .open(&subscribers_filename)?;
-                                        file.write_all(subscriber.as_bytes())?;
+                                                if !subscribers.contains(&subscriber) {
+                                                    let mut file = OpenOptions::new()
+                                                        .append(true)
+                                                        .open(&subscribers_filename)?;
+                                                    file.write_all(subscriber.as_bytes())?;
+                                                    let message = format!("📥 New subscription! <i>{}</i> subscribed for {stash}", report.name());
+                                                    self.send_private_message(
+                                                        who,
+                                                        &message,
+                                                        Some(&message),
+                                                    )
+                                                    .await?;
+                                                } else {
+                                                    let message = format!("👍 It's here! {stash} is already subscribed. The report should be sent soon.");
+                                                    self.send_private_message(
+                                                        who,
+                                                        &message,
+                                                        Some(&message),
+                                                    )
+                                                    .await?;
+                                                }
+                                            } else {
+                                                fs::write(&subscribers_filename, subscriber)?;
+                                                let message = format!("📥 New subscription! <i>{}</i> subscribed for {stash}", report.name());
+                                                self.send_private_message(
+                                                    who,
+                                                    &message,
+                                                    Some(&message),
+                                                )
+                                                .await?;
+                                            }
+                                        } else {
+                                            let message = format!(
+                                                "{who} try again! {stash} is an invalid address."
+                                            );
+                                            self.send_public_message(&message, None).await?;
+                                        }
                                     }
-                                } else {
-                                    fs::write(&subscribers_filename, subscriber)?;
                                 }
-                                let message = format!("📥 {who} subscribed <i>Val. Performance Report</i> for {stash}");
-                                self.send_private_message(who, &message, Some(&message))
-                                    .await?;
-                            } else {
-                                let message = format!("{who} supplied an invalid address.");
-                                self.send_public_message(&message, None).await?;
+                                _ => {
+                                    // ReportType::Groups
+                                    // ReportType::Parachains
+                                    // Read current epoch from cached file
+                                    let current_epoch = fs::read_to_string(&epoch_filename)?;
+                                    let current_epoch: u32 = current_epoch.parse().unwrap_or(0);
+                                    for e in 0..config.maximum_reports {
+                                        let subscriber = format!("{who}\n");
+                                        let epoch = current_epoch + e;
+                                        let subscribers_groups_filename = format!(
+                                            "{}.{}.{}",
+                                            subscribers_filename,
+                                            report.to_string().to_lowercase(),
+                                            epoch
+                                        );
+                                        if Path::new(&subscribers_groups_filename).exists() {
+                                            let subscribers =
+                                                fs::read_to_string(&subscribers_groups_filename)?;
+                                            let mut x = 0;
+                                            for _ in subscribers.lines() {
+                                                x += 1;
+                                            }
+                                            if x == config.maximum_subscribers {
+                                                let message = format!("⛔ The maximum number of subscribers have been reached → {}", config.maximum_subscribers);
+                                                self.send_public_message(&message, None).await?;
+                                                break;
+                                            }
+                                            if !subscribers.contains(&subscriber) {
+                                                let mut file = OpenOptions::new()
+                                                    .append(true)
+                                                    .open(&subscribers_groups_filename)?;
+                                                file.write_all(subscriber.as_bytes())?;
+                                                let message = format!(
+                                                    "📥 <i>{}</i> subscribed for epoch {}.",
+                                                    report.name(),
+                                                    epoch
+                                                );
+                                                self.send_private_message(
+                                                    who,
+                                                    &message,
+                                                    Some(&message),
+                                                )
+                                                .await?;
+                                            } else {
+                                                let message = format!("👍 <i>{}</i> for epoch {} is already subscribed.", report.name(), epoch);
+                                                self.send_private_message(
+                                                    who,
+                                                    &message,
+                                                    Some(&message),
+                                                )
+                                                .await?;
+                                            }
+                                        } else {
+                                            fs::write(&subscribers_groups_filename, subscriber)?;
+                                            let message = format!(
+                                                "📥 <i>{}</i> subscribed for epoch {}.",
+                                                report.name(),
+                                                epoch
+                                            );
+                                            self.send_private_message(
+                                                who,
+                                                &message,
+                                                Some(&message),
+                                            )
+                                            .await?;
+                                        }
+                                    }
+                                }
                             }
                         }
                         Commands::Unsubscribe(stash, who) => {
@@ -425,7 +549,7 @@ impl Matrix {
                                         &subscribers_filename,
                                         subscribers.replace(&subscriber, ""),
                                     )?;
-                                    let message = format!("🗑️ {who} unsubscribed {stash}");
+                                    let message = format!("🗑️ Unsubscribed {stash}");
                                     self.send_private_message(who, &message, None).await?;
                                 }
                             }
@@ -624,24 +748,34 @@ impl Matrix {
                                     None => {
                                         if message.content.body == "!help" {
                                             commands.push(Commands::Help);
+                                        } else if message.content.body == "!legends" {
+                                            commands.push(Commands::Legends);
                                         }
                                     }
-                                    Some((cmd, stash)) => {
-                                        match cmd {
-                                            "!subscribe" => commands.push(Commands::Subscribe(
-                                                stash.to_string(),
+                                    Some((cmd, value)) => match cmd {
+                                        "!subscribe" => match value {
+                                            "groups" => commands.push(Commands::Subscribe(
+                                                ReportType::Groups,
                                                 message.sender.to_string(),
+                                                None,
                                             )),
-                                            "!unsubscribe" => commands.push(Commands::Unsubscribe(
-                                                stash.to_string(),
+                                            "parachains" => commands.push(Commands::Subscribe(
+                                                ReportType::Parachains,
                                                 message.sender.to_string(),
+                                                None,
                                             )),
-                                            // "!report" => {
-                                            //     commands.push(Commands::Report(stash.to_string()))
-                                            // }
-                                            _ => commands.push(Commands::NotSupported),
-                                        }
-                                    }
+                                            stash => commands.push(Commands::Subscribe(
+                                                ReportType::Validator,
+                                                message.sender.to_string(),
+                                                Some(stash.to_string()),
+                                            )),
+                                        },
+                                        "!unsubscribe" => commands.push(Commands::Unsubscribe(
+                                            value.to_string(),
+                                            message.sender.to_string(),
+                                        )),
+                                        _ => commands.push(Commands::NotSupported),
+                                    },
                                 };
                             }
                         }
@@ -694,14 +828,54 @@ impl Matrix {
     }
 
     pub async fn reply_help(&self) -> Result<(), MatrixError> {
-        let mut message = String::from("✨ Supported commands:\n");
-        message.push_str("!subscribe <Stash Address> - Subscribe the <Stash Address> to the Validator Performance Report. At the end of an epoch, if the validator was acting as Para Validator for the previous epoch then a report is sent via DM.\n");
+        let config = CONFIG.clone();
+        let mut message = String::from("✨ Supported commands:<br>");
+        message.push_str("<b>!subscribe <i>STASH_ADDRESS</i></b> - Subscribe to the <i>Validator Performance Report</i> for the stash address specified. The report is sent via DM at the end of an epoch only if the <i>Para Validator</i> role was assigned to the validator.<br>");
         message.push_str(
-            "!unsubscribe <Stash Address> - Unsubscribe the <Stash Address> from the validator performance report subscribers list.\n",
+            "<b>!unsubscribe <i>STASH_ADDRESS</i></b> - Unsubscribe the stash address from the <i>Validator Performance Report</i> subscribers list.<br>",
         );
-        // message.push_str("!report - Send validator \\<Stash Address\\> performance report for the current epoch.\n");
-        message.push_str("!help - Print this message.\n");
-        return self.send_public_message(&message, None).await;
+        message.push_str(&format!("<b>!subscribe groups</b> - Subscribe to the <i>Validator Groups Performance Report</i>. The report is sent via DM at the end of the next {} epochs.<br>", config.maximum_reports));
+        message.push_str(&format!("<b>!subscribe parachains</b> - Subscribe to the <i>Parachains Performance Report</i>. The report is sent via DM at the end of the next {} epochs.<br>", config.maximum_reports));
+        // message.push_str("!report - Send validator \\<Stash Address\\> performance report for the current epoch.<br>");
+        message.push_str("<b>!legends</b> - Print legends of all reports.<br>");
+        message.push_str("<b>!help</b> - Print this message.<br>");
+        return self.send_public_message(&message, Some(&message)).await;
+    }
+
+    pub async fn reply_legends(&self) -> Result<(), MatrixError> {
+        let mut message = String::from(
+            "💡 Stats are collected between the interval of blocks specified in each report.<br>",
+        );
+        message.push_str("<br>");
+        message.push_str("<i>Val. performance report legend:</i><br>");
+        message.push_str("→: !subscribe STASH_ADDRESS<br>");
+        message.push_str("↻: Total number of core assignments (parachains) by the validator.<br>");
+        message.push_str("❒: Total number of authored blocks by the validator.<br>");
+        message.push_str(
+            "PTS: Sum of points the validator earned while assigned to the val. group.<br>",
+        );
+        message.push_str("*: Sum of points earned by the subscribed validator while assigned to the parachain.<br>");
+        message.push_str("A, B, C, D: Sum of points earned by each validator in the same val. group as the subscribed validator, while assigned to the parachain.<br>");
+        message.push_str("<br>");
+        message.push_str("<i>Val. groups performance report legend:</i><br>");
+        message.push_str("→: !subscribe groups<br>");
+        message.push_str("↻: Total number of core assignements.<br>");
+        message.push_str("❒: Total number of authored blocks.<br>");
+        message.push_str("PTS: Sum of points earned while assigned to the val. group.<br>");
+        message
+            .push_str("Val. groups and validators are sorted by points in descending order.<br>");
+        message.push_str("<br>");
+        message.push_str("<i>Parachains performance report legend:</i><br>");
+        message.push_str("→: !subscribe parachains<br>");
+        message.push_str("↻: Total number of validator group rotations per parachain.<br>");
+        message.push_str("❒: Total number of authored blocks by the validators while assigned to the parachain.<br>");
+        message.push_str(
+            "PTS: Sum of points earned by the validators while assigned to the parachain.<br>",
+        );
+        message.push_str("Parachains are sorted by points in descending order.<br>");
+        message.push_str("<br>");
+
+        return self.send_public_message(&message, Some(&message)).await;
     }
 
     pub async fn send_private_message(

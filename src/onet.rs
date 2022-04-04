@@ -20,7 +20,8 @@
 // SOFTWARE.
 use crate::config::{Config, CONFIG};
 use crate::errors::OnetError;
-use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
+use crate::matrix::{Matrix, ReportType, UserID, MATRIX_SUBSCRIBERS_FILENAME};
+use crate::records::EpochIndex;
 use crate::runtimes::{
     kusama, polkadot,
     support::{ChainPrefix, SupportedRuntime},
@@ -45,6 +46,7 @@ use subxt::{
 };
 
 const TVP_VALIDATORS_FILENAME: &str = ".tvp";
+pub const EPOCH_FILENAME: &str = ".epoch";
 
 type Message = Vec<String>;
 
@@ -297,12 +299,33 @@ pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID)>, OnetError> {
     let mut out: Vec<(AccountId32, UserID)> = Vec::new();
     let file = File::open(&subscribers_filename)?;
 
-    // Read each subscriber (stash,user-id) and parse it to account
+    // Read each subscriber (stash,user_id) and parse stash to AccountId
     for line in BufReader::new(file).lines() {
         if let Ok(s) = line {
             let v: Vec<&str> = s.split(',').collect();
             let acc = AccountId32::from_str(&v[0])?;
             out.push((acc, v[1].to_string()));
+        }
+    }
+
+    Ok(out)
+}
+
+pub fn get_subscribers_by_epoch(
+    report_type: ReportType,
+    epoch: EpochIndex,
+) -> Result<Vec<UserID>, OnetError> {
+    let config = CONFIG.clone();
+    let subscribers_filename = format!(
+        "{}{}.{}.{}",
+        config.data_path, MATRIX_SUBSCRIBERS_FILENAME, report_type, epoch
+    );
+    let mut out: Vec<UserID> = Vec::new();
+    let file = File::open(&subscribers_filename)?;
+
+    for line in BufReader::new(file).lines() {
+        if let Ok(s) = line {
+            out.push(s);
         }
     }
 

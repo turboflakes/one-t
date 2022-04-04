@@ -21,22 +21,25 @@
 
 use crate::config::CONFIG;
 use crate::errors::OnetError;
+use crate::matrix::ReportType;
 use crate::onet::{
-    get_account_id_from_storage_key, get_subscribers, try_fetch_stashes_from_remote_url, Onet,
+    get_account_id_from_storage_key, get_subscribers, get_subscribers_by_epoch,
+    try_fetch_stashes_from_remote_url, Onet, EPOCH_FILENAME,
 };
 use crate::records::{
     decode_authority_index, AuthorityIndex, AuthorityRecord, EpochIndex, EpochKey, EraIndex,
     ParaId, ParaRecord, ParaStats, Points, Records, Subscribers,
 };
 use crate::report::{
-    Callout, Network, RawData, RawDataPara, Report, Session, Subset, Validator, Validators,
+    Callout, Network, RawData, RawDataGroup, RawDataPara, RawDataParachains, Report, Session,
+    Subset, Validator, Validators,
 };
 
 use async_recursion::async_recursion;
 use futures::StreamExt;
 use log::{debug, error, info};
 use std::{
-    collections::BTreeMap, convert::TryInto, iter::FromIterator, result::Result, thread, time,
+    collections::BTreeMap, convert::TryInto, fs, iter::FromIterator, result::Result, thread, time,
 };
 use subxt::{sp_runtime::AccountId32, DefaultConfig, DefaultExtra};
 
@@ -58,6 +61,7 @@ use node_runtime::{
 type Api = node_runtime::RuntimeApi<DefaultConfig, DefaultExtra<DefaultConfig>>;
 
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
     let client = onet.client().clone();
     let api = client.to_runtime_api::<Api>();
 
@@ -76,6 +80,9 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
     // Fetch current session index
     let session_index = api.storage().session().current_index(None).await?;
+    // Cache current epoch
+    let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
+    fs::write(&epoch_filename, session_index.to_string())?;
 
     // Subscribers
     let mut subscribers = Subscribers::with_era_and_epoch(era_index, session_index);
@@ -124,7 +131,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                 // Update current block number
                 records.set_current_block_number(block_number.into());
 
-                track_records(&onet, authority_index, &mut records).await?;
+                track_records(&onet, authority_index, &mut records, &subscribers).await?;
             }
         }
     }
@@ -275,6 +282,7 @@ pub async fn switch_new_session(
     subscribers: &mut Subscribers,
     records: &mut Records,
 ) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
 
@@ -325,16 +333,30 @@ pub async fn switch_new_session(
     async_std::task::spawn(async move {
         let epoch_index = records_cloned.current_epoch() - 1;
         if let Err(e) =
-            run_para_report(era_index, epoch_index, &records_cloned, &subscribers_cloned).await
+            run_val_perf_report(era_index, epoch_index, &records_cloned, &subscribers_cloned).await
         {
             error!(
-                "Para report error for era_index: {} epoch_index: {} error: {:?}",
+                "Val. Performance Report error for era_index: {} epoch_index: {} error: {:?}",
+                era_index, epoch_index, e
+            );
+        }
+        if let Err(e) = run_groups_report(era_index, epoch_index, &records_cloned).await {
+            error!(
+                "Val. Groups Performance Report error for era_index: {} epoch_index: {} error: {:?}",
+                era_index, epoch_index, e
+            );
+        }
+        if let Err(e) = run_parachains_report(era_index, epoch_index, &records_cloned).await {
+            error!(
+                "Parachains Performance Report error for era_index: {} epoch_index: {} error: {:?}",
                 era_index, epoch_index, e
             );
         }
     });
 
-    // TODO: if new era clear previous era sessions from cache
+    // Cache current epoch
+    let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
+    fs::write(&epoch_filename, new_session_index.to_string())?;
 
     Ok(())
 }
@@ -343,6 +365,7 @@ pub async fn track_records(
     onet: &Onet,
     authority_index: AuthorityIndex,
     records: &mut Records,
+    subscribers: &Subscribers,
 ) -> Result<(), OnetError> {
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
@@ -413,7 +436,7 @@ pub async fn track_records(
     Ok(())
 }
 
-pub async fn run_para_report(
+pub async fn run_val_perf_report(
     era_index: EraIndex,
     epoch_index: EpochIndex,
     records: &Records,
@@ -555,6 +578,180 @@ pub async fn run_para_report(
                     thread::sleep(time::Duration::from_millis(500));
                 }
             }
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn run_groups_report(
+    era_index: EraIndex,
+    epoch_index: EpochIndex,
+    records: &Records,
+) -> Result<(), OnetError> {
+    let onet: Onet = Onet::new().await;
+    let client = onet.client();
+
+    let network = Network::load(client).await?;
+
+    // Set era/session details
+    let start_block = records
+        .start_block(EpochKey(era_index, epoch_index))
+        .unwrap_or(&0);
+    let end_block = records
+        .end_block(EpochKey(era_index, epoch_index))
+        .unwrap_or(&0);
+    let session = Session {
+        active_era_index: era_index,
+        current_session_index: epoch_index,
+        start_block: *start_block,
+        end_block: *end_block,
+        ..Default::default()
+    };
+
+    // Populate some maps to get ranks
+    let mut group_authorities_map: BTreeMap<u32, Vec<(AuthorityRecord, String, u32)>> =
+        BTreeMap::new();
+
+    if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
+        for authority_idx in authorities.iter() {
+            if let Some(para_record) =
+                records.get_para_record(*authority_idx, Some(EpochKey(era_index, epoch_index)))
+            {
+                if let Some(group_idx) = para_record.group() {
+                    if let Some(authority_record) = records.get_authority_record(
+                        *authority_idx,
+                        Some(EpochKey(era_index, epoch_index)),
+                    ) {
+                        // collect core_assignments
+                        let core_assignments: u32 = para_record
+                            .para_stats()
+                            .iter()
+                            .map(|(_, s)| s.core_assignments())
+                            .sum();
+
+                        // get validator name
+                        let name =
+                            get_display_name(&onet, &authority_record.address(), None).await?;
+                        let auths = group_authorities_map.entry(group_idx).or_insert(Vec::new());
+                        auths.push((authority_record.clone(), name, core_assignments));
+                        auths.sort_by(|(a, _, _), (b, _, _)| b.points().cmp(&a.points()));
+                    }
+                }
+            }
+        }
+    }
+
+    // Convert map to vec and sort group by points
+    let mut group_authorities_sorted = Vec::from_iter(group_authorities_map);
+    group_authorities_sorted.sort_by(|(_, a), (_, b)| {
+        b.iter()
+            .map(|x| x.0.points())
+            .sum::<Points>()
+            .cmp(&a.iter().map(|x| x.0.points()).sum::<Points>())
+    });
+
+    let data = RawDataGroup {
+        network: network.clone(),
+        session: session.clone(),
+        groups: group_authorities_sorted.clone(),
+    };
+
+    let report = Report::from(data);
+
+    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Groups, epoch_index) {
+        for user_id in subs.iter() {
+            onet.matrix()
+                .send_private_message(
+                    user_id,
+                    &report.message(),
+                    Some(&report.formatted_message()),
+                )
+                .await?;
+            // NOTE: To not overflow matrix with messages just send maximum 2 per second
+            thread::sleep(time::Duration::from_millis(500));
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn run_parachains_report(
+    era_index: EraIndex,
+    epoch_index: EpochIndex,
+    records: &Records,
+) -> Result<(), OnetError> {
+    let onet: Onet = Onet::new().await;
+    let client = onet.client();
+    let api = client.clone().to_runtime_api::<Api>();
+
+    // Fetch parachains list
+    // TODO: get parachains names
+    let mut parachains: Vec<ParaId> = Vec::new();
+    for Id(para_id) in api.storage().paras().parachains(None).await? {
+        parachains.push(para_id);
+    }
+    let network = Network::load(client).await?;
+
+    // Set era/session details
+    let start_block = records
+        .start_block(EpochKey(era_index, epoch_index))
+        .unwrap_or(&0);
+    let end_block = records
+        .end_block(EpochKey(era_index, epoch_index))
+        .unwrap_or(&0);
+    let session = Session {
+        active_era_index: era_index,
+        current_session_index: epoch_index,
+        start_block: *start_block,
+        end_block: *end_block,
+        ..Default::default()
+    };
+
+    // Populate some maps to get ranks
+    let mut parachains_map: BTreeMap<ParaId, ParaStats> = BTreeMap::new();
+
+    if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
+        for authority_idx in authorities.iter() {
+            if let Some(para_record) =
+                records.get_para_record(*authority_idx, Some(EpochKey(era_index, epoch_index)))
+            {
+                for (para_id, stats) in para_record.para_stats().iter() {
+                    let s = parachains_map
+                        .entry(*para_id)
+                        .or_insert(ParaStats::default());
+                    s.points += stats.points();
+                    s.core_assignments += stats.core_assignments();
+                    s.authored_blocks += stats.authored_blocks();
+                }
+            }
+        }
+    }
+
+    // Convert map to vec and sort group by points
+    let mut parachains_sorted = Vec::from_iter(parachains_map);
+    parachains_sorted.sort_by(|(_, a), (_, b)| b.points().cmp(&a.points()));
+
+    let data = RawDataParachains {
+        network: network.clone(),
+        session: session.clone(),
+        parachains: parachains_sorted.clone(),
+    };
+
+    // Send report only if para records available
+    let report = Report::from(data);
+
+    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Parachains, epoch_index) {
+        for user_id in subs.iter() {
+            onet.matrix()
+                .send_private_message(
+                    user_id,
+                    &report.message(),
+                    Some(&report.formatted_message()),
+                )
+                .await?;
+            // NOTE: To not overflow matrix with messages just send maximum 2 per second
+            thread::sleep(time::Duration::from_millis(500));
         }
     }
 

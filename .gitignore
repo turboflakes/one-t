@@ -2,6 +2,7 @@
 Cargo.lock
 .env
 .next_batch
-.subscribers
+.subscribers*
 .tvp*
+.epoch*
 bump-version.sh
