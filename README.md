@@ -58,3 +58,42 @@ After joining,  hit `!subscribe validator_stash_address` to subscribe the _Valid
 <p align="left">
     <img  style="width: 384px;" src="https://github.com/turboflakes/one-t/blob/main/assets/parachains_performance_report_example.png?raw=true">
 </p>
+
+## Collaboration
+
+Have an idea for a new feature, a fix or you found a bug, please open an [issue](https://github.com/turboflakes/one-t/issues) or submit a [pull request](https://github.com/turboflakes/one-t/pulls).
+
+Any feedback is welcome.
+
+## About
+
+ONE-T was made by <a href="https://turboflakes.io" target="_blank">TurboFlakes</a> with help and ideas gathered from some of the TVP community members.
+
+If you like this project
+  - 🚀 Share our work 
+  - ✌️ Visit us at <a href="https://turboflakes.io" target="_blank" rel="noreferrer">turboflakes.io</a>
+  - ✨ Or you could also star the Github project :)
+
+Tips are welcome
+
+- Polkadot 14Sqrs7dk6gmSiuPK7VWGbPmGr4EfESzZBcpT6U15W4ajJRf (turboflakes.io)
+- Kusama H1tAQMm3eizGcmpAhL9aA9gR844kZpQfkU7pkmMiLx9jSzE (turboflakes.io)
+
+### Stake with us!
+
+- <a href="https://www.turboflakes.io/RAIDEN" target="_blank" rel="noreferrer">turboflakes.io/RAIDEN</a>
+- <a href="https://www.turboflakes.io/COCO" target="_blank" rel="noreferrer">turboflakes.io/COCO</a>
+- <a href="https://www.turboflakes.io/MOMO" target="_blank" rel="noreferrer">turboflakes.io/MOMO</a>
+
+
+### License
+
+`onet` is [MIT licensed](./LICENSE).
+
+### Quote
+
+> “Anyone who has never made a mistake has never tried anything new.” — Albert Einstein
+
+__
+
+Enjoy `ONE-T`
