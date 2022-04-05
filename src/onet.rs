@@ -216,13 +216,14 @@ fn spawn_and_restart_matrix_lazy_load_on_error(chain: SupportedRuntime) {
         let config = CONFIG.clone();
         loop {
             let mut m = Matrix::new();
-            m.authenticate(chain).await.unwrap_or_else(|e| {
-                error!("{}", e);
-                Default::default()
-            });
+            if let Err(e) = m.authenticate(chain).await {
+                error!("authenticate error: {}", e);
+                thread::sleep(time::Duration::from_secs(config.error_interval));
+                continue;
+            }
             if let Err(e) = m.lazy_load_and_process_commands().await {
-                error!("{}", e);
-                thread::sleep(time::Duration::from_secs(60 * config.error_interval));
+                error!("lazy_load_and_process_commands error: {}", e);
+                thread::sleep(time::Duration::from_secs(config.error_interval));
                 continue;
             }
         }
@@ -238,16 +239,9 @@ fn spawn_and_restart_on_error() {
             if let Err(e) = t.subscribe_on_chain_events().await {
                 match e {
                     OnetError::SubscriptionFinished => warn!("{}", e),
-                    OnetError::MatrixError(_) => warn!("Matrix message skipped!"),
                     _ => {
-                        error!("{}", e);
-                        let message = format!("On hold for {} min!", config.error_interval);
-                        let formatted_message = format!("<br/>🚨 An error was raised -> <code>onet</code> on hold for {} min while rescue is on the way 🚁 🚒 🚑 🚓<br/><br/>", config.error_interval);
-                        t.matrix()
-                            .send_public_message(&message, Some(&formatted_message))
-                            .await
-                            .unwrap();
-                        thread::sleep(time::Duration::from_secs(60 * config.error_interval));
+                        error!("subscribe_on_chain_events error: {}", e);
+                        thread::sleep(time::Duration::from_secs(config.error_interval));
                         continue;
                     }
                 }

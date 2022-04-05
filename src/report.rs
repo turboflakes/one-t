@@ -559,7 +559,7 @@ impl From<RawData> for Report {
         // --- Specific report sections here [START] -->
 
         total_validators_report(&mut report, &data);
-        active_validators_report(&mut report, &data, None);
+        active_validators_report(&mut report, &data, false);
         own_stake_validators_report(&mut report, &data);
         oversubscribed_validators_report(&mut report, &data);
         avg_points_collected_report(&mut report, &data);
@@ -593,10 +593,10 @@ impl Callout<RawData> for Report {
             data.network.name, data.session.active_era_index,
         ));
 
-        active_validators_report(&mut report, &data, Some("validators ".to_string()));
+        active_validators_report(&mut report, &data, true);
 
         report.add_raw_text(format!(
-            "<i>Lookout for the full report here</i> -> #{} 👀",
+            "<i>Lookout for the full report here</i> → #{} 👀",
             config.matrix_public_room
         ));
 
@@ -651,7 +651,7 @@ fn total_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a
 fn active_validators_report<'a>(
     report: &'a mut Report,
     data: &'a RawData,
-    start_with: Option<String>,
+    is_verbose: bool,
 ) -> &'a Report {
     let total = data.validators.len();
 
@@ -681,20 +681,35 @@ fn active_validators_report<'a>(
         .collect::<Vec<&Validator>>()
         .len();
 
+    let verbose = if is_verbose {
+        "Active validators →"
+    } else {
+        "Active"
+    };
     report.add_raw_text(format!(
-        "Active {}{} ({:.2}%):",
-        start_with.unwrap_or_default(),
+        "{} {} ({:.2}%):",
+        verbose,
         total_active,
         (total_active as f32 / total as f32) * 100.0,
     ));
+    let v_c100 = if is_verbose {
+        " on 100% commission "
+    } else {
+        " "
+    };
+    let v_non_tvp = if is_verbose { " non-tvp " } else { " " };
+    let v_tvp = if is_verbose { " TVP " } else { " " };
     report.add_raw_text(format!(
-        "‣ {} ({:.2}%) • {} ({:.2}%) • <b>{} ({:.2}%)</b>",
+        "‣ {} ({:.2}%){}• {} ({:.2}%){}• <b>{} ({:.2}%){}</b>",
         total_c100,
         (total_c100 as f32 / total_active as f32) * 100.0,
+        v_c100,
         total_non_tvp,
         (total_non_tvp as f32 / total_active as f32) * 100.0,
+        v_non_tvp,
         total_tvp,
         (total_tvp as f32 / total_active as f32) * 100.0,
+        v_tvp
     ));
     report.add_break();
 

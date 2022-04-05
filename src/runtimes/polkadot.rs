@@ -336,20 +336,20 @@ pub async fn switch_new_session(
             run_val_perf_report(era_index, epoch_index, &records_cloned, &subscribers_cloned).await
         {
             error!(
-                "Val. Performance Report error for era_index: {} epoch_index: {} error: {:?}",
-                era_index, epoch_index, e
+                "run_val_perf_report error: {:?} ({}//{})",
+                e, era_index, epoch_index
             );
         }
         if let Err(e) = run_groups_report(era_index, epoch_index, &records_cloned).await {
             error!(
-                "Val. Groups Performance Report error for era_index: {} epoch_index: {} error: {:?}",
-                era_index, epoch_index, e
+                "run_groups_report error: {:?} ({}//{})",
+                e, era_index, epoch_index
             );
         }
         if let Err(e) = run_parachains_report(era_index, epoch_index, &records_cloned).await {
             error!(
-                "Parachains Performance Report error for era_index: {} epoch_index: {} error: {:?}",
-                era_index, epoch_index, e
+                "run_parachains_report error: {:?} ({}//{})",
+                e, era_index, epoch_index
             );
         }
     });
@@ -762,7 +762,7 @@ pub async fn try_run_network_report(epoch_index: EpochIndex) -> Result<(), OnetE
     if (epoch_index as f64 % 6.0_f64) == 0.0_f64 {
         async_std::task::spawn(async move {
             if let Err(e) = run_network_report().await {
-                error!("Network report error: {:?}", e);
+                error!("try_run_network_report error: {:?}", e);
             }
         });
     }

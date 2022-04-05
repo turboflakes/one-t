@@ -194,7 +194,7 @@ struct SyncResponse {
 
 #[derive(Deserialize, Debug)]
 struct ErrorResponse {
-    _errcode: String,
+    errcode: String,
     error: String,
 }
 
@@ -950,7 +950,10 @@ impl Matrix {
                 match res.status() {
                     reqwest::StatusCode::OK => {
                         let response = res.json::<SendRoomMessageResponse>().await?;
-                        debug!("{:?} * Matrix messsage dispatched", response);
+                        info!(
+                            "messsage dispatched to room_id: {} (event_id: {})",
+                            response.event_id, room_id
+                        );
                         Ok(Some(response.event_id))
                     }
                     reqwest::StatusCode::TOO_MANY_REQUESTS => {
