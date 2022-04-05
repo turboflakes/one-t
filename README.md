@@ -55,28 +55,34 @@ At every era ONE-T compiles a _Network Performance Report_ and publish the resul
 
 To bring awareness to the results an additional callout is made to the [Polkadot Watercooler](https://matrix.to/#/%23polkadot-watercooler:web3.foundation) and [Kusama Watercooler](https://matrix.to/#/%23kusamawatercooler:web3.foundation) channels inviting users to join ONE-T Public rooms and lookout for the full report results.
 
-### Network Performance Report example
+### 📣 Callout example
 
 <p align="left">
-    <img  style="width: 384px;" src="https://github.com/turboflakes/one-t/blob/main/assets/network_performance_report_example.png?raw=true">
+    <img  style="padding: 10px 0px 5px 0px; width: 384px;" src="https://github.com/turboflakes/one-t/blob/main/assets/callout_example.png?raw=true">
 </p>
 
-### Validator Performance Report example
+### 📒 Network Performance Report example
 
 <p align="left">
-    <img  style="width: 384px;" src="https://github.com/turboflakes/one-t/blob/main/assets/validator_performance_report_example.png?raw=true">
+    <img  style="padding: 10px 0px 5px 0px; width: 384px;" src="https://github.com/turboflakes/one-t/blob/main/assets/network_performance_report_example.png?raw=true">
 </p>
 
-### Val. Groups Performance Report example
+### 📮 Validator Performance Report example
 
 <p align="left">
-    <img  style="width: 384px;" src="https://github.com/turboflakes/one-t/blob/main/assets/val_groups_performance_report_example.png?raw=true">
+    <img  style="padding: 10px 0px 5px 0px; width: 384px;" src="https://github.com/turboflakes/one-t/blob/main/assets/validator_performance_report_example.png?raw=true">
 </p>
 
-### Parachains Performance Report example
+### 📮 Val. Groups Performance Report example
 
 <p align="left">
-    <img  style="width: 384px;" src="https://github.com/turboflakes/one-t/blob/main/assets/parachains_performance_report_example.png?raw=true">
+    <img  style="padding: 10px 0px 5px 0px; width: 384px;" src="https://github.com/turboflakes/one-t/blob/main/assets/val_groups_performance_report_example.png?raw=true">
+</p>
+
+### 📮 Parachains Performance Report example
+
+<p align="left">
+    <img  style="padding-top: 10px 0px 5px 0px; width: 384px;" src="https://github.com/turboflakes/one-t/blob/main/assets/parachains_performance_report_example.png?raw=true">
 </p>
 
 ## Collaboration
