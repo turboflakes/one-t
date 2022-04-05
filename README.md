@@ -58,7 +58,7 @@ To bring awareness to the results an additional callout is made to the [Polkadot
 ### Network Performance Report example
 
 <p align="left">
-    <img  style="width: 384px;" src="https://github.com/turboflakes/one-t/blob/main/assets/network_performance_report_example?raw=true">
+    <img  style="width: 384px;" src="https://github.com/turboflakes/one-t/blob/main/assets/network_performance_report_example.png?raw=true">
 </p>
 
 ### Validator Performance Report example
