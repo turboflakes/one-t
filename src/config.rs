@@ -52,9 +52,9 @@ fn default_interval() -> u64 {
     21600
 }
 
-/// provides default value for error interval if ONET_ERROR_INTERVAL env var is not set
+/// provides default value in seconds for error interval if ONET_ERROR_INTERVAL env var is not set
 fn default_error_interval() -> u64 {
-    5
+    30
 }
 
 /// provides default value for data_path if ONET_DATA_PATH env var is not set
