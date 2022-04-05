@@ -91,9 +91,15 @@ Have an idea for a new feature, a fix or you found a bug, please open an [issue]
 
 Any feedback is welcome.
 
+## Appreciation
+
+ ONE-T was only made possible with the help and ideas gathered from **awesome** people in the Kusama TVP channel [(messages here)](https://matrix.to/#/!LHMaxlfxGiMVPscxNB:matrix.parity.io/$2dsYo05bh0WHb_GZOHefc6a9TY0zCBdkkDXPgzsTOKk?via=web3.foundation&via=matrix.org&via=matrix.parity.io). 
+
+ Special Thank You for their support ❤️
+
 ## About
 
-ONE-T was made by <a href="https://turboflakes.io" target="_blank">TurboFlakes</a> with help and ideas gathered from some of the TVP community members.
+ONE-T was developed by <a href="https://turboflakes.io" target="_blank">TurboFlakes</a>.
 
 If you like this project
   - 🚀 Share our work 
