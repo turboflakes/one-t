@@ -22,9 +22,15 @@ To give any token holder an additional tool when researching by Validators to No
 
 ## How to subscribe for ONE-T reports
 
-ONE-T is a [Matrix](https://matrix.org/) bot. Therefore the only place to subscribe for ONE-T reports is to join the Matrix public rooms below. 
+ONE-T is a [Matrix](https://matrix.org/) bot and therefore the only place to subscribe for ONE-T reports is to join the Matrix public rooms.
 
-After joining,  hit `!subscribe validator_stash_address` to subscribe the _Validator Performance Report_ of your favourite validators. Or hit `!subscribe groups` to subscribe for the next six epochs the _Val. Groups Performance Report_. Or hit `!subscribe parachains` to subscribe for the next six epochs the _Parachains Performance Report_. In case you want to be aware of all commands available just write `!help`.
+After joining,  hit `!subscribe validator_stash_address` to subscribe the _Validator Performance Report_ of your favourite validators. 
+
+Or try `!subscribe groups` to subscribe for the next six epochs the _Val. Groups Performance Report_. 
+
+If you are just curious about which Parachains are validators earning more points from, hit `!subscribe parachains` to subscribe for the next six epochs the _Parachains Performance Report_. 
+
+In case you want to be aware of all commands available just write `!help`.
 
 ### Join ONE-T Public Rooms
 
@@ -42,6 +48,18 @@ After joining,  hit `!subscribe validator_stash_address` to subscribe the _Valid
     <td><a href="https://matrix.to/#/%23polkadot-one-t-bot:matrix.org" target="_blank">Polkadot ONE-T Bot (Public)</a></td>
   </tr>
 </table>
+
+## Polkadot // Kusama network state and Promoting TVP validators
+
+At every era ONE-T compiles a _Network Performance Report_ and publish the results in the respective Network  Public Room. 
+
+To bring awareness to the results an additional callout is made to the [Polkadot Watercooler](https://matrix.to/#/%23polkadot-watercooler:web3.foundation) and [Kusama Watercooler](https://matrix.to/#/%23kusamawatercooler:web3.foundation) channels inviting users to join ONE-T Public rooms and lookout for the full report results.
+
+### Network Performance Report example
+
+<p align="left">
+    <img  style="width: 384px;" src="https://github.com/turboflakes/one-t/blob/main/assets/network_performance_report_example?raw=true">
+</p>
 
 ### Validator Performance Report example
 
