@@ -134,7 +134,7 @@ mod tests {
         );
         assert_eq!(
             confidence_interval_95(&v),
-            (896.6912589332788, 1271.308741066724)
+            (896.6912589332788, 1271.3087410667213)
         );
         assert_eq!(iqr_interval(&mut to_u32_vec(v)), (610.0, 1650.0));
 
