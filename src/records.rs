@@ -85,6 +85,7 @@ pub struct Records {
     initial_epoch_recorded: EpochIndex,
     blocks: HashMap<BlockKey, BlockNumber>,
     authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
+    authorities_flagged: HashMap<EpochKey, HashSet<AuthorityIndex>>,
     addresses: HashMap<AddressKey, AuthorityIndex>,
     authority_records: HashMap<RecordKey, AuthorityRecord>,
     para_records: HashMap<RecordKey, ParaRecord>,
@@ -107,6 +108,7 @@ impl Records {
             initial_epoch_recorded: current_epoch,
             blocks,
             authorities: HashMap::new(),
+            authorities_flagged: HashMap::new(),
             addresses: HashMap::new(),
             authority_records: HashMap::new(),
             para_records: HashMap::new(),
@@ -162,6 +164,39 @@ impl Records {
             ),
             block_number,
         );
+    }
+
+    pub fn flag_authority(&mut self, index_flagged: AuthorityIndex, key: EpochKey) {
+        if let Some(authorities) = self.authorities_flagged.get_mut(&key) {
+            authorities.insert(index_flagged);
+        } else {
+            self.authorities_flagged
+                .insert(key, HashSet::from([index_flagged]));
+        }
+    }
+
+    pub fn get_epochs_flagged(
+        &self,
+        address: &AccountId32,
+        era_index: EraIndex,
+        epoch_index_0: EpochIndex,
+    ) -> Vec<EpochIndex> {
+        let mut out: Vec<EpochIndex> = Vec::new();
+        for i in 0..6 {
+            let epoch_index = epoch_index_0 + i as u32;
+            let key = EpochKey(era_index, epoch_index);
+            if let Some(auth_idx) = self
+                .addresses
+                .get(&AddressKey(key.clone(), address.to_string()))
+            {
+                if let Some(flagged_authorities) = self.authorities_flagged.get(&key) {
+                    if flagged_authorities.contains(auth_idx) {
+                        out.push(epoch_index);
+                    }
+                }
+            }
+        }
+        out
     }
 
     pub fn insert(
@@ -377,6 +412,13 @@ impl Records {
         }
         // remove authorities
         if self.authorities.remove(&epoch_key.clone()).is_some() {
+            counter += 1;
+        }
+        if self
+            .authorities_flagged
+            .remove(&epoch_key.clone())
+            .is_some()
+        {
             counter += 1;
         }
         info!("Removed {} keys from records for {:?}", counter, epoch_key);

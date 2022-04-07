@@ -21,7 +21,9 @@
 use crate::config::CONFIG;
 use crate::errors::OnetError;
 use crate::onet::ReportType;
-use crate::records::{AuthorityIndex, AuthorityRecord, ParaId, ParaRecord, ParaStats, Points};
+use crate::records::{
+    AuthorityIndex, AuthorityRecord, EpochIndex, ParaId, ParaRecord, ParaStats, Points,
+};
 use crate::stats::mean;
 use log::info;
 use rand::Rng;
@@ -43,6 +45,7 @@ pub struct Validator {
     pub total_eras: u32,
     pub total_authored_blocks: u32,
 
+    pub flagged_epochs: Vec<EpochIndex>,
     pub warnings: Vec<String>,
 }
 
@@ -60,6 +63,7 @@ impl Validator {
             total_eras: 0,
             total_authored_blocks: 0,
             // records: Vec::new(),
+            flagged_epochs: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -566,6 +570,7 @@ impl From<RawData> for Report {
         oversubscribed_validators_report(&mut report, &data);
         avg_points_collected_report(&mut report, &data);
         inclusion_validators_report(&mut report, &data);
+        flagged_validators_report(&mut report, &data);
         top_validators_report(&mut report, &data);
 
         // --- Specific report sections here [END] ---|
@@ -678,9 +683,11 @@ fn active_validators_report<'a>(
         .collect::<Vec<&Validator>>()
         .len();
 
-    
     if is_verbose {
-        report.add_raw_text(format!("In the present era there are {} active validators:", total_active));
+        report.add_raw_text(format!(
+            "In the present era there are {} active validators:",
+            total_active
+        ));
         report.add_raw_text(format!(
             "‣ {} = {} ({:.2}%) of 100% commission validators, {} ({:.2}%) of non-tvp validators and <b>{} ({:.2}%) of TVP validators</b>",
             total_active,
@@ -947,6 +954,65 @@ fn inclusion_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         (total_c100_with_points as f32 / total_c100 as f32) * 100.0,
         (total_non_tvp_with_points as f32 / total_non_tvp as f32) * 100.0,
         (total_tvp_with_points as f32 / total_tvp as f32) * 100.0,
+    ));
+    report.add_break();
+
+    report
+}
+
+fn flagged_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a Report {
+    let total_tvp = data
+        .validators
+        .iter()
+        .filter(|v| v.subset == Subset::TVP)
+        .collect::<Vec<&Validator>>()
+        .len();
+
+    let total_tvp_flagged = data
+        .validators
+        .iter()
+        .filter(|v| v.subset == Subset::TVP && v.flagged_epochs.len() > 0)
+        .collect::<Vec<&Validator>>()
+        .len();
+
+    let total_non_tvp = data
+        .validators
+        .iter()
+        .filter(|v| v.subset == Subset::NONTVP)
+        .collect::<Vec<&Validator>>()
+        .len();
+
+    let total_non_tvp_flagged = data
+        .validators
+        .iter()
+        .filter(|v| v.subset == Subset::NONTVP && v.flagged_epochs.len() > 0)
+        .collect::<Vec<&Validator>>()
+        .len();
+
+    let total_c100 = data
+        .validators
+        .iter()
+        .filter(|v| v.subset == Subset::C100)
+        .collect::<Vec<&Validator>>()
+        .len();
+
+    let total_c100_flagged = data
+        .validators
+        .iter()
+        .filter(|v| v.subset == Subset::C100 && v.flagged_epochs.len() > 0)
+        .collect::<Vec<&Validator>>()
+        .len();
+
+    report.add_raw_text(format!("Poor Performance validators in the previous era:"));
+    report.add_raw_text(format!("<i>(Para validators that earned points below the lower limit of a 99% confidence interval calculated from their Val. Group)</i>"));
+    report.add_raw_text(format!(
+        "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
+        total_c100_flagged,
+        (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
+        total_non_tvp_flagged,
+        (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
+        total_tvp_flagged,
+        (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
     ));
     report.add_break();
 

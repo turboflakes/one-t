@@ -34,6 +34,7 @@ use crate::report::{
     Callout, Network, RawData, RawDataGroup, RawDataPara, RawDataParachains, Report, Session,
     Subset, Validator, Validators,
 };
+use crate::stats::confidence_interval_99;
 
 use async_recursion::async_recursion;
 use futures::StreamExt;
@@ -125,7 +126,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                     .await?;
 
                     // Network public report
-                    try_run_network_report(new_session_event.session_index).await?;
+                    try_run_network_report(new_session_event.session_index, &records).await?;
                 }
 
                 // Update current block number
@@ -286,6 +287,10 @@ pub async fn switch_new_session(
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
 
+    // Flag validators with poor performance in previous epoch
+    flag_validators_with_poor_performance(records.current_era(), records.current_epoch(), records)?;
+
+    // keep previous era in context
     let previous_era_index = records.current_era().clone();
 
     // Fetch active era index
@@ -321,7 +326,7 @@ pub async fn switch_new_session(
         records.current_epoch() - 12,
     ));
 
-    // Send report from previous session
+    // Send reports from previous session
     let era_index: u32 = if current_era_index != previous_era_index {
         previous_era_index
     } else {
@@ -502,7 +507,7 @@ pub async fn run_val_perf_report(
     let mut para_validator_sorted_by_points = Vec::from_iter(para_validator_points_map);
     para_validator_sorted_by_points.sort_by(|(_, a), (_, b)| b.cmp(&a));
 
-    // Prepare data for each valisator subscriber
+    // Prepare data for each validator subscriber
     if let Some(subs) = subscribers.get(Some(EpochKey(era_index, epoch_index))) {
         for (stash, user_id) in subs.iter() {
             let mut validator = Validator::new(stash.clone());
@@ -582,6 +587,57 @@ pub async fn run_val_perf_report(
             }
         }
     }
+
+    Ok(())
+}
+
+pub fn flag_validators_with_poor_performance(
+    era_index: EraIndex,
+    epoch_index: EpochIndex,
+    records: &mut Records,
+) -> Result<(), OnetError> {
+    // Populate some maps to get ranks
+    let mut group_authorities_map: BTreeMap<u32, Vec<AuthorityRecord>> = BTreeMap::new();
+
+    if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
+        for authority_idx in authorities.iter() {
+            if let Some(para_record) =
+                records.get_para_record(*authority_idx, Some(EpochKey(era_index, epoch_index)))
+            {
+                if let Some(group_idx) = para_record.group() {
+                    if let Some(authority_record) = records.get_authority_record(
+                        *authority_idx,
+                        Some(EpochKey(era_index, epoch_index)),
+                    ) {
+                        let auths = group_authorities_map.entry(group_idx).or_insert(Vec::new());
+                        auths.push(authority_record.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // find validators with total points outside the 99% confidence iterval
+    for (_, authorities) in group_authorities_map.iter() {
+        let v: Vec<f64> = (*authorities
+            .iter()
+            .map(|a| a.points() as f64)
+            .collect::<Vec<f64>>())
+        .to_vec();
+        // Calculate 99% confidence for the Val. Group
+        let ci = confidence_interval_99(&v);
+        // Flag authorities with points lower than the minimum ci
+        for authority_record in authorities.iter() {
+            if (authority_record.points() as f64) < ci.0 {
+                records.flag_authority(
+                    authority_record.authority_index().clone(),
+                    EpochKey(era_index, epoch_index),
+                );
+            }
+        }
+    }
+
+    debug!("records {:?}", records);
 
     Ok(())
 }
@@ -757,11 +813,16 @@ pub async fn run_parachains_report(
     Ok(())
 }
 
-pub async fn try_run_network_report(epoch_index: EpochIndex) -> Result<(), OnetError> {
+pub async fn try_run_network_report(
+    epoch_index: EpochIndex,
+    records: &Records,
+) -> Result<(), OnetError> {
+    //
     // Trigger network report every 6 epochs (every era)
     if (epoch_index as f64 % 6.0_f64) == 0.0_f64 {
+        let records_cloned = records.clone();
         async_std::task::spawn(async move {
-            if let Err(e) = run_network_report().await {
+            if let Err(e) = run_network_report(&records_cloned).await {
                 error!("try_run_network_report error: {:?}", e);
             }
         });
@@ -770,7 +831,7 @@ pub async fn try_run_network_report(epoch_index: EpochIndex) -> Result<(), OnetE
     Ok(())
 }
 
-pub async fn run_network_report() -> Result<(), OnetError> {
+pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     let onet: Onet = Onet::new().await;
     let config = CONFIG.clone();
     let client = onet.client();
@@ -834,6 +895,12 @@ pub async fn run_network_report() -> Result<(), OnetError> {
         // Fetch own stake
         v.own_stake = get_own_stake(&onet, &stash).await?;
 
+        // Get flagged epochs
+        v.flagged_epochs.append(&mut records.get_epochs_flagged(
+            &stash,
+            active_era_index - 1,
+            current_session_index - 6,
+        ));
         //
         validators.push(v);
     }
@@ -873,13 +940,13 @@ pub async fn run_network_report() -> Result<(), OnetError> {
         .await?;
 
     // Trigger callout message to public rooms at the rate defined in config
-    let r = current_session_index as f64 % config.matrix_callout_epoch_rate as f64;
-    if r == 0.0_f64 {
-        let callout = Report::callout(data);
-        onet.matrix()
-            .send_callout_message(&callout.message(), Some(&callout.formatted_message()))
-            .await?;
-    }
+    // let r = current_session_index as f64 % config.matrix_callout_epoch_rate as f64;
+    // if r == 0.0_f64 {
+    let callout = Report::callout(data);
+    onet.matrix()
+        .send_callout_message(&callout.message(), Some(&callout.formatted_message()))
+        .await?;
+    // }
     Ok(())
 }
 
