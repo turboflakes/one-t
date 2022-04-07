@@ -274,7 +274,7 @@ impl From<RawDataGroup> for Report {
 
         report.add_raw_text("——".into());
         report.add_raw_text(format!(
-            "{} v{} ♡ turboflakes.io",
+            "<code>{} v{}</code>",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION")
         ));
@@ -347,7 +347,7 @@ impl From<RawDataParachains> for Report {
 
         report.add_raw_text("——".into());
         report.add_raw_text(format!(
-            "{} v{} ♡ turboflakes.io",
+            "<code>{} v{}</code>",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION")
         ));
@@ -528,7 +528,7 @@ impl From<RawDataPara> for Report {
 
         report.add_raw_text("——".into());
         report.add_raw_text(format!(
-            "{} v{} ♡ turboflakes.io",
+            "<code>{} v{}</code>",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION")
         ));
@@ -555,7 +555,9 @@ impl From<RawData> for Report {
         report.add_raw_text(format!(
             "<i>TVP validators are shown in bold (100% Commission • non-tvp • <b>TVP</b>).</i>",
         ));
-
+        // report.add_raw_text(format!(
+        //     "<i>e.g. The first position is always related to the sub set of 100% commission validators, followed by the stat of the sub set of validators not included in the Thousand Validator Programme (non-tvp) and next in bold is the stat of the sub set of validators that participate in the TVP.</i>",
+        // ));
         // --- Specific report sections here [START] -->
 
         total_validators_report(&mut report, &data);
@@ -570,7 +572,7 @@ impl From<RawData> for Report {
 
         report.add_raw_text("——".into());
         report.add_raw_text(format!(
-            "{} v{} ♡ turboflakes.io",
+            "<code>{} v{}</code>",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION")
         ));
@@ -630,10 +632,7 @@ fn total_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a
         .collect::<Vec<&Validator>>()
         .len();
 
-    report.add_raw_text(format!(
-        "{} validators in total {}:",
-        data.network.name, total,
-    ));
+    report.add_raw_text(format!("{} total {} validators:", total, data.network.name,));
     report.add_raw_text(format!(
         "‣ {} ({:.2}%) • {} ({:.2}%) • <b>{} ({:.2}%)</b>",
         total_c100,
@@ -653,8 +652,6 @@ fn active_validators_report<'a>(
     data: &'a RawData,
     is_verbose: bool,
 ) -> &'a Report {
-    let total = data.validators.len();
-
     let total_active = data
         .validators
         .iter()
@@ -681,36 +678,31 @@ fn active_validators_report<'a>(
         .collect::<Vec<&Validator>>()
         .len();
 
-    let verbose = if is_verbose {
-        "Active validators →"
+    
+    if is_verbose {
+        report.add_raw_text(format!("In the present era there are {} active validators:", total_active));
+        report.add_raw_text(format!(
+            "‣ {} = {} ({:.2}%) of 100% commission validators, {} ({:.2}%) of non-tvp validators and <b>{} ({:.2}%) of TVP validators</b>",
+            total_active,
+            total_c100,
+            (total_c100 as f32 / total_active as f32) * 100.0,
+            total_non_tvp,
+            (total_non_tvp as f32 / total_active as f32) * 100.0,
+            total_tvp,
+            (total_tvp as f32 / total_active as f32) * 100.0,
+        ));
     } else {
-        "Active"
-    };
-    report.add_raw_text(format!(
-        "{} {} ({:.2}%):",
-        verbose,
-        total_active,
-        (total_active as f32 / total as f32) * 100.0,
-    ));
-    let v_c100 = if is_verbose {
-        " on 100% commission "
-    } else {
-        " "
-    };
-    let v_non_tvp = if is_verbose { " non-tvp " } else { " " };
-    let v_tvp = if is_verbose { " TVP " } else { " " };
-    report.add_raw_text(format!(
-        "‣ {} ({:.2}%){}• {} ({:.2}%){}• <b>{} ({:.2}%){}</b>",
-        total_c100,
-        (total_c100 as f32 / total_active as f32) * 100.0,
-        v_c100,
-        total_non_tvp,
-        (total_non_tvp as f32 / total_active as f32) * 100.0,
-        v_non_tvp,
-        total_tvp,
-        (total_tvp as f32 / total_active as f32) * 100.0,
-        v_tvp
-    ));
+        report.add_raw_text(format!("{} active validators:", total_active));
+        report.add_raw_text(format!(
+            "‣ {} ({:.2}%) • {} ({:.2}%) • <b>{} ({:.2}%)</b>",
+            total_c100,
+            (total_c100 as f32 / total_active as f32) * 100.0,
+            total_non_tvp,
+            (total_non_tvp as f32 / total_active as f32) * 100.0,
+            total_tvp,
+            (total_tvp as f32 / total_active as f32) * 100.0,
+        ));
+    }
     report.add_break();
 
     report
@@ -747,7 +739,7 @@ fn own_stake_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
     let avg_c100: u128 = c100.iter().sum::<u128>() / c100.len() as u128;
 
     report.add_raw_text(format!(
-        "Average, minimum and maximum validator self stake in {}:",
+        "Average (Min, Max) validator self stake in {}:",
         data.network.token_symbol,
     ));
     report.add_raw_text(format!(
@@ -766,7 +758,9 @@ fn own_stake_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
     ));
     report.add_break();
 
-    report.add_raw_text(format!("Validator contributions for network security:"));
+    report.add_raw_text(format!(
+        "Validator self stake contributions for network security:"
+    ));
     report.add_raw_text(format!(
         "‣ {:.2}% • {:.2}% • <b>{:.2}%</b>",
         (c100.iter().sum::<u128>() as f64 / total as f64) * 100.0,
@@ -817,7 +811,7 @@ fn oversubscribed_validators_report<'a>(report: &'a mut Report, data: &'a RawDat
         (total_over as f32 / total as f32) * 100.0
     ));
     report.add_raw_text(format!(
-        "‣ {} ({:.2}%) • {} ({:.2}%) • <b>{} ({:.2}%)</b>",
+        "‣ {} ({:.2}%) + {} ({:.2}%) + <b>{} ({:.2}%)</b>",
         total_c100,
         (total_c100 as f32 / total_over as f32) * 100.0,
         total_non_tvp,
@@ -873,7 +867,7 @@ fn avg_points_collected_report<'a>(report: &'a mut Report, data: &'a RawData) ->
     let avg_total_eras_points_c100 = total_eras_points_c100.1 / total_eras_points_c100.0;
 
     report.add_raw_text(format!(
-        "On average {} points/validator/era collected in the last {} eras:",
+        "On average {} points per validator per era were collected in the last {} eras:",
         avg_total_eras_points, config.maximum_history_eras,
     ));
     report.add_raw_text(format!(
