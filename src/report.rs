@@ -1092,6 +1092,7 @@ fn top_validators_report<'a>(
     for v in &tvp_sorted[..max] {
         report.add_raw_text(format!("* {} ({})", v.name, v.total_points / v.total_eras));
     }
+    report.add_break();
     report
 }
 
