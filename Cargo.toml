@@ -1,6 +1,6 @@
 [package]
 name = "onet"
-version = "0.4.3"
+version = "0.4.4"
 authors = ["Paulo <paulo@turboflakes.io>"]
 description = "ONE-T is a performance report bot for the Polkadot and Kusama network with a special focus on the One Thousand validator programme" 
 edition = "2018"
@@ -38,4 +38,4 @@ async-std = { version = "1.8.0", features = ["attributes", "tokio1"] }
 env_logger = "0.9.0"
 futures = "0.3.13"
 codec = { package = "parity-scale-codec", version = "3.0.0", default-features = false, features = ["derive", "full", "bit-vec"] }
-hex = "0.4.3"
+hex = "0.4.4"
