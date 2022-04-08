@@ -939,13 +939,13 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         .await?;
 
     // Trigger callout message to public rooms at the rate defined in config
-    // let r = current_session_index as f64 % config.matrix_callout_epoch_rate as f64;
-    // if r == 0.0_f64 {
-    let callout = Report::callout(data);
-    onet.matrix()
-        .send_callout_message(&callout.message(), Some(&callout.formatted_message()))
-        .await?;
-    // }
+    let r = current_session_index as f64 % config.matrix_callout_epoch_rate as f64;
+    if r == 0.0_f64 {
+        let callout = Report::callout(data);
+        onet.matrix()
+            .send_callout_message(&callout.message(), Some(&callout.formatted_message()))
+            .await?;
+    }
     Ok(())
 }
 
