@@ -24,6 +24,7 @@ use crate::onet::ReportType;
 use crate::records::{
     AuthorityIndex, AuthorityRecord, EpochIndex, ParaId, ParaRecord, ParaStats, Points,
 };
+use crate::stats::confidence_interval_99;
 use crate::stats::mean;
 use log::info;
 use rand::Rng;
@@ -221,7 +222,7 @@ impl From<RawDataGroup> for Report {
         // Skip the full report if it's the initial record since the epoch is not fully recorded
         if data.is_first_record {
             report.add_raw_text(format!(
-                "💤 Skipping {} for {}//{}//{} due to epoch not being fully recorded.",
+                "💤 Skipping {} for {} // {} // {} due to epoch not being fully recorded.",
                 data.report_type.name(),
                 data.network.name,
                 data.session.active_era_index,
@@ -236,7 +237,7 @@ impl From<RawDataGroup> for Report {
         // Network info
         report.add_break();
         report.add_raw_text(format!(
-            "📮 {} → <b>{}//{}//{}</b>",
+            "📮 {} → <b>{} // {} // {}</b>",
             data.report_type.name(),
             data.network.name,
             data.session.active_era_index,
@@ -255,16 +256,29 @@ impl From<RawDataGroup> for Report {
 
         for (i, group) in data.groups.iter().enumerate() {
             clode_block.push_str(&format!(
-                "{:<21}{:>4}{:>4}{:>7}\n",
+                "{:<21}{:1}{:>3}{:>4}{:>7}\n",
                 format!("#{} VAL. GROUP {}", i + 1, group.0),
+                "!",
                 "↻",
                 "❒",
                 "PTS"
             ));
+            let sample = group
+                .1
+                .iter()
+                .map(|(a, _, _)| a.points() as f64)
+                .collect::<Vec<f64>>();
+            let ci = confidence_interval_99(&sample);
             for (authority_record, val_name, core_assignments) in group.1.iter() {
+                let flag = if (authority_record.points() as f64) < ci.0 {
+                    "!"
+                } else {
+                    ""
+                };
                 clode_block.push_str(&format!(
-                    "{:<21}{:>4}{:>4}{:>7}\n",
+                    "{:<21}{:1}{:>3}{:>4}{:>7}\n",
                     slice(&replace_emoji(&val_name, "_"), 21),
+                    flag,
                     core_assignments,
                     authority_record.authored_blocks(),
                     authority_record.points()
@@ -300,7 +314,7 @@ impl From<RawDataParachains> for Report {
         // Skip the full report if it's the initial record since the epoch is not fully recorded
         if data.is_first_record {
             report.add_raw_text(format!(
-                "💤 Skipping {} for {}//{}//{} due to epoch not being fully recorded.",
+                "💤 Skipping {} for {} // {} // {} due to epoch not being fully recorded.",
                 data.report_type.name(),
                 data.network.name,
                 data.session.active_era_index,
@@ -315,7 +329,7 @@ impl From<RawDataParachains> for Report {
         // Network info
         report.add_break();
         report.add_raw_text(format!(
-            "📮 {} → <b>{}//{}//{}</b>",
+            "📮 {} → <b>{} // {} // {}</b>",
             data.report_type.name(),
             data.network.name,
             data.session.active_era_index,
@@ -372,7 +386,7 @@ impl From<RawDataPara> for Report {
         // Skip the full report if it's the initial record since the epoch is not fully recorded
         if data.is_first_record {
             report.add_raw_text(format!(
-                "💤 Skipping {} for {}//{}//{} due to epoch not being fully recorded.",
+                "💤 Skipping {} for {} // {} // {} due to epoch not being fully recorded.",
                 data.report_type.name(),
                 data.network.name,
                 data.session.active_era_index,
@@ -387,7 +401,7 @@ impl From<RawDataPara> for Report {
         // Network info
         report.add_break();
         report.add_raw_text(format!(
-            "📮 {} → <b>{}//{}//{}</b>",
+            "📮 {} → <b>{} // {} // {}</b>",
             data.report_type.name(),
             data.network.name,
             data.session.active_era_index,
@@ -430,21 +444,34 @@ impl From<RawDataPara> for Report {
                 report.add_raw_text(format!(
                     "‣ 🪂 Para Val. Rank: {}//200 {}",
                     data.para_validator_rank.unwrap_or_default() + 1,
-                    position_emoji(data.para_validator_rank.unwrap_or_default(), 199)
+                    position_emoji(data.para_validator_rank.unwrap_or_default())
                 ));
                 report.add_raw_text(format!(
                     "‣ 🤝 Val. Group {} Rank: {}//40 {}",
                     para_record.group().unwrap_or_default(),
                     data.group_rank.unwrap_or_default() + 1,
-                    position_emoji(data.group_rank.unwrap_or_default(), 39)
+                    position_emoji(data.group_rank.unwrap_or_default())
                 ));
 
-                let para_validator_group_rank =
-                    position(*authority_record.authority_index(), group_by_points(v));
+                let para_validator_group_rank = position(
+                    *authority_record.authority_index(),
+                    group_by_points(v.clone()),
+                );
+
+                let sample = v
+                    .iter()
+                    .map(|(_, points)| *points as f64)
+                    .collect::<Vec<f64>>();
+                let ci = confidence_interval_99(&sample);
+                let emoji = if (authority_record.points() as f64) < ci.0 {
+                    Random::HealthCheck
+                } else {
+                    position_emoji(para_validator_group_rank.unwrap_or_default())
+                };
                 report.add_raw_text(format!(
                     "‣ 🎓 Para Val. Group Rank: {}//5 {}",
                     para_validator_group_rank.unwrap_or_default() + 1,
-                    position_emoji(para_validator_group_rank.unwrap_or_default(), 4)
+                    emoji
                 ));
 
                 // Print breakdown points
@@ -458,21 +485,35 @@ impl From<RawDataPara> for Report {
                     "PTS"
                 ));
 
+                // verify if authority falls below ci
+                let flag = if (authority_record.points() as f64) < ci.0 {
+                    "!"
+                } else {
+                    ""
+                };
                 // Print out subscriber
                 clode_block.push_str(&format!(
-                    "{:<2}{:<21}{:>6}{:>7}\n",
+                    "{:<2}{:<21}{:>2}{:>6}{:>7}\n",
                     "*",
                     slice(&replace_emoji(&data.validator.name, "_"), 21),
+                    flag,
                     authority_record.authored_blocks(),
                     authority_record.points()
                 ));
                 // Print out peers
                 let peers_letters = vec!["A", "B", "C", "D"];
                 for (i, peer) in data.peers.iter().enumerate() {
+                    // verify if one of the peers is falls below ci
+                    let flag = if (peer.1.points() as f64) < ci.0 {
+                        "!"
+                    } else {
+                        ""
+                    };
                     clode_block.push_str(&format!(
-                        "{:<2}{:<21}{:>6}{:>7}\n",
+                        "{:<2}{:<21}{:>2}{:>4}{:>7}\n",
                         peers_letters[i],
                         slice(&replace_emoji(&peer.0.clone(), "_"), 21),
+                        flag,
                         peer.1.authored_blocks(),
                         peer.1.points()
                     ));
@@ -557,8 +598,9 @@ impl From<RawData> for Report {
             data.network.name, data.session.active_era_index,
         ));
         report.add_raw_text(format!(
-            "<i>TVP validators are shown in bold (100% Commission • non-tvp • <b>TVP</b>).</i>",
+            "<i>TVP validators are shown in bold (100% Commission • Others • <b><a href=\"https://wiki.polkadot.network/docs/thousand-validators\">TVP</a></b>).</i>",
         ));
+
         // report.add_raw_text(format!(
         //     "<i>e.g. The first position is always related to the sub set of 100% commission validators, followed by the stat of the sub set of validators not included in the Thousand Validator Programme (non-tvp) and next in bold is the stat of the sub set of validators that participate in the TVP.</i>",
         // ));
@@ -566,12 +608,12 @@ impl From<RawData> for Report {
 
         total_validators_report(&mut report, &data);
         active_validators_report(&mut report, &data, false);
+        flagged_validators_report(&mut report, &data);
         own_stake_validators_report(&mut report, &data);
         oversubscribed_validators_report(&mut report, &data);
         avg_points_collected_report(&mut report, &data);
         inclusion_validators_report(&mut report, &data);
-        flagged_validators_report(&mut report, &data);
-        top_validators_report(&mut report, &data);
+        top_validators_report(&mut report, &data, false);
 
         // --- Specific report sections here [END] ---|
 
@@ -596,11 +638,13 @@ impl Callout<RawData> for Report {
         let mut report = Report::new();
 
         report.add_raw_text(format!(
-            "📣 <b>{}//{}</b>",
+            "📣 <b>{} // {}</b>",
             data.network.name, data.session.active_era_index,
         ));
 
         active_validators_report(&mut report, &data, true);
+
+        top_validators_report(&mut report, &data, true);
 
         report.add_raw_text(format!(
             "<i>Lookout for the full report here</i> → #{} 👀",
@@ -685,18 +729,17 @@ fn active_validators_report<'a>(
 
     if is_verbose {
         report.add_raw_text(format!(
-            "In the present era there are {} active validators:",
-            total_active
+            "For era {} there are {} active validators:",
+            data.session.active_era_index, total_active,
         ));
         report.add_raw_text(format!(
-            "‣ {} = {} ({:.2}%) of 100% commission validators, {} ({:.2}%) of non-tvp validators and <b>{} ({:.2}%) of TVP validators</b>",
-            total_active,
+            "‣ {} ({:.2}%) are 100% commission validators, {} ({:.2}%) are <a href=\"https://wiki.polkadot.network/docs/thousand-validators\">TVP validators</a> and the remainder {} ({:.2}%) other validators.",
             total_c100,
             (total_c100 as f32 / total_active as f32) * 100.0,
-            total_non_tvp,
-            (total_non_tvp as f32 / total_active as f32) * 100.0,
             total_tvp,
             (total_tvp as f32 / total_active as f32) * 100.0,
+            total_non_tvp,
+            (total_non_tvp as f32 / total_active as f32) * 100.0,
         ));
     } else {
         report.add_raw_text(format!("{} active validators:", total_active));
@@ -1003,8 +1046,10 @@ fn flagged_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &
         .collect::<Vec<&Validator>>()
         .len();
 
-    report.add_raw_text(format!("Poor Performance validators in the previous era:"));
-    report.add_raw_text(format!("<i>(Para validators that earned points below the lower limit of a 99% confidence interval calculated from their Val. Group)</i>"));
+    report.add_raw_text(format!(
+        "{} validators with a poor performance last era:",
+        total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged
+    ));
     report.add_raw_text(format!(
         "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
         total_c100_flagged,
@@ -1019,7 +1064,11 @@ fn flagged_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &
     report
 }
 
-fn top_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a Report {
+fn top_validators_report<'a>(
+    report: &'a mut Report,
+    data: &'a RawData,
+    is_short: bool,
+) -> &'a Report {
     let config = CONFIG.clone();
 
     // Sort TVP by avg points for validators that had at least 1/3 of max eras
@@ -1032,17 +1081,17 @@ fn top_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a R
     tvp_sorted
         .sort_by(|a, b| (b.total_points / b.total_eras).cmp(&(&a.total_points / &a.total_eras)));
 
+    let max = if is_short { 5 } else { 10 };
     report.add_raw_text(format!(
-        "Top 8 TVP Validators with most average points in the last {} eras (minimum inclusion {} eras):",
+        "Top {} TVP Validators with most average points in the last {} eras (minimum inclusion {} eras):",
+        max,
         config.maximum_history_eras,
         config.maximum_history_eras / 2,
     ));
     report.add_break();
-
-    for v in &tvp_sorted[..8] {
+    for v in &tvp_sorted[..max] {
         report.add_raw_text(format!("* {} ({})", v.name, v.total_points / v.total_eras));
     }
-
     report
 }
 
@@ -1115,10 +1164,7 @@ fn position(a: u32, v: Vec<Vec<(u32, u32)>>) -> Option<usize> {
     None
 }
 
-fn position_emoji(r: usize, last: usize) -> Random {
-    if r == last {
-        return Random::Last;
-    }
+fn position_emoji(r: usize) -> Random {
     match r {
         0 => Random::First,
         1 => Random::Second,
@@ -1132,7 +1178,7 @@ enum Random {
     Second,
     Third,
     Other,
-    Last,
+    HealthCheck,
 }
 
 impl std::fmt::Display for Random {
@@ -1151,12 +1197,12 @@ impl std::fmt::Display for Random {
                 write!(f, "🥉 {}", v[random_index(v.len())])
             }
             Self::Other => {
-                let v = vec!["😞", "😔", "😟", "😕", "🙁", "😣", "😖", "😢"];
+                let v = vec!["😞", "😔", "😟", "😕", "🙁", "😣", "😖", "😢", "🥺"];
                 write!(f, "{}", v[random_index(v.len())])
             }
-            Self::Last => {
-                let v = vec!["😫", "😩", "🥺", "😭", "😤", "😠", "😡", "🤬", "😱", "😰"];
-                write!(f, "{} ⚠️", v[random_index(v.len())])
+            Self::HealthCheck => {
+                let v = vec!["😫", "😩", "😭", "😤", "😡", "🤬", "😱", "😰"];
+                write!(f, "{} 🩺 🚑", v[random_index(v.len())])
             }
         }
     }

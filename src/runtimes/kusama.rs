@@ -619,13 +619,12 @@ pub fn flag_validators_with_poor_performance(
 
     // find validators with total points outside the 99% confidence iterval
     for (_, authorities) in group_authorities_map.iter() {
-        let v: Vec<f64> = (*authorities
+        let sample = authorities
             .iter()
             .map(|a| a.points() as f64)
-            .collect::<Vec<f64>>())
-        .to_vec();
+            .collect::<Vec<f64>>();
         // Calculate 99% confidence for the Val. Group
-        let ci = confidence_interval_99(&v);
+        let ci = confidence_interval_99(&sample);
         // Flag authorities with points lower than the minimum ci
         for authority_record in authorities.iter() {
             if (authority_record.points() as f64) < ci.0 {
