@@ -34,7 +34,7 @@ use crate::report::{
     Callout, Network, RawData, RawDataGroup, RawDataPara, RawDataParachains, Report, Session,
     Subset, Validator, Validators,
 };
-use crate::stats::confidence_interval_99;
+use crate::stats::{confidence_interval_99, confidence_interval_99_9};
 
 use async_recursion::async_recursion;
 use futures::StreamExt;
@@ -476,6 +476,7 @@ pub async fn run_val_perf_report(
     // Populate some maps to get ranks
     let mut group_stats_map: BTreeMap<u32, ParaStats> = BTreeMap::new();
     let mut para_validator_points_map: BTreeMap<u32, Points> = BTreeMap::new();
+    let mut sample: Vec<f64> = Vec::new();
 
     if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
         for authority_idx in authorities.iter() {
@@ -497,6 +498,7 @@ pub async fn run_val_perf_report(
                     .get_authority_record(*authority_idx, Some(EpochKey(era_index, epoch_index)))
                 {
                     para_validator_points_map.insert(*authority_idx, authority_record.points());
+                    sample.push(authority_record.points().into());
                 }
             }
         }
@@ -524,6 +526,7 @@ pub async fn run_val_perf_report(
                 peers: Vec::new(),
                 para_validator_rank: None,
                 group_rank: None,
+                ci_99_9: confidence_interval_99_9(&sample),
             };
 
             if let Some(authority_record) = records
@@ -598,6 +601,7 @@ pub fn flag_validators_with_poor_performance(
 ) -> Result<(), OnetError> {
     // Populate some maps to get ranks
     let mut group_authorities_map: BTreeMap<u32, Vec<AuthorityRecord>> = BTreeMap::new();
+    let mut sample: Vec<f64> = Vec::new();
 
     if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
         for authority_idx in authorities.iter() {
@@ -611,6 +615,7 @@ pub fn flag_validators_with_poor_performance(
                     ) {
                         let auths = group_authorities_map.entry(group_idx).or_insert(Vec::new());
                         auths.push(authority_record.clone());
+                        sample.push(authority_record.points().into());
                     }
                 }
             }
@@ -618,6 +623,7 @@ pub fn flag_validators_with_poor_performance(
     }
 
     // find validators with total points outside the 99% confidence iterval
+    let ci_99_9 = confidence_interval_99_9(&sample);
     for (_, authorities) in group_authorities_map.iter() {
         let sample = authorities
             .iter()
@@ -627,7 +633,9 @@ pub fn flag_validators_with_poor_performance(
         let ci = confidence_interval_99(&sample);
         // Flag authorities with points lower than the minimum ci
         for authority_record in authorities.iter() {
-            if (authority_record.points() as f64) < ci.0 {
+            if (authority_record.points() as f64) < ci.0
+                && (authority_record.points() as f64) < ci_99_9.0
+            {
                 records.flag_authority(
                     authority_record.authority_index().clone(),
                     EpochKey(era_index, epoch_index),
@@ -669,6 +677,7 @@ pub async fn run_groups_report(
     // Populate some maps to get ranks
     let mut group_authorities_map: BTreeMap<u32, Vec<(AuthorityRecord, String, u32)>> =
         BTreeMap::new();
+    let mut sample: Vec<f64> = Vec::new();
 
     if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
         for authority_idx in authorities.iter() {
@@ -693,6 +702,7 @@ pub async fn run_groups_report(
                         let auths = group_authorities_map.entry(group_idx).or_insert(Vec::new());
                         auths.push((authority_record.clone(), name, core_assignments));
                         auths.sort_by(|(a, _, _), (b, _, _)| b.points().cmp(&a.points()));
+                        sample.push(authority_record.points().into());
                     }
                 }
             }
@@ -714,6 +724,7 @@ pub async fn run_groups_report(
         report_type: ReportType::Groups,
         is_first_record: records.is_initial_epoch(epoch_index),
         groups: group_authorities_sorted.clone(),
+        ci_99_9: confidence_interval_99_9(&sample),
     };
 
     let report = Report::from(data);

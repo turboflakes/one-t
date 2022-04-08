@@ -148,6 +148,7 @@ pub struct RawDataPara {
     pub parachains: Vec<ParaId>,
     pub para_validator_rank: Option<usize>,
     pub group_rank: Option<usize>,
+    pub ci_99_9: (f64, f64),
 }
 
 #[derive(Debug)]
@@ -157,6 +158,7 @@ pub struct RawDataGroup {
     pub report_type: ReportType,
     pub is_first_record: bool,
     pub groups: Vec<(u32, Vec<(AuthorityRecord, String, u32)>)>,
+    pub ci_99_9: (f64, f64),
 }
 
 #[derive(Debug)]
@@ -270,7 +272,9 @@ impl From<RawDataGroup> for Report {
                 .collect::<Vec<f64>>();
             let ci = confidence_interval_99(&sample);
             for (authority_record, val_name, core_assignments) in group.1.iter() {
-                let flag = if (authority_record.points() as f64) < ci.0 {
+                let flag = if (authority_record.points() as f64) < ci.0
+                    && (authority_record.points() as f64) < data.ci_99_9.0
+                {
                     "!"
                 } else {
                     ""
@@ -463,7 +467,9 @@ impl From<RawDataPara> for Report {
                     .map(|(_, points)| *points as f64)
                     .collect::<Vec<f64>>();
                 let ci = confidence_interval_99(&sample);
-                let emoji = if (authority_record.points() as f64) < ci.0 {
+                let emoji = if (authority_record.points() as f64) < ci.0
+                    && (authority_record.points() as f64) < data.ci_99_9.0
+                {
                     Random::HealthCheck
                 } else {
                     position_emoji(para_validator_group_rank.unwrap_or_default())
@@ -486,7 +492,9 @@ impl From<RawDataPara> for Report {
                 ));
 
                 // verify if authority falls below ci
-                let flag = if (authority_record.points() as f64) < ci.0 {
+                let flag = if (authority_record.points() as f64) < ci.0
+                    && (authority_record.points() as f64) < data.ci_99_9.0
+                {
                     "!"
                 } else {
                     ""
@@ -504,7 +512,9 @@ impl From<RawDataPara> for Report {
                 let peers_letters = vec!["A", "B", "C", "D"];
                 for (i, peer) in data.peers.iter().enumerate() {
                     // verify if one of the peers is falls below ci
-                    let flag = if (peer.1.points() as f64) < ci.0 {
+                    let flag = if (peer.1.points() as f64) < ci.0
+                        && (peer.1.points() as f64) < data.ci_99_9.0
+                    {
                         "!"
                     } else {
                         ""
