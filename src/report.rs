@@ -1024,7 +1024,7 @@ fn flagged_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &
     let total_tvp_flagged = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP && v.flagged_epochs.len() > 0)
+        .filter(|v| v.subset == Subset::TVP && v.flagged_epochs.len() >= 2)
         .collect::<Vec<&Validator>>()
         .len();
 
@@ -1038,7 +1038,7 @@ fn flagged_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &
     let total_non_tvp_flagged = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::NONTVP && v.flagged_epochs.len() > 0)
+        .filter(|v| v.subset == Subset::NONTVP && v.flagged_epochs.len() >= 2)
         .collect::<Vec<&Validator>>()
         .len();
 
@@ -1052,24 +1052,27 @@ fn flagged_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &
     let total_c100_flagged = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::C100 && v.flagged_epochs.len() > 0)
+        .filter(|v| v.subset == Subset::C100 && v.flagged_epochs.len() >= 2)
         .collect::<Vec<&Validator>>()
         .len();
 
-    report.add_raw_text(format!(
-        "{} validators with a poor performance last era:",
-        total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged
-    ));
-    report.add_raw_text(format!(
-        "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
-        total_c100_flagged,
-        (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
-        total_non_tvp_flagged,
-        (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
-        total_tvp_flagged,
-        (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
-    ));
-    report.add_break();
+    let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
+    if total_flagged != 0 {
+        report.add_raw_text(format!(
+            "{} validators with a poor performance last era:",
+            total_flagged
+        ));
+        report.add_raw_text(format!(
+            "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
+            total_c100_flagged,
+            (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
+            total_non_tvp_flagged,
+            (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
+            total_tvp_flagged,
+            (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
+        ));
+        report.add_break();
+    }
 
     report
 }
