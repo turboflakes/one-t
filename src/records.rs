@@ -199,6 +199,18 @@ impl Records {
         out
     }
 
+    pub fn is_active_at(
+        &self,
+        address: &AccountId32,
+        era_index: EraIndex,
+        epoch_index: EpochIndex,
+    ) -> bool {
+        let key = EpochKey(era_index, epoch_index);
+        self.addresses
+            .get(&AddressKey(key.clone(), address.to_string()))
+            .is_some()
+    }
+
     pub fn insert(
         &mut self,
         address: &AccountId32,

@@ -905,7 +905,10 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         // Fetch own stake
         v.own_stake = get_own_stake(&onet, &stash).await?;
 
-        // Get flagged epochs
+        // Check if validator was active last era
+        v.active_last_era =
+            records.is_active_at(&stash, active_era_index - 1, current_session_index - 1);
+        // Get flagged epochs from previous era
         v.flagged_epochs.append(&mut records.get_epochs_flagged(
             &stash,
             active_era_index - 1,

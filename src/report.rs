@@ -46,6 +46,7 @@ pub struct Validator {
     pub total_eras: u32,
     pub total_authored_blocks: u32,
 
+    pub active_last_era: bool,
     pub flagged_epochs: Vec<EpochIndex>,
     pub warnings: Vec<String>,
 }
@@ -64,6 +65,7 @@ impl Validator {
             total_eras: 0,
             total_authored_blocks: 0,
             // records: Vec::new(),
+            active_last_era: false,
             flagged_epochs: Vec::new(),
             warnings: Vec::new(),
         }
@@ -1014,53 +1016,61 @@ fn inclusion_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
 }
 
 fn flagged_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a Report {
+    let total_active = data
+        .validators
+        .iter()
+        .filter(|v| v.active_last_era)
+        .collect::<Vec<&Validator>>()
+        .len();
+
     let total_tvp = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP)
+        .filter(|v| v.subset == Subset::TVP && v.active_last_era)
         .collect::<Vec<&Validator>>()
         .len();
 
     let total_tvp_flagged = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP && v.flagged_epochs.len() >= 2)
+        .filter(|v| v.subset == Subset::TVP && v.active_last_era && v.flagged_epochs.len() >= 2)
         .collect::<Vec<&Validator>>()
         .len();
 
     let total_non_tvp = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::NONTVP)
+        .filter(|v| v.subset == Subset::NONTVP && v.active_last_era)
         .collect::<Vec<&Validator>>()
         .len();
 
     let total_non_tvp_flagged = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::NONTVP && v.flagged_epochs.len() >= 2)
+        .filter(|v| v.subset == Subset::NONTVP && v.active_last_era && v.flagged_epochs.len() >= 2)
         .collect::<Vec<&Validator>>()
         .len();
 
     let total_c100 = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::C100)
+        .filter(|v| v.subset == Subset::C100 && v.active_last_era)
         .collect::<Vec<&Validator>>()
         .len();
 
     let total_c100_flagged = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::C100 && v.flagged_epochs.len() >= 2)
+        .filter(|v| v.subset == Subset::C100 && v.active_last_era && v.flagged_epochs.len() >= 2)
         .collect::<Vec<&Validator>>()
         .len();
 
     let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
     if total_flagged != 0 {
         report.add_raw_text(format!(
-            "{} validators with a poor performance last era:",
-            total_flagged
+            "{} ({:.2}%) validators with a poor performance last era:",
+            total_flagged,
+            (total_flagged as f32 / total_active as f32) * 100.0,
         ));
         report.add_raw_text(format!(
             "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
