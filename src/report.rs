@@ -501,7 +501,7 @@ impl From<RawDataPara> for Report {
                 };
                 // Print out subscriber
                 clode_block.push_str(&format!(
-                    "{:<2}{:<21}{:>2}{:>6}{:>7}\n",
+                    "{:<2}{:<21}{:>2}{:>4}{:>7}\n",
                     "*",
                     slice(&replace_emoji(&data.validator.name, "_"), 21),
                     flag,
