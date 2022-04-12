@@ -106,6 +106,8 @@ pub struct Config {
     pub matrix_public_room: String,
     #[serde(default)]
     pub matrix_callout_public_rooms: Vec<String>,
+    #[serde(default)]
+    pub matrix_callout_public_room_ids: Vec<String>,
     #[serde(default = "default_matrix_callout_epoch_rate")]
     pub matrix_callout_epoch_rate: u32,
     #[serde(default)]
@@ -319,6 +321,14 @@ fn get_config() -> Config {
         env::set_var(
             "ONET_MATRIX_CALLOUT_PUBLIC_ROOMS",
             matrix_callout_public_rooms,
+        );
+    }
+    // NOTE: matrix_callout_public_room_ids is needed because some public rooms are not available from room alias, only through room id
+    if let Some(matrix_callout_public_room_ids) = matches.value_of("matrix-callout-public-room-ids")
+    {
+        env::set_var(
+            "ONET_MATRIX_CALLOUT_PUBLIC_ROOM_IDS",
+            matrix_callout_public_room_ids,
         );
     }
 

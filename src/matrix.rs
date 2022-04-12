@@ -363,6 +363,21 @@ impl Matrix {
                     }
                 }
             }
+            // Callout public room ids
+            for public_room_id in config.matrix_callout_public_room_ids.iter() {
+                // Join room if not already a member
+                let joined_rooms = self.get_joined_rooms().await?;
+                debug!("joined_rooms {:?}", joined_rooms);
+                if !joined_rooms.contains(&public_room_id) {
+                    self.join_room(&public_room_id).await?;
+                }
+                self.callout_public_room_ids
+                    .push(public_room_id.to_string());
+                info!(
+                    "Callout messages will be sent to room {} (Public)",
+                    public_room_id
+                );
+            }
         }
         Ok(())
     }
