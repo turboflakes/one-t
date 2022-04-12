@@ -545,9 +545,11 @@ pub async fn run_val_perf_report(
                             data.group_rank = Some(group_rank.clone());
                             // Get para validator rank
                             let (_, authorities) = &group_authorities_sorted[group_rank];
-                            data.para_validator_rank = authorities.iter().position(|a| {
+                            if let Some(validator_rank) = authorities.iter().position(|a| {
                                 a.authority_index() == authority_record.authority_index()
-                            });
+                            }) {
+                                data.para_validator_rank = Some((group_rank * 5) + validator_rank);
+                            }
                         }
                     }
 
