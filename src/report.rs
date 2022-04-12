@@ -262,7 +262,7 @@ impl From<RawDataGroup> for Report {
             clode_block.push_str(&format!(
                 "{:<21}{:1}{:>3}{:>4}{:>7}\n",
                 format!("#{} VAL. GROUP {}", i + 1, group.0),
-                "!",
+                " ",
                 "↻",
                 "❒",
                 "PTS"

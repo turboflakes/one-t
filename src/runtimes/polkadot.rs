@@ -474,8 +474,7 @@ pub async fn run_val_perf_report(
     }
 
     // Populate some maps to get ranks
-    let mut group_stats_map: BTreeMap<u32, ParaStats> = BTreeMap::new();
-    let mut para_validator_points_map: BTreeMap<u32, Points> = BTreeMap::new();
+    let mut group_authorities_map: BTreeMap<u32, Vec<AuthorityRecord>> = BTreeMap::new();
     let mut sample: Vec<f64> = Vec::new();
 
     if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
@@ -484,30 +483,28 @@ pub async fn run_val_perf_report(
                 records.get_para_record(*authority_idx, Some(EpochKey(era_index, epoch_index)))
             {
                 if let Some(group_idx) = para_record.group() {
-                    let mut stats = group_stats_map
-                        .entry(group_idx)
-                        .or_insert(ParaStats::default());
-                    for (_, s) in para_record.para_stats().iter() {
-                        stats.points += s.points();
-                        stats.core_assignments += s.core_assignments();
-                        stats.core_assignments += s.authored_blocks();
+                    if let Some(authority_record) = records.get_authority_record(
+                        *authority_idx,
+                        Some(EpochKey(era_index, epoch_index)),
+                    ) {
+                        let auths = group_authorities_map.entry(group_idx).or_insert(Vec::new());
+                        auths.push(authority_record.clone());
+                        auths.sort_by(|a, b| b.points().cmp(&a.points()));
+                        sample.push(authority_record.points().into());
                     }
-                }
-                // get points per authorities that are para validators
-                if let Some(authority_record) = records
-                    .get_authority_record(*authority_idx, Some(EpochKey(era_index, epoch_index)))
-                {
-                    para_validator_points_map.insert(*authority_idx, authority_record.points());
-                    sample.push(authority_record.points().into());
                 }
             }
         }
     }
-    // Convert maps to vec and sort by points
-    let mut group_sorted_by_points_vec = Vec::from_iter(group_stats_map);
-    group_sorted_by_points_vec.sort_by(|(_, a), (_, b)| b.points.cmp(&a.points));
-    let mut para_validator_sorted_by_points = Vec::from_iter(para_validator_points_map);
-    para_validator_sorted_by_points.sort_by(|(_, a), (_, b)| b.cmp(&a));
+
+    // Convert map to vec and sort group by points
+    let mut group_authorities_sorted = Vec::from_iter(group_authorities_map);
+    group_authorities_sorted.sort_by(|(_, a), (_, b)| {
+        b.iter()
+            .map(|x| x.points())
+            .sum::<Points>()
+            .cmp(&a.iter().map(|x| x.points()).sum::<Points>())
+    });
 
     // Prepare data for each validator subscriber
     if let Some(subs) = subscribers.get(Some(EpochKey(era_index, epoch_index))) {
@@ -539,16 +536,19 @@ pub async fn run_val_perf_report(
                 {
                     data.para_record = Some(para_record.clone());
 
-                    // Get para validator rank
-                    data.para_validator_rank = para_validator_sorted_by_points
-                        .iter()
-                        .position(|&(a, _)| a == *authority_record.authority_index());
-
                     // Get group rank
                     if let Some(group_idx) = para_record.group() {
-                        data.group_rank = group_sorted_by_points_vec
+                        if let Some(group_rank) = group_authorities_sorted
                             .iter()
-                            .position(|&(g, _)| g == group_idx);
+                            .position(|&(g, _)| g == group_idx)
+                        {
+                            data.group_rank = Some(group_rank.clone());
+                            // Get para validator rank
+                            let (_, authorities) = &group_authorities_sorted[group_rank];
+                            data.para_validator_rank = authorities.iter().position(|a| {
+                                a.authority_index() == authority_record.authority_index()
+                            });
+                        }
                     }
 
                     // Collect peers information
