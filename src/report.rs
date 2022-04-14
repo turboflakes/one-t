@@ -873,7 +873,7 @@ fn oversubscribed_validators_report<'a>(report: &'a mut Report, data: &'a RawDat
         (total_over as f32 / total as f32) * 100.0
     ));
     report.add_raw_text(format!(
-        "‣ {} ({:.2}%) + {} ({:.2}%) + <b>{} ({:.2}%)</b>",
+        "‣ {} ({:.2}%) • {} ({:.2}%) • <b>{} ({:.2}%)</b>",
         total_c100,
         (total_c100 as f32 / total_over as f32) * 100.0,
         total_non_tvp,
