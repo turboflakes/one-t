@@ -1138,10 +1138,11 @@ fn top_performers_report<'a>(
     report.add_break();
     for v in &tvp_sorted[..max] {
         report.add_raw_text(format!(
-            "* {} ({:.2}%) ({}x p/v)",
+            "* {} ({:.2}% of missed votes during {}x p/v) ({} points collected)",
             v.name,
             v.missed_ratio * 100.0,
-            v.para_epochs.len()
+            v.para_epochs.len(),
+            v.total_points
         ));
     }
     report.add_break();
@@ -1166,10 +1167,11 @@ fn low_performers_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a R
         report.add_break();
         for v in tvp_sorted.iter() {
             report.add_raw_text(format!(
-                "* <del>{}</del> ({:.2}%) ({}x p/v)",
+                "* <del>{}</del> ({:.2}% of missed votes during {}x p/v) ({} points collected)",
                 v.name,
                 v.missed_ratio * 100.0,
-                v.para_epochs.len()
+                v.para_epochs.len(),
+                v.total_points,
             ));
         }
         report.add_break();
