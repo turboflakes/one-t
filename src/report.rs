@@ -1199,6 +1199,8 @@ pub fn replace_emoji(text: &str, replacer: &str) -> String {
         "\u{231a}",
         "\u{fe0f}",
         "\u{3030}",
+        "\u{20e3}",
+        "\u{0020}",
         "]+",
     ))
     .unwrap();
@@ -1332,5 +1334,14 @@ mod tests {
         let a = vec![(1, 10), (2, 10), (3, 20), (4, 20), (5, 30)];
         let groups = group_by_points(a);
         assert_eq!(position(3, groups), Some(1));
+    }
+
+    #[test]
+    fn test_name() {
+        let val_name = "1️⃣ 1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣";
+        assert_eq!(
+            String::from("1_1_6_1_1_6_1_1_6_"),
+            slice(&replace_emoji(&val_name, "_"), 18)
+        );
     }
 }
