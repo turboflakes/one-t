@@ -618,6 +618,8 @@ impl From<RawData> for Report {
         avg_points_collected_report(&mut report, &data);
         inclusion_validators_report(&mut report, &data);
         top_validators_report(&mut report, &data, false);
+        top_performers_report(&mut report, &data, false);
+        low_performers_report(&mut report, &data);
 
         // --- Specific report sections here [END] ---|
 
