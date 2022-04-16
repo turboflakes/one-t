@@ -837,12 +837,13 @@ impl Matrix {
         );
         message.push_str("<br>");
         message.push_str("<i>Network performance report legend:</i><br>");
-        message.push_str("Poor performance inference is made from Para validator points that fall below the lower limit of the 99% confidence interval calculated from the respective Val. Group points<br>");
+        message.push_str("Low-performance inference is made from Para validator points that earned less than 50% of the maximum points earned by the top performer in the same Val. Group.<br>");
         message.push_str("<br>");
         message.push_str("<i>Val. performance report legend:</i><br>");
         message.push_str("→: !subscribe STASH_ADDRESS<br>");
         message.push_str("↻: Total number of core assignments (parachains) by the validator.<br>");
         message.push_str("❒: Total number of authored blocks by the validator.<br>");
+        message.push_str("✗: Total number of missed blocks by the validator.<br>");
         message.push_str(
             "PTS: Sum of points the validator earned while assigned to the val. group.<br>",
         );
@@ -853,6 +854,7 @@ impl Matrix {
         message.push_str("→: !subscribe groups<br>");
         message.push_str("↻: Total number of core assignements.<br>");
         message.push_str("❒: Total number of authored blocks.<br>");
+        message.push_str("✗: Total number of missed blocks.<br>");
         message.push_str("PTS: Sum of points earned while assigned to the val. group.<br>");
         message
             .push_str("Val. groups and validators are sorted by points in descending order.<br>");

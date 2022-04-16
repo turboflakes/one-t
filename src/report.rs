@@ -24,8 +24,6 @@ use crate::onet::ReportType;
 use crate::records::{
     AuthorityIndex, AuthorityRecord, EpochIndex, ParaId, ParaRecord, ParaStats, Points,
 };
-use crate::stats::confidence_interval_99;
-use crate::stats::mean;
 use log::info;
 use rand::Rng;
 use regex::Regex;
@@ -45,9 +43,10 @@ pub struct Validator {
     pub total_points: u32,
     pub total_eras: u32,
     pub total_authored_blocks: u32,
-
     pub active_last_era: bool,
     pub flagged_epochs: Vec<EpochIndex>,
+    pub para_epochs: Vec<EpochIndex>,
+    pub missed_ratio: f64,
     pub warnings: Vec<String>,
 }
 
@@ -64,9 +63,10 @@ impl Validator {
             total_points: 0,
             total_eras: 0,
             total_authored_blocks: 0,
-            // records: Vec::new(),
             active_last_era: false,
             flagged_epochs: Vec::new(),
+            para_epochs: Vec::new(),
+            missed_ratio: 0.0_f64,
             warnings: Vec::new(),
         }
     }
@@ -150,7 +150,6 @@ pub struct RawDataPara {
     pub parachains: Vec<ParaId>,
     pub para_validator_rank: Option<usize>,
     pub group_rank: Option<usize>,
-    pub ci_99_9: (f64, f64),
 }
 
 #[derive(Debug)]
@@ -160,7 +159,6 @@ pub struct RawDataGroup {
     pub report_type: ReportType,
     pub is_first_record: bool,
     pub groups: Vec<(u32, Vec<(AuthorityRecord, String, u32)>)>,
-    pub ci_99_9: (f64, f64),
 }
 
 #[derive(Debug)]
@@ -260,33 +258,27 @@ impl From<RawDataGroup> for Report {
 
         for (i, group) in data.groups.iter().enumerate() {
             clode_block.push_str(&format!(
-                "{:<21}{:1}{:>3}{:>4}{:>7}\n",
+                "{:<19}{:1}{:3}{:>3}{:>4}{:>6}\n",
                 format!("#{} VAL. GROUP {}", i + 1, group.0),
                 " ",
                 "↻",
                 "❒",
+                "✗",
                 "PTS"
             ));
-            let sample = group
-                .1
-                .iter()
-                .map(|(a, _, _)| a.points() as f64)
-                .collect::<Vec<f64>>();
-            let ci = confidence_interval_99(&sample);
             for (authority_record, val_name, core_assignments) in group.1.iter() {
-                let flag = if (authority_record.points() as f64) < ci.0
-                    && (authority_record.points() as f64) < data.ci_99_9.0
-                {
+                let flag = if authority_record.is_flagged() {
                     "!"
                 } else {
                     ""
                 };
                 clode_block.push_str(&format!(
-                    "{:<21}{:1}{:>3}{:>4}{:>7}\n",
-                    slice(&replace_emoji(&val_name, "_"), 21),
+                    "{:<19}{:1}{:3}{:>3}{:>4}{:>6}\n",
+                    slice(&replace_emoji(&val_name, "_"), 18),
                     flag,
                     core_assignments,
                     authority_record.authored_blocks(),
+                    authority_record.missed_votes(),
                     authority_record.points()
                 ));
             }
@@ -464,14 +456,7 @@ impl From<RawDataPara> for Report {
                     group_by_points(v.clone()),
                 );
 
-                let sample = v
-                    .iter()
-                    .map(|(_, points)| *points as f64)
-                    .collect::<Vec<f64>>();
-                let ci = confidence_interval_99(&sample);
-                let emoji = if (authority_record.points() as f64) < ci.0
-                    && (authority_record.points() as f64) < data.ci_99_9.0
-                {
+                let emoji = if authority_record.is_flagged() {
                     Random::HealthCheck
                 } else {
                     position_emoji(para_validator_group_rank.unwrap_or_default())
@@ -486,47 +471,42 @@ impl From<RawDataPara> for Report {
                 let mut clode_block = String::from("<pre><code>");
 
                 clode_block.push_str(&format!(
-                    "{:<2}{:<21}{:>6}{:>7}\n",
+                    "{:<2}{:<21}{:>3}{:>4}{:>6}\n",
                     "#",
                     format!("VAL. GROUP {}", para_record.group().unwrap_or_default()),
                     "❒",
+                    "✗",
                     "PTS"
                 ));
 
-                // verify if authority falls below ci
-                let flag = if (authority_record.points() as f64) < ci.0
-                    && (authority_record.points() as f64) < data.ci_99_9.0
-                {
+                // verify if para_record is flagged
+                let flag = if authority_record.is_flagged() {
                     "!"
                 } else {
                     ""
                 };
                 // Print out subscriber
                 clode_block.push_str(&format!(
-                    "{:<2}{:<21}{:>2}{:>4}{:>7}\n",
+                    "{:<2}{:<19}{:>2}{:>3}{:>4}{:>6}\n",
                     "*",
-                    slice(&replace_emoji(&data.validator.name, "_"), 21),
+                    slice(&replace_emoji(&data.validator.name, "_"), 19),
                     flag,
                     authority_record.authored_blocks(),
+                    authority_record.missed_votes(),
                     authority_record.points()
                 ));
                 // Print out peers
                 let peers_letters = vec!["A", "B", "C", "D"];
                 for (i, peer) in data.peers.iter().enumerate() {
                     // verify if one of the peers is falls below ci
-                    let flag = if (peer.1.points() as f64) < ci.0
-                        && (peer.1.points() as f64) < data.ci_99_9.0
-                    {
-                        "!"
-                    } else {
-                        ""
-                    };
+                    let flag = if peer.1.is_flagged() { "!" } else { "" };
                     clode_block.push_str(&format!(
-                        "{:<2}{:<21}{:>2}{:>4}{:>7}\n",
+                        "{:<2}{:<19}{:>2}{:>3}{:>4}{:>6}\n",
                         peers_letters[i],
-                        slice(&replace_emoji(&peer.0.clone(), "_"), 21),
+                        slice(&replace_emoji(&peer.0.clone(), "_"), 19),
                         flag,
                         peer.1.authored_blocks(),
+                        peer.1.missed_votes(),
                         peer.1.points()
                     ));
                 }
@@ -539,26 +519,38 @@ impl From<RawDataPara> for Report {
                 for para_id in data.parachains.iter() {
                     // Print out validator points per para id
                     if let Some(stats) = para_record.get_para_id_stats(*para_id) {
-                        let peers_avg = mean(
-                            &data
-                                .peers
-                                .iter()
-                                .map(|peer| {
-                                    if let Some(peer_stats) = peer.2.get_para_id_stats(*para_id) {
-                                        peer_stats.points() as f64
-                                    } else {
-                                        0.0_f64
-                                    }
-                                })
-                                .collect(),
-                        );
+                        // let peers_avg = mean(
+                        //     &data
+                        //         .peers
+                        //         .iter()
+                        //         .map(|peer| {
+                        //             if let Some(peer_stats) = peer.2.get_para_id_stats(*para_id) {
+                        //                 peer_stats.points() as f64
+                        //             } else {
+                        //                 0.0_f64
+                        //             }
+                        //         })
+                        //         .collect(),
+                        // );
+                        let peers_max = &data
+                            .peers
+                            .iter()
+                            .map(|peer| {
+                                if let Some(peer_stats) = peer.2.get_para_id_stats(*para_id) {
+                                    peer_stats.para_points()
+                                } else {
+                                    0
+                                }
+                            })
+                            .max()
+                            .unwrap_or_default();
                         let mut line: String = format!(
                             "{:<6}{:^5}{:>5}",
                             para_id,
                             stats.core_assignments(),
                             format!(
                                 "{}{}",
-                                trend(stats.points() as f64, peers_avg),
+                                trend(stats.para_points() as f64, *peers_max as f64),
                                 stats.points()
                             )
                         );
@@ -1033,7 +1025,7 @@ fn flagged_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &
     let total_tvp_flagged = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP && v.active_last_era && v.flagged_epochs.len() >= 2)
+        .filter(|v| v.subset == Subset::TVP && v.active_last_era && v.flagged_epochs.len() >= 1)
         .collect::<Vec<&Validator>>()
         .len();
 
@@ -1047,7 +1039,7 @@ fn flagged_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &
     let total_non_tvp_flagged = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::NONTVP && v.active_last_era && v.flagged_epochs.len() >= 2)
+        .filter(|v| v.subset == Subset::NONTVP && v.active_last_era && v.flagged_epochs.len() >= 1)
         .collect::<Vec<&Validator>>()
         .len();
 
@@ -1061,14 +1053,14 @@ fn flagged_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &
     let total_c100_flagged = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::C100 && v.active_last_era && v.flagged_epochs.len() >= 2)
+        .filter(|v| v.subset == Subset::C100 && v.active_last_era && v.flagged_epochs.len() >= 1)
         .collect::<Vec<&Validator>>()
         .len();
 
     let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
     if total_flagged != 0 {
         report.add_raw_text(format!(
-            "{} ({:.2}%) validators with a poor performance last era:",
+            "{} ({:.2}%) validators had a low-performance in the previous era:",
             total_flagged,
             (total_flagged as f32 / total_active as f32) * 100.0,
         ));
@@ -1116,6 +1108,62 @@ fn top_validators_report<'a>(
         report.add_raw_text(format!("* {} ({})", v.name, v.total_points / v.total_eras));
     }
     report.add_break();
+    report
+}
+
+fn top_performers_report<'a>(
+    report: &'a mut Report,
+    data: &'a RawData,
+    is_short: bool,
+) -> &'a Report {
+    // Sort TVP by missed ratio for validators that were p/v at least 2 times in the last era
+    let mut tvp_sorted = data
+        .validators
+        .iter()
+        .filter(|v| v.subset == Subset::TVP && v.para_epochs.len() >= 2)
+        .collect::<Vec<&Validator>>();
+
+    // ascending order
+    tvp_sorted.sort_by(|a, b| a.missed_ratio.partial_cmp(&b.missed_ratio).unwrap());
+
+    let max = if is_short { 5 } else { 10 };
+    report.add_raw_text(format!(
+        "Top {} TVP Validators with lowest missed votes ratio in the last era (minimum inclusion 2 p/v epochs):",
+        max
+    ));
+    report.add_break();
+    for v in &tvp_sorted[..max] {
+        report.add_raw_text(format!("* {} ({:.2}%)", v.name, v.missed_ratio * 100.0));
+    }
+    report.add_break();
+    report
+}
+
+fn low_performers_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a Report {
+    // Sort validators by missed ratio higher than 0.75 that were p/v at least 2 times in the last era
+    let mut tvp_sorted = data
+        .validators
+        .iter()
+        .filter(|v| v.para_epochs.len() >= 2 && v.missed_ratio > 0.75_f64)
+        .collect::<Vec<&Validator>>();
+
+    // descending order
+    tvp_sorted.sort_by(|a, b| b.missed_ratio.partial_cmp(&a.missed_ratio).unwrap());
+
+    if tvp_sorted.len() > 0 {
+        report.add_raw_text(format!(
+        "Top low-performance Validators with highest missed votes ratio (>75%) in the last era (minimum inclusion 2 p/v epochs):"
+    ));
+        report.add_break();
+        for v in tvp_sorted.iter() {
+            report.add_raw_text(format!(
+                "* <del>{}</del> ({:.2}%)",
+                v.name,
+                v.missed_ratio * 100.0
+            ));
+        }
+        report.add_break();
+    }
     report
 }
 

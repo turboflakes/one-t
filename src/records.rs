@@ -38,6 +38,10 @@ pub type CoreIndex = u32;
 pub type ParaId = u32;
 pub type Points = u32;
 pub type AuthoredBlocks = u32;
+pub type Votes = u32;
+pub type ParaEpochs = Vec<EpochIndex>;
+pub type FlaggedEpochs = Vec<EpochIndex>;
+pub type Ratio = f64;
 // pub type RecordKey = String;
 pub type SS58 = String;
 pub type AuthorityIndex = u32;
@@ -166,6 +170,12 @@ impl Records {
         );
     }
 
+    pub fn set_authority_missed_votes(&mut self, index: AuthorityIndex, missed_votes: Votes) {
+        if let Some(authority_record) = self.get_mut_authority_record(index) {
+            authority_record.inc_missed_votes_by(Some(missed_votes));
+        }
+    }
+
     pub fn flag_authority(&mut self, index_flagged: AuthorityIndex, key: EpochKey) {
         if let Some(authorities) = self.authorities_flagged.get_mut(&key) {
             authorities.insert(index_flagged);
@@ -173,15 +183,22 @@ impl Records {
             self.authorities_flagged
                 .insert(key, HashSet::from([index_flagged]));
         }
+        if let Some(authority_record) = self.get_mut_authority_record(index_flagged) {
+            authority_record.flag();
+        }
     }
 
-    pub fn get_epochs_flagged(
+    pub fn get_era_info(
         &self,
         address: &AccountId32,
         era_index: EraIndex,
         epoch_index_0: EpochIndex,
-    ) -> Vec<EpochIndex> {
-        let mut out: Vec<EpochIndex> = Vec::new();
+    ) -> (ParaEpochs, FlaggedEpochs, Ratio) {
+        let mut para_epochs: ParaEpochs = Vec::new();
+        let mut flagged_epochs: FlaggedEpochs = Vec::new();
+        let mut votes: Votes = 0;
+        let mut missed_votes: Votes = 0;
+
         for i in 0..6 {
             let epoch_index = epoch_index_0 + i as u32;
             let key = EpochKey(era_index, epoch_index);
@@ -189,14 +206,29 @@ impl Records {
                 .addresses
                 .get(&AddressKey(key.clone(), address.to_string()))
             {
+                if self
+                    .para_records
+                    .get(&RecordKey(key.clone(), auth_idx.clone()))
+                    .is_some()
+                {
+                    para_epochs.push(epoch_index);
+                }
                 if let Some(flagged_authorities) = self.authorities_flagged.get(&key) {
                     if flagged_authorities.contains(auth_idx) {
-                        out.push(epoch_index);
+                        flagged_epochs.push(epoch_index);
                     }
+                }
+                if let Some(authority_record) = self
+                    .authority_records
+                    .get(&RecordKey(key.clone(), auth_idx.clone()))
+                {
+                    votes += authority_record.para_points() / 20;
+                    missed_votes += authority_record.missed_votes();
                 }
             }
         }
-        out
+        let missed_ratio: Ratio = missed_votes as f64 / (votes + missed_votes) as f64;
+        (para_epochs, flagged_epochs, missed_ratio)
     }
 
     pub fn is_active_at(
@@ -444,6 +476,8 @@ pub struct AuthorityRecord {
     start_points: Points,
     end_points: Option<Points>,
     authored_blocks: AuthoredBlocks,
+    missed_votes: Votes,
+    is_flagged: bool,
 }
 
 impl AuthorityRecord {
@@ -459,6 +493,8 @@ impl AuthorityRecord {
             start_points,
             end_points: None,
             authored_blocks,
+            missed_votes: 0,
+            is_flagged: false,
         }
     }
 
@@ -486,12 +522,40 @@ impl AuthorityRecord {
         }
     }
 
+    pub fn para_points(&self) -> Points {
+        self.points() - (self.authored_blocks() * 20)
+    }
+
     pub fn authored_blocks(&self) -> AuthoredBlocks {
         self.authored_blocks
     }
 
     pub fn inc_authored_blocks(&mut self) {
         self.authored_blocks += 1;
+    }
+
+    pub fn missed_votes(&self) -> Votes {
+        self.missed_votes
+    }
+
+    pub fn missed_ratio(&self) -> f64 {
+        self.missed_votes() as f64 / ((self.para_points() / 20) + self.missed_votes()) as f64
+    }
+
+    pub fn is_flagged(&self) -> bool {
+        self.is_flagged
+    }
+
+    pub fn inc_missed_votes_by(&mut self, n: Option<Votes>) {
+        if let Some(n) = n {
+            self.missed_votes += n;
+        } else {
+            self.missed_votes += 1;
+        }
+    }
+
+    pub fn flag(&mut self) {
+        self.is_flagged = true;
     }
 
     pub fn update_current_points(&mut self, current_points: Points) -> Points {
@@ -585,6 +649,10 @@ pub struct ParaStats {
 impl ParaStats {
     pub fn points(&self) -> Points {
         self.points
+    }
+
+    pub fn para_points(&self) -> Points {
+        self.points - (self.authored_blocks * 20)
     }
 
     pub fn core_assignments(&self) -> u32 {
