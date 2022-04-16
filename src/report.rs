@@ -258,7 +258,7 @@ impl From<RawDataGroup> for Report {
 
         for (i, group) in data.groups.iter().enumerate() {
             clode_block.push_str(&format!(
-                "{:<19}{:1}{:3}{:>3}{:>4}{:>6}\n",
+                "{:<19}{:1}{:>3}{:>3}{:>4}{:>6}\n",
                 format!("#{} VAL. GROUP {}", i + 1, group.0),
                 " ",
                 "↻",
@@ -273,7 +273,7 @@ impl From<RawDataGroup> for Report {
                     ""
                 };
                 clode_block.push_str(&format!(
-                    "{:<19}{:1}{:3}{:>3}{:>4}{:>6}\n",
+                    "{:<19}{:1}{:>3}{:>3}{:>4}{:>6}\n",
                     slice(&replace_emoji(&val_name, "_"), 18),
                     flag,
                     core_assignments,
@@ -1127,6 +1127,8 @@ fn top_performers_report<'a>(
 
     // ascending order
     tvp_sorted.sort_by(|a, b| a.missed_ratio.partial_cmp(&b.missed_ratio).unwrap());
+
+    info!("tvp_sorted: {:?}", tvp_sorted);
 
     let max = if is_short { 5 } else { 10 };
     report.add_raw_text(format!(
