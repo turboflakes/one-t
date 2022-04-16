@@ -617,7 +617,7 @@ impl From<RawData> for Report {
         oversubscribed_validators_report(&mut report, &data);
         avg_points_collected_report(&mut report, &data);
         inclusion_validators_report(&mut report, &data);
-        top_validators_report(&mut report, &data, false);
+        // top_validators_report(&mut report, &data, false);
         top_performers_report(&mut report, &data, false);
         low_performers_report(&mut report, &data);
 
@@ -1062,7 +1062,7 @@ fn flagged_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &
     let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
     if total_flagged != 0 {
         report.add_raw_text(format!(
-            "{} ({:.2}%) validators had a low-performance in the previous era:",
+            "{} ({:.2}%) validators had a low-performance with more than 50% of missed votes in the previous era:",
             total_flagged,
             (total_flagged as f32 / total_active as f32) * 100.0,
         ));
@@ -1132,12 +1132,17 @@ fn top_performers_report<'a>(
 
     let max = if is_short { 5 } else { 10 };
     report.add_raw_text(format!(
-        "Top {} TVP Validators with lowest missed votes ratio in the last era (minimum inclusion 2 p/v epochs):",
+        "Top {} TVP Validators with the lowest missed votes ratio in the previous era (minimum inclusion 2x p/v):",
         max
     ));
     report.add_break();
     for v in &tvp_sorted[..max] {
-        report.add_raw_text(format!("* {} ({:.2}%)", v.name, v.missed_ratio * 100.0));
+        report.add_raw_text(format!(
+            "* {} ({:.2}%) ({}x p/v)",
+            v.name,
+            v.missed_ratio * 100.0,
+            v.para_epochs.len()
+        ));
     }
     report.add_break();
     report
@@ -1156,14 +1161,15 @@ fn low_performers_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a R
 
     if tvp_sorted.len() > 0 {
         report.add_raw_text(format!(
-        "Top low-performance Validators with highest missed votes ratio (>75%) in the last era (minimum inclusion 2 p/v epochs):"
+        "Very low-performance Validators with more than 75% of missed votes in the previous era (minimum inclusion 2x p/v):"
     ));
         report.add_break();
         for v in tvp_sorted.iter() {
             report.add_raw_text(format!(
-                "* <del>{}</del> ({:.2}%)",
+                "* <del>{}</del> ({:.2}%) ({}x p/v)",
                 v.name,
-                v.missed_ratio * 100.0
+                v.missed_ratio * 100.0,
+                v.para_epochs.len()
             ));
         }
         report.add_break();

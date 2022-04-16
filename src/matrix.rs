@@ -843,7 +843,7 @@ impl Matrix {
         message.push_str("→: !subscribe STASH_ADDRESS<br>");
         message.push_str("↻: Total number of core assignments (parachains) by the validator.<br>");
         message.push_str("❒: Total number of authored blocks by the validator.<br>");
-        message.push_str("✗: Total number of missed blocks by the validator.<br>");
+        message.push_str("✗: Total number of missed votes by the validator against the best validator in the same Val. Group.<br>");
         message.push_str(
             "PTS: Sum of points the validator earned while assigned to the val. group.<br>",
         );
@@ -854,7 +854,7 @@ impl Matrix {
         message.push_str("→: !subscribe groups<br>");
         message.push_str("↻: Total number of core assignements.<br>");
         message.push_str("❒: Total number of authored blocks.<br>");
-        message.push_str("✗: Total number of missed blocks.<br>");
+        message.push_str("✗: Total number of missed votes against the best validator in the same Val. Group.<br>");
         message.push_str("PTS: Sum of points earned while assigned to the val. group.<br>");
         message
             .push_str("Val. groups and validators are sorted by points in descending order.<br>");

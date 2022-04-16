@@ -915,6 +915,11 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         v.para_epochs.append(&mut para_epochs);
         v.missed_ratio = missed_ratio;
 
+        // Get very low performant nodes identity
+        if missed_ratio > 0.75 && v.name.is_empty() {
+            v.name = get_display_name(&onet, &stash, None).await?;
+        }
+
         //
         validators.push(v);
     }
