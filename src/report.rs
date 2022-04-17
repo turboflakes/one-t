@@ -135,6 +135,7 @@ pub struct RawData {
     pub network: Network,
     pub validators: Validators,
     pub session: Session,
+    pub records_total_eras: u32,
 }
 
 #[derive(Debug)]
@@ -258,7 +259,7 @@ impl From<RawDataGroup> for Report {
 
         for (i, group) in data.groups.iter().enumerate() {
             clode_block.push_str(&format!(
-                "{:<19}{:1}{:>3}{:>3}{:>4}{:>6}\n",
+                "{:<18}{:1}{:>3}{:>4}{:>4}{:>6}\n",
                 format!("#{} VAL. GROUP {}", i + 1, group.0),
                 " ",
                 "↻",
@@ -273,8 +274,8 @@ impl From<RawDataGroup> for Report {
                     ""
                 };
                 clode_block.push_str(&format!(
-                    "{:<19}{:1}{:>3}{:>3}{:>4}{:>6}\n",
-                    slice(&replace_emoji(&val_name, "_"), 18),
+                    "{:<18}{:1}{:>3}{:>4}{:>4}{:>6}\n",
+                    slice(&replace_emoji(&val_name, "_"), 17),
                     flag,
                     core_assignments,
                     authority_record.authored_blocks(),
@@ -617,7 +618,7 @@ impl From<RawData> for Report {
         oversubscribed_validators_report(&mut report, &data);
         avg_points_collected_report(&mut report, &data);
         inclusion_validators_report(&mut report, &data);
-        // top_validators_report(&mut report, &data, false);
+        top_validators_report(&mut report, &data, false);
         top_performers_report(&mut report, &data, false);
         low_performers_report(&mut report, &data);
 
@@ -1098,7 +1099,8 @@ fn top_validators_report<'a>(
     tvp_sorted
         .sort_by(|a, b| (b.total_points / b.total_eras).cmp(&(&a.total_points / &a.total_eras)));
 
-    let max = if is_short { 5 } else { 10 };
+    let max = if is_short { 4 } else { 16 };
+
     report.add_raw_text(format!(
         "Top {} TVP Validators with most average points in the last {} eras (minimum inclusion {} eras):",
         max,
@@ -1107,7 +1109,25 @@ fn top_validators_report<'a>(
     ));
     report.add_break();
     for v in &tvp_sorted[..max] {
-        report.add_raw_text(format!("* {} ({})", v.name, v.total_points / v.total_eras));
+        let missed_votes_desc = if data.records_total_eras == config.maximum_history_eras {
+            if v.missed_ratio == 0.0_f64 {
+                format!("(no missed votes over {}x p/v)", v.para_epochs.len())
+            } else {
+                format!(
+                    "({:.2}% of missed votes over {}x p/v)",
+                    v.missed_ratio * 100.0,
+                    v.para_epochs.len()
+                )
+            }
+        } else {
+            "".to_string()
+        };
+        report.add_raw_text(format!(
+            "* {} ({} avg. points) {}",
+            v.name,
+            v.total_points / v.total_eras,
+            missed_votes_desc
+        ));
     }
     report.add_break();
     report
@@ -1122,30 +1142,31 @@ fn top_performers_report<'a>(
     let mut tvp_sorted = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP && v.para_epochs.len() >= 2)
+        .filter(|v| v.subset == Subset::TVP && v.para_epochs.len() as u32 > data.records_total_eras)
         .collect::<Vec<&Validator>>();
 
     // ascending order
     tvp_sorted.sort_by(|a, b| a.missed_ratio.partial_cmp(&b.missed_ratio).unwrap());
 
-    info!("tvp_sorted: {:?}", tvp_sorted);
-
-    let max = if is_short { 5 } else { 10 };
-    report.add_raw_text(format!(
-        "Top {} TVP Validators with the lowest missed votes ratio in the previous era (minimum inclusion 2x p/v):",
-        max
-    ));
-    report.add_break();
-    for v in &tvp_sorted[..max] {
+    let max = if is_short { 5 } else { 16 };
+    if tvp_sorted.len() > 0 {
         report.add_raw_text(format!(
-            "* {} ({:.2}% of missed votes during {}x p/v) ({} points collected)",
-            v.name,
-            v.missed_ratio * 100.0,
-            v.para_epochs.len(),
-            v.total_points
-        ));
+        "Top {} TVP Validators with the lowest missed votes ratio in the last {} eras (minimum inclusion {}x p/v):",
+        max,
+        data.records_total_eras,
+        data.records_total_eras + 1
+    ));
+        report.add_break();
+        for v in &tvp_sorted[..max] {
+            report.add_raw_text(format!(
+                "* {} ({:.2}% of missed votes during {}x p/v)",
+                v.name,
+                v.missed_ratio * 100.0,
+                v.para_epochs.len()
+            ));
+        }
+        report.add_break();
     }
-    report.add_break();
     report
 }
 
@@ -1167,11 +1188,10 @@ fn low_performers_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a R
         report.add_break();
         for v in tvp_sorted.iter() {
             report.add_raw_text(format!(
-                "* <del>{}</del> ({:.2}% of missed votes during {}x p/v) ({} points collected)",
+                "* <del>{}</del> ({:.2}% of missed votes during {}x p/v)",
                 v.name,
                 v.missed_ratio * 100.0,
-                v.para_epochs.len(),
-                v.total_points,
+                v.para_epochs.len()
             ));
         }
         report.add_break();

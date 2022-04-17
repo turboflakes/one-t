@@ -315,14 +315,14 @@ pub async fn switch_new_session(
     // Initialize records for new epoch
     initialize_records(&onet, records).await?;
 
-    // Remove older keys, default is to a maximum of 2 completed eras
+    // Remove older keys, default is maximum_history_eras + 1
     records.remove(EpochKey(
-        records.current_era() - 2,
-        records.current_epoch() - 12,
+        records.current_era() - config.maximum_history_eras + 1,
+        records.current_epoch() - ((config.maximum_history_eras + 1) * 6),
     ));
     subscribers.remove(EpochKey(
-        records.current_era() - 2,
-        records.current_epoch() - 12,
+        records.current_era() - config.maximum_history_eras + 1,
+        records.current_epoch() - ((config.maximum_history_eras + 1) * 6),
     ));
 
     // Send reports from previous session
@@ -907,16 +907,21 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         v.active_last_era =
             records.is_active_at(&stash, active_era_index - 1, current_session_index - 1);
 
-        // Get flagged epochs, para epochs and missed blocks from previous era
-        let (mut para_epochs, mut flagged_epochs, missed_ratio) =
-            records.get_era_info(&stash, active_era_index - 1, current_session_index - 6);
-
+        // Get flagged epochs from previous era
+        let mut flagged_epochs =
+            records.get_flagged_epochs(&stash, active_era_index - 1, current_session_index - 6);
         v.flagged_epochs.append(&mut flagged_epochs);
+
+        // Get para epochs and missed blocks from last total full eras
+        let (mut para_epochs, votes, missed_votes) = records.get_missed_votes(&stash);
+
         v.para_epochs.append(&mut para_epochs);
-        v.missed_ratio = missed_ratio;
+        if votes + missed_votes > 0 {
+            v.missed_ratio = missed_votes as f64 / (votes + missed_votes) as f64;
+        }
 
         // Get very low performant nodes identity
-        if missed_ratio > 0.75 && v.name.is_empty() {
+        if v.missed_ratio > 0.75 && v.name.is_empty() {
             v.name = get_display_name(&onet, &stash, None).await?;
         }
 
@@ -951,6 +956,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         network,
         validators,
         session,
+        records_total_eras: records.total_eras(),
     };
 
     let report = Report::from(data.clone());

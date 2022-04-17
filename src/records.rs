@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 #![allow(dead_code)]
+use crate::config::CONFIG;
 use crate::matrix::UserID;
 use codec::Decode;
 use log::info;
@@ -39,6 +40,7 @@ pub type ParaId = u32;
 pub type Points = u32;
 pub type AuthoredBlocks = u32;
 pub type Votes = u32;
+pub type MissedVotes = u32;
 pub type ParaEpochs = Vec<EpochIndex>;
 pub type FlaggedEpochs = Vec<EpochIndex>;
 pub type Ratio = f64;
@@ -127,6 +129,20 @@ impl Records {
         self.initial_epoch_recorded == index
     }
 
+    pub fn total_epochs(&self) -> u32 {
+        let config = CONFIG.clone();
+        let epochs = self.current_epoch - self.initial_epoch_recorded;
+        if epochs > config.maximum_history_eras * 6 {
+            config.maximum_history_eras * 6
+        } else {
+            epochs
+        }
+    }
+
+    pub fn total_eras(&self) -> u32 {
+        self.total_epochs() / 6
+    }
+
     pub fn current_epoch(&self) -> EpochIndex {
         self.current_epoch
     }
@@ -188,16 +204,13 @@ impl Records {
         }
     }
 
-    pub fn get_era_info(
+    pub fn get_flagged_epochs(
         &self,
         address: &AccountId32,
         era_index: EraIndex,
         epoch_index_0: EpochIndex,
-    ) -> (ParaEpochs, FlaggedEpochs, Ratio) {
-        let mut para_epochs: ParaEpochs = Vec::new();
+    ) -> FlaggedEpochs {
         let mut flagged_epochs: FlaggedEpochs = Vec::new();
-        let mut votes: Votes = 0;
-        let mut missed_votes: Votes = 0;
 
         for i in 0..6 {
             let epoch_index = epoch_index_0 + i as u32;
@@ -206,29 +219,50 @@ impl Records {
                 .addresses
                 .get(&AddressKey(key.clone(), address.to_string()))
             {
-                if self
-                    .para_records
-                    .get(&RecordKey(key.clone(), auth_idx.clone()))
-                    .is_some()
-                {
-                    para_epochs.push(epoch_index);
-                }
                 if let Some(flagged_authorities) = self.authorities_flagged.get(&key) {
                     if flagged_authorities.contains(auth_idx) {
                         flagged_epochs.push(epoch_index);
                     }
                 }
-                if let Some(authority_record) = self
-                    .authority_records
-                    .get(&RecordKey(key.clone(), auth_idx.clone()))
+            }
+        }
+        flagged_epochs
+    }
+
+    pub fn get_missed_votes(&self, address: &AccountId32) -> (ParaEpochs, Votes, MissedVotes) {
+        let mut para_epochs: ParaEpochs = Vec::new();
+        let mut votes: Votes = 0;
+        let mut missed_votes: Votes = 0;
+        let era_index_0 = self.current_era() - (1 * self.total_eras());
+        let epoch_index_0 = self.current_epoch() - (6 * self.total_eras());
+
+        for e in 0..self.total_eras() {
+            let era_index = era_index_0 + e as u32;
+            for i in 0..6 {
+                let epoch_index = epoch_index_0 + i as u32;
+                let key = EpochKey(era_index, epoch_index);
+                if let Some(auth_idx) = self
+                    .addresses
+                    .get(&AddressKey(key.clone(), address.to_string()))
                 {
-                    votes += authority_record.para_points() / 20;
-                    missed_votes += authority_record.missed_votes();
+                    if self
+                        .para_records
+                        .get(&RecordKey(key.clone(), auth_idx.clone()))
+                        .is_some()
+                    {
+                        para_epochs.push(epoch_index);
+                    }
+                    if let Some(authority_record) = self
+                        .authority_records
+                        .get(&RecordKey(key.clone(), auth_idx.clone()))
+                    {
+                        votes += authority_record.para_points() / 20;
+                        missed_votes += authority_record.missed_votes();
+                    }
                 }
             }
         }
-        let missed_ratio: Ratio = missed_votes as f64 / (votes + missed_votes) as f64;
-        (para_epochs, flagged_epochs, missed_ratio)
+        (para_epochs, votes, missed_votes)
     }
 
     pub fn is_active_at(
