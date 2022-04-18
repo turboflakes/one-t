@@ -16,7 +16,7 @@ To know how well validators are performing compared to their peers while assigne
 
 To get a glimpse of which _Parachains_ are validators earning more points from.
 
-To help to identify validators that are not healthily contributing for the overall network performance.
+To warn about low-performance validators and identify extremely low-performance validators so that operators could take action.
 
 To give any token holder an additional tool when researching by Validators to Nominate.
 
