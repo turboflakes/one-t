@@ -594,12 +594,13 @@ impl From<RawDataPara> for Report {
 impl From<RawData> for Report {
     /// Converts a ONE-T `RawData` into a [`Report`].
     fn from(data: RawData) -> Report {
+        let config = CONFIG.clone();
         let mut report = Report::new();
 
         // Network info
         report.add_break();
         report.add_raw_text(format!(
-            "📒 Network Report → <b>{}//{}</b>",
+            "📒 Network Report → <b>{} // {}</b>",
             data.network.name, data.session.active_era_index,
         ));
         report.add_raw_text(format!(
@@ -613,14 +614,18 @@ impl From<RawData> for Report {
 
         total_validators_report(&mut report, &data);
         active_validators_report(&mut report, &data, false);
-        flagged_validators_report(&mut report, &data);
         own_stake_validators_report(&mut report, &data);
         oversubscribed_validators_report(&mut report, &data);
-        avg_points_collected_report(&mut report, &data);
         inclusion_validators_report(&mut report, &data);
-        top_validators_report(&mut report, &data, false);
-        top_performers_report(&mut report, &data, false);
+        avg_points_collected_report(&mut report, &data);
+        flagged_validators_report(&mut report, &data, false);
         low_performers_report(&mut report, &data);
+
+        if data.records_total_eras >= config.maximum_history_eras {
+            top_performers_report(&mut report, &data, false);
+        } else {
+            top_validators_report(&mut report, &data, false);
+        }
 
         // --- Specific report sections here [END] ---|
 
@@ -650,6 +655,8 @@ impl Callout<RawData> for Report {
         ));
 
         active_validators_report(&mut report, &data, true);
+
+        flagged_validators_report(&mut report, &data, true);
 
         top_validators_report(&mut report, &data, true);
 
@@ -1010,7 +1017,11 @@ fn inclusion_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
     report
 }
 
-fn flagged_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a Report {
+fn flagged_validators_report<'a>(
+    report: &'a mut Report,
+    data: &'a RawData,
+    is_short: bool,
+) -> &'a Report {
     let total_active = data
         .validators
         .iter()
@@ -1062,20 +1073,28 @@ fn flagged_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &
 
     let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
     if total_flagged != 0 {
-        report.add_raw_text(format!(
-            "{} ({:.2}%) validators had a low-performance with more than 50% of missed votes in the previous era:",
-            total_flagged,
-            (total_flagged as f32 / total_active as f32) * 100.0,
-        ));
-        report.add_raw_text(format!(
-            "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
-            total_c100_flagged,
-            (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
-            total_non_tvp_flagged,
-            (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
-            total_tvp_flagged,
-            (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
-        ));
+        if is_short {
+            report.add_raw_text(format!(
+                "⚠️ {} ({:.2}%) validators in the previous era had a low-performance with more than 50% of missed votes while p/v.",
+                total_flagged,
+                (total_flagged as f32 / total_active as f32) * 100.0,
+            ));
+        } else {
+            report.add_raw_text(format!(
+                "⚠️ {} ({:.2}%) validators in the previous era had a low-performance with more than 50% of missed votes while p/v:",
+                total_flagged,
+                (total_flagged as f32 / total_active as f32) * 100.0,
+            ));
+            report.add_raw_text(format!(
+                "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
+                total_c100_flagged,
+                (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
+                total_non_tvp_flagged,
+                (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
+                total_tvp_flagged,
+                (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
+            ));
+        }
         report.add_break();
     }
 
@@ -1101,33 +1120,22 @@ fn top_validators_report<'a>(
 
     let max = if is_short { 4 } else { 16 };
 
-    report.add_raw_text(format!(
-        "Top {} TVP Validators with most average points in the last {} eras (minimum inclusion {} eras):",
-        max,
+    if is_short {
+        report.add_raw_text(format!("Top {} TVP Validators with most average points earned in the last {} eras (minimum inclusion {} eras).",
+            max,
+            config.maximum_history_eras,
+            config.maximum_history_eras / 2));
+    } else {
+        report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b>", max));
+        report.add_raw_text(format!(
+        "<i>Next are validators with most average points earned in the last {} eras (minimum inclusion {} eras).</i>",
         config.maximum_history_eras,
         config.maximum_history_eras / 2,
     ));
+    }
     report.add_break();
     for v in &tvp_sorted[..max] {
-        let missed_votes_desc = if data.records_total_eras == config.maximum_history_eras {
-            if v.missed_ratio == 0.0_f64 {
-                format!("(no missed votes over {}x p/v)", v.para_epochs.len())
-            } else {
-                format!(
-                    "({:.2}% of missed votes over {}x p/v)",
-                    v.missed_ratio * 100.0,
-                    v.para_epochs.len()
-                )
-            }
-        } else {
-            "".to_string()
-        };
-        report.add_raw_text(format!(
-            "* {} ({} avg. points) {}",
-            v.name,
-            v.total_points / v.total_eras,
-            missed_votes_desc
-        ));
+        report.add_raw_text(format!("* {} ({})", v.name, v.total_points / v.total_eras,));
     }
     report.add_break();
     report
@@ -1138,28 +1146,35 @@ fn top_performers_report<'a>(
     data: &'a RawData,
     is_short: bool,
 ) -> &'a Report {
-    // Sort TVP by missed ratio for validators that were p/v at least 2 times in the last era
+    // Sort TVP by missed ratio for validators that were p/v at least X times in the last X eras
     let mut tvp_sorted = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP && v.para_epochs.len() as u32 > data.records_total_eras)
+        .filter(|v| {
+            v.subset == Subset::TVP && v.para_epochs.len() as u32 >= data.records_total_eras
+        })
         .collect::<Vec<&Validator>>();
 
-    // ascending order
+    // Ascending order
     tvp_sorted.sort_by(|a, b| a.missed_ratio.partial_cmp(&b.missed_ratio).unwrap());
 
-    let max = if is_short { 5 } else { 16 };
-    if tvp_sorted.len() > 0 {
-        report.add_raw_text(format!(
-        "Top {} TVP Validators with the lowest missed votes ratio in the last {} eras (minimum inclusion {}x p/v):",
-        max,
+    let max = if is_short { 4 } else { 16 };
+
+    if is_short {
+        report.add_raw_text(format!("Top {} TVP Validators with lowest missed votes ratio in the last {} eras (minimum inclusion {}x p/v).", max, data.records_total_eras, data.records_total_eras));
+    } else {
+        if tvp_sorted.len() > 0 {
+            report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b>", max));
+            report.add_raw_text(format!(
+        "<i>Next are validators with lowest missed votes ratio in the last {} eras (minimum inclusion {}x p/v).</i>",
         data.records_total_eras,
-        data.records_total_eras + 1
+        data.records_total_eras
     ));
+        }
         report.add_break();
         for v in &tvp_sorted[..max] {
             report.add_raw_text(format!(
-                "* {} ({:.2}% of missed votes during {}x p/v)",
+                "* {} ({:.2}%, {}x)",
                 v.name,
                 v.missed_ratio * 100.0,
                 v.para_epochs.len()
@@ -1178,13 +1193,17 @@ fn low_performers_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a R
         .filter(|v| v.para_epochs.len() >= 2 && v.missed_ratio > 0.75_f64)
         .collect::<Vec<&Validator>>();
 
-    // descending order
+    // Descending order
     tvp_sorted.sort_by(|a, b| b.missed_ratio.partial_cmp(&a.missed_ratio).unwrap());
 
     if tvp_sorted.len() > 0 {
+        report.add_raw_text(format!("🚨 Extremely low-performance Validators"));
         report.add_raw_text(format!(
-        "Very low-performance Validators with more than 75% of missed votes in the previous era (minimum inclusion 2x p/v):"
-    ));
+            "<i>Next are validators that missed more than 75% of votes in the previous era with a minimum inclusion of 2x p/v.</i>"
+        ));
+        report.add_raw_text(format!(
+            "<i>These validators require an urgent check-up by the operator.</i>"
+        ));
         report.add_break();
         for v in tvp_sorted.iter() {
             report.add_raw_text(format!(
@@ -1231,6 +1250,8 @@ pub fn replace_emoji(text: &str, replacer: &str) -> String {
         "\u{3030}",
         "\u{20e3}",
         "\u{0020}",
+        "\u{000D}",
+        "\u{000A}",
         "]+",
     ))
     .unwrap();
