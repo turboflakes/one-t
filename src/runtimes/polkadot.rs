@@ -912,26 +912,29 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             records.get_flagged_epochs(&stash, active_era_index - 1, current_session_index - 6);
         v.flagged_epochs.append(&mut flagged_epochs);
 
-        // Get para epochs and missed blocks from last total full eras
-        let (mut para_epochs, votes, missed_votes) = records.get_missed_votes(&stash);
-
-        v.para_epochs.append(&mut para_epochs);
-        if votes + missed_votes > 0 {
-            v.missed_ratio = missed_votes as f64 / (votes + missed_votes) as f64;
-        }
-
+        // Get para epochs and missed blocks from previous era
+        v.last_missed_ratio = records.get_missed_votes_ratio_for_previous_era(&stash);
         // Get very low performant nodes identity
-        if v.missed_ratio > 0.75 && v.name.is_empty() {
-            v.name = get_display_name(&onet, &stash, None).await?;
+        // if v.last_missed_ratio > 0.75 && v.name.is_empty() {
+        //     v.name = get_display_name(&onet, &stash, None).await?;
+        // }
+
+        // Get para epochs and missed blocks from last total full eras
+        if let Some((mut para_epochs, votes, missed_votes)) =
+            records.get_missed_votes_for_all_records(&stash)
+        {
+            v.para_epochs.append(&mut para_epochs);
+            v.missed_ratio = Some(missed_votes as f64 / (votes + missed_votes) as f64);
         }
 
         //
         validators.push(v);
     }
 
-    // Collect era points
+    // Collect era points for maximum_history_eras and incremental
     let start_era_index = active_era_index - config.maximum_history_eras;
     for era_index in start_era_index..active_era_index {
+        let start_incremental_era_index = active_era_index - 1 + (1 * records.total_full_eras());
         let era_reward_points = api
             .storage()
             .staking()
@@ -944,8 +947,12 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                 .iter_mut()
                 .filter(|v| v.stash == *stash)
                 .for_each(|v| {
-                    (*v).total_eras += 1;
-                    (*v).total_points += points;
+                    (*v).maximum_history_total_eras += 1;
+                    (*v).maximum_history_total_points += points;
+                    if era_index >= start_incremental_era_index {
+                        (*v).total_eras += 1;
+                        (*v).total_points += points;
+                    }
                 });
         }
     }
@@ -956,7 +963,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         network,
         validators,
         session,
-        records_total_eras: records.total_eras(),
+        records_total_full_eras: records.total_full_eras(),
     };
 
     let report = Report::from(data.clone());

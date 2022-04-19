@@ -139,7 +139,7 @@ impl Records {
         }
     }
 
-    pub fn total_eras(&self) -> u32 {
+    pub fn total_full_eras(&self) -> u32 {
         self.total_epochs() / 6
     }
 
@@ -229,14 +229,55 @@ impl Records {
         flagged_epochs
     }
 
-    pub fn get_missed_votes(&self, address: &AccountId32) -> (ParaEpochs, Votes, MissedVotes) {
+    pub fn get_missed_votes_ratio_for_previous_era(&self, address: &AccountId32) -> Option<f64> {
         let mut para_epochs: ParaEpochs = Vec::new();
         let mut votes: Votes = 0;
         let mut missed_votes: Votes = 0;
-        let era_index_0 = self.current_era() - (1 * self.total_eras());
-        let epoch_index_0 = self.current_epoch() - (6 * self.total_eras());
+        let era_index = self.current_era() - 1;
+        let epoch_index_0 = self.current_epoch() - 6;
 
-        for e in 0..self.total_eras() {
+        for i in 0..6 {
+            let epoch_index = epoch_index_0 + i as u32;
+            let key = EpochKey(era_index, epoch_index);
+            if let Some(auth_idx) = self
+                .addresses
+                .get(&AddressKey(key.clone(), address.to_string()))
+            {
+                if self
+                    .para_records
+                    .get(&RecordKey(key.clone(), auth_idx.clone()))
+                    .is_some()
+                {
+                    para_epochs.push(epoch_index);
+                }
+                if let Some(authority_record) = self
+                    .authority_records
+                    .get(&RecordKey(key.clone(), auth_idx.clone()))
+                {
+                    votes += authority_record.para_points() / 20;
+                    missed_votes += authority_record.missed_votes();
+                }
+            }
+        }
+        if votes + missed_votes > 0 {
+            Some(missed_votes as f64 / (votes + missed_votes) as f64)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_missed_votes_for_all_records(
+        &self,
+        address: &AccountId32,
+    ) -> Option<(ParaEpochs, Votes, MissedVotes)> {
+        let mut para_epochs: ParaEpochs = Vec::new();
+        let mut votes: Votes = 0;
+        let mut missed_votes: Votes = 0;
+        let eras = self.total_full_eras();
+        let era_index_0 = self.current_era() - (1 + eras);
+        let epoch_index_0 = self.current_epoch() - (6 + (6 * eras));
+
+        for e in 0..eras {
             let era_index = era_index_0 + e as u32;
             for i in 0..6 {
                 let epoch_index = epoch_index_0 + i as u32;
@@ -262,7 +303,11 @@ impl Records {
                 }
             }
         }
-        (para_epochs, votes, missed_votes)
+        if votes + missed_votes > 0 {
+            Some((para_epochs, votes, missed_votes))
+        } else {
+            None
+        }
     }
 
     pub fn is_active_at(
