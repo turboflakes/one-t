@@ -1216,7 +1216,7 @@ fn low_performers_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a R
     tvp_sorted.sort_by(|a, b| b.missed_ratio.partial_cmp(&a.missed_ratio).unwrap());
 
     if tvp_sorted.len() > 0 {
-        report.add_raw_text(format!("🚨 Very low-performance validators that missed more than 75% of votes in the previous era when selected as para-validator for at least 2 epochs:", tvp_sorted.len()));
+        report.add_raw_text(format!("🚨 Very low-performance validators that missed more than 75% of votes in the previous era when selected as para-validator for at least 2 epochs:"));
         report.add_raw_text(format!("<i>legend: validator (avg. points, number of epochs selected as para-validator, missed votes percentage)</i>"));
         report.add_break();
         for v in tvp_sorted.iter() {
