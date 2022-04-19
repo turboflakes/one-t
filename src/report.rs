@@ -265,12 +265,12 @@ impl From<RawDataGroup> for Report {
 
         for (i, group) in data.groups.iter().enumerate() {
             clode_block.push_str(&format!(
-                "{:<18}{:1}{:>3}{:>4}{:>4}{:>6}\n",
+                "{:<16}{:1}{:>3}{:>4}{:>6}{:>6}\n",
                 format!("#{} VAL. GROUP {}", i + 1, group.0),
                 " ",
                 "↻",
                 "❒",
-                "✗",
+                "MVR",
                 "PTS"
             ));
             for (authority_record, val_name, core_assignments) in group.1.iter() {
@@ -280,12 +280,12 @@ impl From<RawDataGroup> for Report {
                     ""
                 };
                 clode_block.push_str(&format!(
-                    "{:<18}{:1}{:>3}{:>4}{:>4}{:>6}\n",
-                    slice(&replace_emoji(&val_name, "_"), 17),
+                    "{:<16}{:1}{:>3}{:>4}{:>6}{:>6}\n",
+                    slice(&replace_emoji(&val_name, "_"), 16),
                     flag,
                     core_assignments,
                     authority_record.authored_blocks(),
-                    authority_record.missed_votes(),
+                    (authority_record.missed_ratio() * 100.0).round() / 100.0,
                     authority_record.points()
                 ));
             }
@@ -511,7 +511,7 @@ impl From<RawDataPara> for Report {
                 // Val. group stats
                 clode_block.push_str(&format!(
                     "\n{:<2}{:<2}{:>4}{:>6}{:>6}{:>10}{:>6}\n",
-                    "#", "", "❒", "✓", "✗", "MVR", "PTS"
+                    "#", " ", "❒", "✓", "✗", "MVR", "PTS"
                 ));
 
                 // Print out subscriber
@@ -522,7 +522,7 @@ impl From<RawDataPara> for Report {
                     authority_record.authored_blocks(),
                     authority_record.votes(),
                     authority_record.missed_votes(),
-                    (authority_record.missed_ratio() * 10000.0).round() / 10000.0,,
+                    (authority_record.missed_ratio() * 10000.0).round() / 10000.0,
                     authority_record.points()
                 ));
                 // Print out peers stats
