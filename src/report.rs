@@ -424,16 +424,16 @@ impl From<RawDataPara> for Report {
         // --- Specific parachains report here [START] -->
         if let Some(authority_record) = data.authority_record {
             report.add_raw_text(format!(
-                "🟢 <b><a href=\"https://{}.subscan.io/validator/{}\">{}</a></b>",
+                "<b><a href=\"https://{}.subscan.io/validator/{}\">{}</a></b>",
                 data.network.name.to_lowercase(),
                 data.validator.stash,
                 data.validator.name
             ));
-            report.add_raw_text(format!(
-                "‣ 📦 Authored blocks: {}",
-                authority_record.authored_blocks(),
-            ));
-            report.add_raw_text(format!("‣ 🎲 Points: {}", authority_record.points()));
+            // report.add_raw_text(format!(
+            //     "‣ 📦 Authored blocks: {}",
+            //     authority_record.authored_blocks(),
+            // ));
+            // report.add_raw_text(format!("‣ 🎲 Points: {}", authority_record.points()));
             if let Some(para_record) = data.para_record {
                 // Find position rank
                 let mut v = Vec::<(AuthorityIndex, Points)>::new();
@@ -477,43 +477,67 @@ impl From<RawDataPara> for Report {
                 // Print breakdown points
                 let mut clode_block = String::from("<pre><code>");
 
+                // val. group validator names
                 clode_block.push_str(&format!(
-                    "{:<2}{:<21}{:>3}{:>4}{:>6}\n",
+                    "{:<4}{:<32}\n",
                     "#",
                     format!("VAL. GROUP {}", para_record.group().unwrap_or_default()),
-                    "❒",
-                    "✗",
-                    "PTS"
                 ));
-
                 // verify if para_record is flagged
-                let flag = if authority_record.is_flagged() {
+                let authority_flagged = if authority_record.is_flagged() {
                     "!"
                 } else {
                     ""
                 };
-                // Print out subscriber
                 clode_block.push_str(&format!(
-                    "{:<2}{:<19}{:>2}{:>3}{:>4}{:>6}\n",
+                    "{:1}{:^3}{:<32}\n",
                     "*",
-                    slice(&replace_emoji(&data.validator.name, "_"), 19),
-                    flag,
-                    authority_record.authored_blocks(),
-                    authority_record.missed_votes(),
-                    authority_record.points()
+                    authority_flagged,
+                    slice(&replace_crln(&data.validator.name, ""), 30),
                 ));
-                // Print out peers
+                // Print out peers names
                 let peers_letters = vec!["A", "B", "C", "D"];
                 for (i, peer) in data.peers.iter().enumerate() {
                     // verify if one of the peers is falls below ci
-                    let flag = if peer.1.is_flagged() { "!" } else { "" };
+                    let peer_flagged = if peer.1.is_flagged() { "!" } else { "" };
                     clode_block.push_str(&format!(
-                        "{:<2}{:<19}{:>2}{:>3}{:>4}{:>6}\n",
+                        "{:1}{:^3}{:<32}\n",
                         peers_letters[i],
-                        slice(&replace_emoji(&peer.0.clone(), "_"), 19),
-                        flag,
+                        peer_flagged,
+                        slice(&replace_crln(&peer.0.clone(), ""), 30)
+                    ));
+                }
+
+                // Val. group stats
+                clode_block.push_str(&format!(
+                    "\n{:<2}{:<2}{:>4}{:>6}{:>6}{:>10}{:>6}\n",
+                    "#", "", "❒", "✓", "✗", "MR", "PTS"
+                ));
+
+                // Print out subscriber
+                clode_block.push_str(&format!(
+                    "{:<2}{:<2}{:>4}{:>6}{:>6}{:>10.5}{:>6}\n",
+                    "*",
+                    authority_flagged,
+                    authority_record.authored_blocks(),
+                    authority_record.votes(),
+                    authority_record.missed_votes(),
+                    authority_record.missed_ratio(),
+                    authority_record.points()
+                ));
+                // Print out peers stats
+                let peers_letters = vec!["A", "B", "C", "D"];
+                for (i, peer) in data.peers.iter().enumerate() {
+                    // verify if one of the peers is falls below ci
+                    let peer_flagged = if peer.1.is_flagged() { "!" } else { "" };
+                    clode_block.push_str(&format!(
+                        "{:<2}{:<2}{:>4}{:>6}{:>6}{:>10.5}{:>6}\n",
+                        peers_letters[i],
+                        peer_flagged,
                         peer.1.authored_blocks(),
+                        peer.1.votes(),
                         peer.1.missed_votes(),
+                        peer.1.missed_ratio(),
                         peer.1.points()
                     ));
                 }
@@ -600,7 +624,6 @@ impl From<RawDataPara> for Report {
 impl From<RawData> for Report {
     /// Converts a ONE-T `RawData` into a [`Report`].
     fn from(data: RawData) -> Report {
-        let config = CONFIG.clone();
         let mut report = Report::new();
 
         // Network info
@@ -1205,21 +1228,26 @@ fn top_performers_report<'a>(
     let max = if is_short { 4 } else { 16 };
 
     if is_short {
-        report.add_raw_text(format!("Top {} TVP Validators with lowest missed points ratio in the last {} eras:", max, data.records_total_full_eras + 1));
+        report.add_raw_text(format!(
+            "Top {} TVP Validators with lowest missed points ratio in the last {} eras:",
+            max,
+            data.records_total_full_eras + 1
+        ));
     } else {
         if tvp_sorted.len() > 0 {
             report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with lowest missed points ratio in the last {} eras:", max, data.records_total_full_eras + 1));
             report.add_raw_text(format!("<i>Legend: Validators are sorted 1st by percentage of missed points, 2nd by number of X epochs when selected as para-validator and 3rd by average points.</i>"));
-        }
-        report.add_break();
-        for v in &tvp_sorted[..max] {
-            report.add_raw_text(format!(
-                "* {} ({:.2}%, {}x, {})",
-                v.name,
-                v.missed_ratio.unwrap() * 100.0,
-                v.para_epochs.len(),
-                v.total_points / v.total_eras
-            ));
+
+            report.add_break();
+            for v in &tvp_sorted[..max] {
+                report.add_raw_text(format!(
+                    "* {} ({:.2}%, {}x, {})",
+                    v.name,
+                    v.missed_ratio.unwrap() * 100.0,
+                    v.para_epochs.len(),
+                    v.total_points / v.total_eras
+                ));
+            }
         }
         report.add_break();
     }
@@ -1302,6 +1330,12 @@ pub fn replace_emoji(text: &str, replacer: &str) -> String {
         "]+",
     ))
     .unwrap();
+
+    r.replace_all(text, replacer).to_string()
+}
+
+pub fn replace_crln(text: &str, replacer: &str) -> String {
+    let r = Regex::new(concat!("[", "\u{000D}", "\u{000A}", "]+",)).unwrap();
 
     r.replace_all(text, replacer).to_string()
 }

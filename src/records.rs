@@ -602,6 +602,9 @@ impl AuthorityRecord {
     }
 
     pub fn para_points(&self) -> Points {
+        if self.points() < (self.authored_blocks() * 20) {
+            return 0;
+        }
         self.points() - (self.authored_blocks() * 20)
     }
 
@@ -613,12 +616,16 @@ impl AuthorityRecord {
         self.authored_blocks += 1;
     }
 
+    pub fn votes(&self) -> Votes {
+        self.para_points() / 20
+    }
+
     pub fn missed_votes(&self) -> Votes {
         self.missed_votes
     }
 
     pub fn missed_ratio(&self) -> f64 {
-        self.missed_votes() as f64 / ((self.para_points() / 20) + self.missed_votes()) as f64
+        self.missed_votes() as f64 / (self.votes() + self.missed_votes()) as f64
     }
 
     pub fn is_flagged(&self) -> bool {
