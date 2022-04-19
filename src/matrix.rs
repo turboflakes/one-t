@@ -843,7 +843,10 @@ impl Matrix {
         message.push_str("→: !subscribe STASH_ADDRESS<br>");
         message.push_str("↻: Total number of core assignments (parachains) by the validator.<br>");
         message.push_str("❒: Total number of authored blocks by the validator.<br>");
+        message.push_str("✓: Total number of votes by the validator.<br>");
         message.push_str("✗: Total number of missed votes by the validator against the best validator in the same Val. Group.<br>");
+        message.push_str("MVR: Missed Votes Ratio.<br>");
+        message.push_str("!: When MVR is higher than 0.5 the validator is flagged with an exclamation mark, !.<br>");
         message.push_str(
             "PTS: Sum of points the validator earned while assigned to the val. group.<br>",
         );

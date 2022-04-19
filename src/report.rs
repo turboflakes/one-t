@@ -511,7 +511,7 @@ impl From<RawDataPara> for Report {
                 // Val. group stats
                 clode_block.push_str(&format!(
                     "\n{:<2}{:<2}{:>4}{:>6}{:>6}{:>10}{:>6}\n",
-                    "#", "", "❒", "✓", "✗", "MR", "PTS"
+                    "#", "", "❒", "✓", "✗", "MVR", "PTS"
                 ));
 
                 // Print out subscriber
