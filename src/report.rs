@@ -1227,28 +1227,29 @@ fn top_performers_report<'a>(
 
     let max = if is_short { 4 } else { 16 };
 
-    if is_short {
-        report.add_raw_text(format!(
-            "Top {} TVP Validators with lowest missed votes ratio in the last {} eras:",
-            max,
-            data.records_total_full_eras + 1
-        ));
-    } else {
-        if tvp_sorted.len() > 0 {
+    if tvp_sorted.len() > 0 {
+        if is_short {
+            report.add_raw_text(format!(
+                "Top {} TVP Validators with lowest missed votes ratio in the last {} eras:",
+                max,
+                data.records_total_full_eras + 1
+            ));
+        } else {
             report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with lowest missed votes ratio in the last {} eras:", max, data.records_total_full_eras + 1));
             report.add_raw_text(format!("<i>Legend: Validators are sorted 1st by percentage of missed votes, 2nd by number of X epochs when selected as para-validator and 3rd by average points.</i>"));
-
-            report.add_break();
-            for v in &tvp_sorted[..max] {
-                report.add_raw_text(format!(
-                    "* {} ({:.2}%, {}x, {})",
-                    v.name,
-                    v.missed_ratio.unwrap() * 100.0,
-                    v.para_epochs.len(),
-                    v.total_points / v.total_eras
-                ));
-            }
         }
+        report.add_break();
+
+        for v in &tvp_sorted[..max] {
+            report.add_raw_text(format!(
+                "* {} ({:.2}%, {}x, {})",
+                v.name,
+                v.missed_ratio.unwrap() * 100.0,
+                v.para_epochs.len(),
+                v.total_points / v.total_eras
+            ));
+        }
+
         report.add_break();
     }
     report
