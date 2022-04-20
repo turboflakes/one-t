@@ -273,9 +273,9 @@ impl Records {
         let mut para_epochs: ParaEpochs = Vec::new();
         let mut votes: Votes = 0;
         let mut missed_votes: Votes = 0;
-        let eras = self.total_full_eras();
-        let era_index_0 = self.current_era() - (1 + eras);
-        let epoch_index_0 = self.current_epoch() - (6 + (6 * eras));
+        let eras = self.total_full_eras() + 1;
+        let era_index_0 = self.current_era() - eras;
+        let epoch_index_0 = self.current_epoch() - (6 * eras);
 
         for e in 0..eras {
             let era_index = era_index_0 + e as u32;
