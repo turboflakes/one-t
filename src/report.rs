@@ -1176,7 +1176,13 @@ fn top_validators_report<'a>(
             .cmp(&(&a.maximum_history_total_points / &a.maximum_history_total_eras))
     });
 
-    let max = if is_short { 4 } else { 16 };
+    let max = if tvp_sorted.len() > 4 && is_short {
+        4
+    } else if tvp_sorted.len() > 16 && !is_short {
+        16
+    } else {
+        tvp_sorted.len()
+    };
 
     if is_short {
         report.add_raw_text(format!("Top {} TVP Validators with most average points earned in the last {} eras (minimum inclusion {} eras).",
@@ -1211,32 +1217,38 @@ fn top_performers_report<'a>(
         .filter(|v| v.subset == Subset::TVP && v.para_epochs.len() >= 1 && v.missed_ratio.is_some())
         .collect::<Vec<&Validator>>();
 
-    tvp_sorted.sort_by(|a, b| {
-        if a.missed_ratio.unwrap() == b.missed_ratio.unwrap() {
-            if a.para_epochs.len() == b.para_epochs.len() {
-                // avg. points in descending order
-                (b.total_points / b.total_eras)
-                    .partial_cmp(&(&a.total_points / &a.total_eras))
-                    .unwrap()
+    if tvp_sorted.len() > 0 {
+        tvp_sorted.sort_by(|a, b| {
+            if a.missed_ratio.unwrap() == b.missed_ratio.unwrap() {
+                if a.para_epochs.len() == b.para_epochs.len() {
+                    // avg. points in descending order
+                    (b.total_points / b.total_eras)
+                        .partial_cmp(&(&a.total_points / &a.total_eras))
+                        .unwrap()
+                } else {
+                    // p/v times in descending order
+                    b.para_epochs
+                        .len()
+                        .partial_cmp(&a.para_epochs.len())
+                        .unwrap()
+                }
             } else {
-                // p/v times in descending order
-                b.para_epochs
-                    .len()
-                    .partial_cmp(&a.para_epochs.len())
+                // missed ratio in ascending order
+                a.missed_ratio
+                    .unwrap()
+                    .partial_cmp(&b.missed_ratio.unwrap())
                     .unwrap()
             }
+        });
+
+        let max = if tvp_sorted.len() > 4 && is_short {
+            4
+        } else if tvp_sorted.len() > 16 && !is_short {
+            16
         } else {
-            // missed ratio in ascending order
-            a.missed_ratio
-                .unwrap()
-                .partial_cmp(&b.missed_ratio.unwrap())
-                .unwrap()
-        }
-    });
+            tvp_sorted.len()
+        };
 
-    let max = if is_short { 4 } else { 16 };
-
-    if tvp_sorted.len() > 0 {
         if is_short {
             report.add_raw_text(format!(
                 "Top {} TVP Validators with lowest missed votes ratio in the last {} eras:",
@@ -1260,6 +1272,8 @@ fn top_performers_report<'a>(
         }
 
         report.add_break();
+    } else {
+        top_validators_report(report, &data, is_short);
     }
     report
 }

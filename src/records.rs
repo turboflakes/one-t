@@ -270,11 +270,15 @@ impl Records {
         &self,
         address: &AccountId32,
     ) -> Option<(ParaEpochs, Votes, MissedVotes)> {
+        // Do not catch missed votes if era is not fully completed
+        if self.total_full_eras() == 0 {
+            return None;
+        }
         let mut para_epochs: ParaEpochs = Vec::new();
         let mut votes: Votes = 0;
         let mut missed_votes: Votes = 0;
-        let eras = self.total_full_eras() + 1;
-        let era_index_0 = self.current_era() - eras;
+        let eras = self.total_full_eras();
+        let era_index_0 = self.current_era() - (1 * eras);
         let epoch_index_0 = self.current_epoch() - (6 * eras);
 
         for e in 0..eras {
