@@ -656,7 +656,6 @@ impl From<RawData> for Report {
         inclusion_validators_report(&mut report, &data);
         avg_points_collected_report(&mut report, &data);
         flagged_validators_report(&mut report, &data, false);
-        low_performers_report(&mut report, &data);
         top_performers_report(&mut report, &data, false);
 
         // --- Specific report sections here [END] ---|
@@ -1278,6 +1277,7 @@ fn top_performers_report<'a>(
     report
 }
 
+#[allow(dead_code)]
 fn low_performers_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a Report {
     // Sort validators by missed ratio higher than 0.75 that were p/v at least 2 times in the last era
     let mut tvp_sorted = data
