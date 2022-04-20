@@ -265,9 +265,8 @@ impl From<RawDataGroup> for Report {
 
         for (i, group) in data.groups.iter().enumerate() {
             clode_block.push_str(&format!(
-                "{:<16}{:1}{:>3}{:>4}{:>6}{:>6}\n",
-                format!("#{} VAL. GROUP {}", i + 1, group.0),
-                " ",
+                "{:<17}{:>3}{:>4}{:>6}{:>6}\n",
+                format!("{}. VAL. GROUP {}", i + 1, group.0),
                 "↻",
                 "❒",
                 "MVR",
@@ -277,15 +276,18 @@ impl From<RawDataGroup> for Report {
                 let flag = if authority_record.is_flagged() {
                     "!"
                 } else {
-                    ""
+                    " "
                 };
                 clode_block.push_str(&format!(
-                    "{:<16}{:1}{:>3}{:>4}{:>6}{:>6}\n",
-                    slice(&replace_emoji(&val_name, "_"), 16),
-                    flag,
+                    "{:<17}{:>3}{:>4}{:>6}{:>6}\n",
+                    slice(&replace_emoji(&val_name, "_"), 17),
                     core_assignments,
                     authority_record.authored_blocks(),
-                    (authority_record.missed_ratio() * 100.0).round() / 100.0,
+                    format!(
+                        "{}{}",
+                        flag,
+                        (authority_record.missed_ratio() * 100.0).round() / 100.0
+                    ),
                     authority_record.points()
                 ));
             }
@@ -510,19 +512,22 @@ impl From<RawDataPara> for Report {
 
                 // Val. group stats
                 clode_block.push_str(&format!(
-                    "\n{:<2}{:<2}{:>4}{:>6}{:>6}{:>10}{:>6}\n",
-                    "#", " ", "❒", "✓", "✗", "MVR", "PTS"
+                    "\n{:<2}{:>6}{:>6}{:>6}{:>10}{:>6}\n",
+                    "#", "❒", "✓", "✗", "MVR", "PTS"
                 ));
 
                 // Print out subscriber
                 clode_block.push_str(&format!(
-                    "{:<2}{:<2}{:>4}{:>6}{:>6}{:>10}{:>6}\n",
+                    "{:<2}{:>6}{:>6}{:>6}{:>10}{:>6}\n",
                     "*",
-                    authority_flagged,
                     authority_record.authored_blocks(),
                     authority_record.votes(),
                     authority_record.missed_votes(),
-                    (authority_record.missed_ratio() * 10000.0).round() / 10000.0,
+                    format!(
+                        "{} {}",
+                        authority_flagged,
+                        (authority_record.missed_ratio() * 10000.0).round() / 10000.0
+                    ),
                     authority_record.points()
                 ));
                 // Print out peers stats
@@ -531,13 +536,16 @@ impl From<RawDataPara> for Report {
                     // verify if one of the peers is falls below ci
                     let peer_flagged = if peer.1.is_flagged() { "!" } else { "" };
                     clode_block.push_str(&format!(
-                        "{:<2}{:<2}{:>4}{:>6}{:>6}{:>10}{:>6}\n",
+                        "{:<2}{:>6}{:>6}{:>6}{:>10}{:>6}\n",
                         peers_letters[i],
-                        peer_flagged,
                         peer.1.authored_blocks(),
                         peer.1.votes(),
                         peer.1.missed_votes(),
-                        (peer.1.missed_ratio() * 10000.0).round() / 10000.0,
+                        format!(
+                            "{} {}",
+                            peer_flagged,
+                            (peer.1.missed_ratio() * 10000.0).round() / 10000.0
+                        ),
                         peer.1.points()
                     ));
                 }
