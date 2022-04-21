@@ -1257,10 +1257,10 @@ fn top_performers_report<'a>(
             report.add_raw_text(format!(
                 "Top {} TVP Validators with lowest missed votes ratio in the last {} eras:",
                 max,
-                data.records_total_full_eras + 1
+                data.records_total_full_eras
             ));
         } else {
-            report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with lowest missed votes ratio in the last {} eras:", max, data.records_total_full_eras + 1));
+            report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with lowest missed votes ratio in the last {} eras:", max, data.records_total_full_eras));
             report.add_raw_text(format!("<i>Legend: Validators are sorted 1st by missed votes ratio, 2nd by number of X epochs when selected as para-validator and 3rd by average points.</i>"));
         }
         report.add_break();
