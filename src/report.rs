@@ -1190,7 +1190,7 @@ fn top_validators_report<'a>(
             config.maximum_history_eras / 2));
     } else {
         report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with most average points earned in the last {} eras (minimum inclusion {} eras)", max, config.maximum_history_eras, config.maximum_history_eras / 2));
-        report.add_raw_text(format!("<i>legend: validator (avg. points)</i>"));
+        report.add_raw_text(format!("<i>Legend: validator (avg. points)</i>"));
     }
     report.add_break();
     for v in &tvp_sorted[..max] {
@@ -1256,12 +1256,12 @@ fn top_performers_report<'a>(
         if is_short {
             report.add_raw_text(format!(
                 "Top {} TVP Validators with lowest missed votes ratio in the last {} eras:",
-                max,
-                data.records_total_full_eras
+                max, data.records_total_full_eras
             ));
         } else {
             report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with lowest missed votes ratio in the last {} eras:", max, data.records_total_full_eras));
-            report.add_raw_text(format!("<i>Legend: Validators are sorted 1st by missed votes ratio, 2nd by number of X epochs when selected as para-validator and 3rd by average points.</i>"));
+            report.add_raw_text(format!("<i>Sorting: Validators are sorted 1st by missed votes ratio, 2nd by number of X sessions when selected as para-validator and 3rd by average points of the last {} eras.</i>", data.records_total_full_eras));
+            report.add_raw_text(format!("<i>Legend: val. identity (percentage of missed votes, number of sessions as p/v, avg. points)</i>"));
         }
         report.add_break();
 
@@ -1500,9 +1500,9 @@ mod tests {
 
     #[test]
     fn test_name() {
-        let val_name = "1️⃣ 1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣";
+        let val_name = r"1️⃣ 1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣";
         assert_eq!(
-            String::from("1_1_6_1_1_6_1_1_6_"),
+            r"1_1_6_1_1_6_1_1_6_",
             slice(&replace_emoji(&val_name, "_"), 18)
         );
     }
