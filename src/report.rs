@@ -481,9 +481,14 @@ impl From<RawDataPara> for Report {
 
                 // val. group validator names
                 clode_block.push_str(&format!(
-                    "{:<4}{:<32}\n",
+                    "{:<4}{:<24}{:>4}{:>4}{:>4}{:>8}{:>6}\n",
                     "#",
                     format!("VAL. GROUP {}", para_record.group().unwrap_or_default()),
+                    "❒",
+                    "✓",
+                    "✗",
+                    "MVR",
+                    "PTS"
                 ));
                 // verify if para_record is flagged
                 let authority_flagged = if authority_record.is_flagged() {
@@ -492,10 +497,15 @@ impl From<RawDataPara> for Report {
                     ""
                 };
                 clode_block.push_str(&format!(
-                    "{:1}{:^3}{:<32}\n",
+                    "{:1}{:^3}{:<24}{:>4}{:>4}{:>4}{:>8}{:>6}\n",
                     "*",
                     authority_flagged,
-                    slice(&replace_crln(&data.validator.name, ""), 30),
+                    slice(&replace_emoji(&data.validator.name, "_"), 24),
+                    authority_record.authored_blocks(),
+                    authority_record.votes(),
+                    authority_record.missed_votes(),
+                    (authority_record.missed_ratio() * 10000.0).round() / 10000.0,
+                    authority_record.points()
                 ));
                 // Print out peers names
                 let peers_letters = vec!["A", "B", "C", "D"];
@@ -503,52 +513,18 @@ impl From<RawDataPara> for Report {
                     // verify if one of the peers is falls below ci
                     let peer_flagged = if peer.1.is_flagged() { "!" } else { "" };
                     clode_block.push_str(&format!(
-                        "{:1}{:^3}{:<32}\n",
+                        "{:1}{:^3}{:<24}{:>4}{:>4}{:>4}{:>8}{:>6}\n",
                         peers_letters[i],
                         peer_flagged,
-                        slice(&replace_crln(&peer.0.clone(), ""), 30)
-                    ));
-                }
-
-                // Val. group stats
-                clode_block.push_str(&format!(
-                    "\n{:<2}{:>6}{:>6}{:>6}{:>10}{:>6}\n",
-                    "#", "❒", "✓", "✗", "MVR", "PTS"
-                ));
-
-                // Print out subscriber
-                clode_block.push_str(&format!(
-                    "{:<2}{:>6}{:>6}{:>6}{:>10}{:>6}\n",
-                    "*",
-                    authority_record.authored_blocks(),
-                    authority_record.votes(),
-                    authority_record.missed_votes(),
-                    format!(
-                        "{} {}",
-                        authority_flagged,
-                        (authority_record.missed_ratio() * 10000.0).round() / 10000.0
-                    ),
-                    authority_record.points()
-                ));
-                // Print out peers stats
-                let peers_letters = vec!["A", "B", "C", "D"];
-                for (i, peer) in data.peers.iter().enumerate() {
-                    // verify if one of the peers is falls below ci
-                    let peer_flagged = if peer.1.is_flagged() { "!" } else { "" };
-                    clode_block.push_str(&format!(
-                        "{:<2}{:>6}{:>6}{:>6}{:>10}{:>6}\n",
-                        peers_letters[i],
+                        slice(&replace_emoji(&peer.0.clone(), "_"), 24),
                         peer.1.authored_blocks(),
                         peer.1.votes(),
                         peer.1.missed_votes(),
-                        format!(
-                            "{} {}",
-                            peer_flagged,
-                            (peer.1.missed_ratio() * 10000.0).round() / 10000.0
-                        ),
+                        (peer.1.missed_ratio() * 10000.0).round() / 10000.0,
                         peer.1.points()
                     ));
                 }
+
                 clode_block.push_str("\nPARACHAINS POINTS BREAKDOWN\n");
                 // Print out parachains breakdown
                 clode_block.push_str(&format!(
