@@ -1213,7 +1213,12 @@ fn top_performers_report<'a>(
     let mut tvp_sorted = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP && v.para_epochs.len() >= 1 && v.missed_ratio.is_some())
+        .filter(|v| {
+            v.subset == Subset::TVP
+                && v.para_epochs.len() >= 1
+                && v.missed_ratio.is_some()
+                && v.total_eras >= 1
+        })
         .collect::<Vec<&Validator>>();
 
     if tvp_sorted.len() > 0 {
@@ -1287,6 +1292,7 @@ fn low_performers_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a R
             v.flagged_epochs.len() >= 1
                 && v.para_epochs.len() >= 2
                 && v.missed_ratio.unwrap() > 0.75_f64
+                && v.total_eras >= 1
         })
         .collect::<Vec<&Validator>>();
 

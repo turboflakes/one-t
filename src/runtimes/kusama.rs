@@ -934,7 +934,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     // Collect era points for maximum_history_eras and incremental
     let start_era_index = active_era_index - config.maximum_history_eras;
     for era_index in start_era_index..active_era_index {
-        let start_incremental_era_index = active_era_index - 1 + (1 * records.total_full_eras());
+        let start_incremental_era_index = active_era_index - (1 * records.total_full_eras());
         let era_reward_points = api
             .storage()
             .staking()
