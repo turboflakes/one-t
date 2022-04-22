@@ -234,10 +234,9 @@ impl Records {
         let mut votes: Votes = 0;
         let mut missed_votes: Votes = 0;
         let era_index = self.current_era() - 1;
-        let epoch_index_0 = self.current_epoch() - 6;
+        let mut epoch_index = self.current_epoch() - 6;
 
-        for i in 0..6 {
-            let epoch_index = epoch_index_0 + i as u32;
+        for _i in 0..6 {
             let key = EpochKey(era_index, epoch_index);
             if let Some(auth_idx) = self
                 .addresses
@@ -258,6 +257,7 @@ impl Records {
                     missed_votes += authority_record.missed_votes();
                 }
             }
+            epoch_index += 1;
         }
         if votes + missed_votes > 0 {
             Some(missed_votes as f64 / (votes + missed_votes) as f64)
@@ -279,12 +279,11 @@ impl Records {
         let mut missed_votes: Votes = 0;
         let eras = self.total_full_eras();
         let era_index_0 = self.current_era() - (1 * eras);
-        let epoch_index_0 = self.current_epoch() - (6 * eras);
+        let mut epoch_index = self.current_epoch() - (6 * eras);
 
         for e in 0..eras {
             let era_index = era_index_0 + e as u32;
-            for i in 0..6 {
-                let epoch_index = epoch_index_0 + i as u32;
+            for _i in 0..6 {
                 let key = EpochKey(era_index, epoch_index);
                 if let Some(auth_idx) = self
                     .addresses
@@ -305,6 +304,7 @@ impl Records {
                         missed_votes += authority_record.missed_votes();
                     }
                 }
+                epoch_index += 1;
             }
         }
         if votes + missed_votes > 0 {
