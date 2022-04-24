@@ -1201,10 +1201,15 @@ fn top_performers_report<'a>(
         tvp_sorted.sort_by(|a, b| {
             if a.missed_ratio.unwrap() == b.missed_ratio.unwrap() {
                 if a.para_epochs.len() == b.para_epochs.len() {
-                    // avg. points in descending order
-                    (b.total_points / b.total_eras)
-                        .partial_cmp(&(&a.total_points / &a.total_eras))
-                        .unwrap()
+                    if a.total_eras == b.total_eras {
+                        // avg. points in descending order
+                        (b.total_points / b.total_eras)
+                            .partial_cmp(&(&a.total_points / &a.total_eras))
+                            .unwrap()
+                    } else {
+                        // number of eras in descending order
+                        b.total_eras.partial_cmp(&a.total_eras).unwrap()
+                    }
                 } else {
                     // p/v times in descending order
                     b.para_epochs
@@ -1236,17 +1241,18 @@ fn top_performers_report<'a>(
             ));
         } else {
             report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with lowest missed votes ratio in the last {} eras:", max, data.records_total_full_eras));
-            report.add_raw_text(format!("<i>Sorting: Validators are sorted 1st by missed votes ratio, 2nd by number of X sessions when selected as para-validator and 3rd by average points of the last {} eras.</i>", data.records_total_full_eras));
-            report.add_raw_text(format!("<i>Legend: val. identity (percentage of missed votes, number of sessions as p/v, avg. points)</i>"));
+            report.add_raw_text(format!("<i>Sorting: Validators are sorted 1st by missed votes ratio, 2nd by number of X sessions when selected as para-validator, 3rd by number of active eras active and 4th by average points in the last {} eras.</i>", data.records_total_full_eras));
+            report.add_raw_text(format!("<i>Legend: val. identity (percentage of missed votes, number of sessions as p/v, number of active eras, avg. points)</i>"));
         }
         report.add_break();
 
         for v in &tvp_sorted[..max] {
             report.add_raw_text(format!(
-                "* {} ({:.2}%, {}x, {})",
+                "* {} ({:.2}%, {}x, {}e, {})",
                 v.name,
                 v.missed_ratio.unwrap() * 100.0,
                 v.para_epochs.len(),
+                v.total_eras,
                 v.total_points / v.total_eras
             ));
         }
