@@ -1346,6 +1346,7 @@ pub fn replace_emoji(text: &str, replacer: &str) -> String {
     r.replace_all(text, replacer).to_string()
 }
 
+#[allow(dead_code)]
 pub fn replace_crln(text: &str, replacer: &str) -> String {
     let r = Regex::new(concat!("[", "\u{000D}", "\u{000A}", "]+",)).unwrap();
 

@@ -41,7 +41,7 @@ use log::{debug, error, info};
 use std::{
     collections::BTreeMap, convert::TryInto, fs, iter::FromIterator, result::Result, thread, time,
 };
-use subxt::{sp_runtime::AccountId32, DefaultConfig, DefaultExtra};
+use subxt::{sp_runtime::AccountId32, DefaultConfig, SubstrateExtrinsicParams};
 
 #[subxt::subxt(
     runtime_metadata_path = "metadata/kusama_metadata.scale",
@@ -52,13 +52,13 @@ mod node_runtime {}
 use node_runtime::{
     runtime_types::{
         pallet_identity::types::Data, polkadot_parachain::primitives::Id,
-        polkadot_primitives::v0::ValidatorIndex, polkadot_primitives::v1::CoreIndex,
-        polkadot_primitives::v1::GroupIndex, sp_arithmetic::per_things::Perbill,
+        polkadot_primitives::v2::ValidatorIndex, polkadot_primitives::v2::CoreIndex,
+        polkadot_primitives::v2::GroupIndex, sp_arithmetic::per_things::Perbill,
     },
     session::events::NewSession,
 };
 
-type Api = node_runtime::RuntimeApi<DefaultConfig, DefaultExtra<DefaultConfig>>;
+type Api = node_runtime::RuntimeApi<DefaultConfig, SubstrateExtrinsicParams<DefaultConfig>>;
 
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
     let config = CONFIG.clone();

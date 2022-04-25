@@ -41,7 +41,7 @@ use log::{debug, error, info};
 use std::{
     collections::BTreeMap, convert::TryInto, fs, iter::FromIterator, result::Result, thread, time,
 };
-use subxt::{sp_runtime::AccountId32, DefaultConfig, DefaultExtra};
+use subxt::{sp_runtime::AccountId32, DefaultConfig, SubstrateExtrinsicParams};
 
 #[subxt::subxt(
     runtime_metadata_path = "metadata/polkadot_metadata.scale",
@@ -58,7 +58,7 @@ use node_runtime::{
     session::events::NewSession,
 };
 
-type Api = node_runtime::RuntimeApi<DefaultConfig, DefaultExtra<DefaultConfig>>;
+type Api = node_runtime::RuntimeApi<DefaultConfig, SubstrateExtrinsicParams<DefaultConfig>>;
 
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
     let config = CONFIG.clone();
