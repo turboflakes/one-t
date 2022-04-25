@@ -52,8 +52,8 @@ mod node_runtime {}
 use node_runtime::{
     runtime_types::{
         pallet_identity::types::Data, polkadot_parachain::primitives::Id,
-        polkadot_primitives::v2::ValidatorIndex, polkadot_primitives::v2::CoreIndex,
-        polkadot_primitives::v2::GroupIndex, sp_arithmetic::per_things::Perbill,
+        polkadot_primitives::v2::CoreIndex, polkadot_primitives::v2::GroupIndex,
+        polkadot_primitives::v2::ValidatorIndex, sp_arithmetic::per_things::Perbill,
     },
     session::events::NewSession,
 };
