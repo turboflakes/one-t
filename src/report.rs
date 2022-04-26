@@ -617,7 +617,7 @@ impl From<RawData> for Report {
             data.network.name, data.session.active_era_index,
         ));
         report.add_raw_text(format!(
-            "<i>TVP validators are shown in bold (100% Commission • Others • <b><a href=\"https://wiki.polkadot.network/docs/thousand-validators\">TVP</a></b>).</i>",
+            "<i>Valid <a href=\"https://wiki.polkadot.network/docs/thousand-validators\">TVP validators</a> are shown in bold (100% Commission • Others • <b>TVP</b>).</i>",
         ));
 
         // report.add_raw_text(format!(
@@ -754,7 +754,7 @@ fn active_validators_report<'a>(
             data.session.active_era_index, total_active,
         ));
         report.add_raw_text(format!(
-            "‣ {} ({:.2}%) are 100% commission validators, {} ({:.2}%) are <a href=\"https://wiki.polkadot.network/docs/thousand-validators\">TVP validators</a> and the remainder {} ({:.2}%) other validators.",
+            "‣ {} ({:.2}%) are 100% commission validators, {} ({:.2}%) are valid <a href=\"https://wiki.polkadot.network/docs/thousand-validators\">TVP validators</a> and the remainder {} ({:.2}%) other validators.",
             total_c100,
             (total_c100 as f32 / total_active as f32) * 100.0,
             total_tvp,
@@ -1093,7 +1093,7 @@ fn flagged_validators_report<'a>(
         ));
         if is_short {
             report.add_raw_text(format!(
-                "‣ {} are 100% commission validators, {} are TVP validators and the remainder {} other validators.",
+                "‣ {} are 100% commission validators, {} are valid TVP validators and the remainder {} other validators.",
                 total_c100_flagged,
                 total_tvp_flagged,
                 total_non_tvp_flagged

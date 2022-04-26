@@ -204,6 +204,10 @@ impl Onet {
     }
 
     async fn subscribe_on_chain_events(&self) -> Result<(), OnetError> {
+
+        // initialize and load TVP stashes
+        try_fetch_stashes_from_remote_url().await?;
+        
         match self.runtime {
             SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
@@ -256,6 +260,8 @@ fn spawn_and_restart_on_error() {
 struct Validator {
     #[serde(default)]
     stash: String,
+    #[serde(default)]
+    valid: bool,
 }
 
 fn read_tvp_cached_filename(filename: &str) -> Result<Vec<Validator>, OnetError> {
@@ -303,6 +309,7 @@ pub async fn try_fetch_stashes_from_remote_url() -> Result<Vec<AccountId32>, One
     // Parse stashes
     let v: Vec<AccountId32> = validators
         .iter()
+        .filter(|v| v.valid)
         .map(|x| AccountId32::from_str(&x.stash).unwrap())
         .collect();
     Ok(v)
