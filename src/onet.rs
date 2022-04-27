@@ -80,7 +80,7 @@ pub enum ReportType {
     Groups,
     Parachains,
     Validator,
-    Rank,
+    Ranking,
 }
 
 impl ReportType {
@@ -89,7 +89,7 @@ impl ReportType {
             Self::Groups => "Val. Groups Performance Report".to_string(),
             Self::Parachains => "Parachains Performance Report".to_string(),
             Self::Validator => "Validator Performance Report".to_string(),
-            Self::Rank => "Validator Rank Report".to_string(),
+            Self::Ranking => "Ranking Report".to_string(),
         }
     }
 }
@@ -100,7 +100,7 @@ impl std::fmt::Display for ReportType {
             Self::Groups => write!(f, "Groups"),
             Self::Parachains => write!(f, "Parachains"),
             Self::Validator => write!(f, "Validator"),
-            Self::Rank => write!(f, "Rank"),
+            Self::Ranking => write!(f, "Ranking"),
         }
     }
 }

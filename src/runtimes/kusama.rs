@@ -1006,14 +1006,14 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     let data = RawDataRank {
         network,
         session,
-        report_type: ReportType::Rank,
+        report_type: ReportType::Ranking,
         validators,
         records_total_full_eras: records.total_full_eras(),
     };
 
     let report = Report::from(data);
 
-    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Rank, None) {
+    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Ranking, None) {
         for user_id in subs.iter() {
             onet.matrix()
                 .send_private_message(
