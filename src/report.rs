@@ -48,6 +48,9 @@ pub struct Validator {
     pub active_last_era: bool,
     pub flagged_epochs: Vec<EpochIndex>,
     pub para_epochs: Vec<EpochIndex>,
+    pub para_pattern: Vec<bool>,
+    pub votes: Option<u32>,
+    pub missed_votes: Option<u32>,
     pub missed_ratio: Option<f64>,
     pub last_missed_ratio: Option<f64>,
     pub warnings: Vec<String>,
@@ -71,6 +74,9 @@ impl Validator {
             active_last_era: false,
             flagged_epochs: Vec::new(),
             para_epochs: Vec::new(),
+            para_pattern: Vec::new(),
+            votes: None,
+            missed_votes: None,
             missed_ratio: None,
             last_missed_ratio: None,
             warnings: Vec::new(),
@@ -139,8 +145,17 @@ pub struct Session {
 #[derive(Debug, Clone)]
 pub struct RawData {
     pub network: Network,
-    pub validators: Validators,
     pub session: Session,
+    pub validators: Validators,
+    pub records_total_full_eras: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawDataRank {
+    pub network: Network,
+    pub session: Session,
+    pub report_type: ReportType,
+    pub validators: Validators,
     pub records_total_full_eras: u32,
 }
 
@@ -221,6 +236,145 @@ impl Report {
 
 pub trait Callout<T>: Sized {
     fn callout(_: T) -> Self;
+}
+
+impl From<RawDataRank> for Report {
+    /// Converts a ONE-T `RawDataRank` into a [`Report`].
+    fn from(data: RawDataRank) -> Report {
+        let mut report = Report::new();
+
+        // Skip the full report if it's the initial record since the epoch is not fully recorded
+        if data.records_total_full_eras == 0 {
+            report.add_raw_text(format!(
+                "💤 Skipping {} for {} // {} due to epoch not being fully recorded.",
+                data.report_type.name(),
+                data.network.name,
+                data.session.active_era_index,
+            ));
+            // Log report
+            report.log();
+
+            return report;
+        }
+
+        // Network info
+        report.add_break();
+        if data.records_total_full_eras > 1 {
+            report.add_raw_text(format!(
+                "📮 {} → <b>{} // {} to {}</b>",
+                data.report_type.name(),
+                data.network.name,
+                data.session.active_era_index - data.records_total_full_eras,
+                data.session.active_era_index,
+            ));
+        } else {
+            report.add_raw_text(format!(
+                "📮 {} → <b>{} // {}</b>",
+                data.report_type.name(),
+                data.network.name,
+                data.session.active_era_index,
+            ));
+        }
+
+        report.add_raw_text(format!(
+            "<i>{} blocks recorded from #{} to #{}</i>",
+            data.session.end_block - data.session.start_block,
+            data.session.start_block,
+            data.session.end_block
+        ));
+        report.add_break();
+
+        // Sort validators
+        let mut validators_sorted = data
+            .validators
+            .iter()
+            .filter(|v| v.para_epochs.len() >= 1 && v.missed_ratio.is_some() && v.total_eras >= 1)
+            .collect::<Vec<&Validator>>();
+
+        validators_sorted.sort_by(|a, b| {
+            if a.missed_ratio.unwrap() == b.missed_ratio.unwrap() {
+                if a.para_epochs.len() == b.para_epochs.len() {
+                    // session avg. points in descending order
+                    ((b.votes.unwrap() * 20) / b.para_epochs.len() as u32)
+                        .partial_cmp(&((&a.votes.unwrap() * 20) / a.para_epochs.len() as u32))
+                        .unwrap()
+                } else {
+                    // p/v times in descending order
+                    b.para_epochs
+                        .len()
+                        .partial_cmp(&a.para_epochs.len())
+                        .unwrap()
+                }
+            } else {
+                // missed ratio in ascending order
+                a.missed_ratio
+                    .unwrap()
+                    .partial_cmp(&b.missed_ratio.unwrap())
+                    .unwrap()
+            }
+        });
+
+        let mut clode_block = String::from("<pre><code>");
+
+        clode_block.push_str(&format!(
+            "{:<7}{:<24}{:>4}{:>4}{:>4}{:>8}{:>6}{:>2}{:<24}\n",
+            "#", "VAL", "❖", "✓", "✗", "MVR", "PTS", "", ""
+        ));
+
+        for (i, validator) in validators_sorted.iter().enumerate() {
+            let flag = if validator.flagged_epochs.len() > 0 {
+                "!"
+            } else {
+                ""
+            };
+            clode_block.push_str(&format!(
+                "{:<4}{:^3}{:<24}{:>4}{:>4}{:>4}{:>8}{:>6}{:>2}{:<24}\n",
+                i + 1,
+                flag,
+                slice(&replace_emoji(&validator.name, "_"), 24),
+                validator.para_epochs.len(),
+                validator.votes.unwrap(),
+                validator.missed_votes.unwrap(),
+                format!(
+                    "{}{}",
+                    flag,
+                    (validator.missed_ratio.unwrap() * 10000.0).round() / 10000.0
+                ),
+                validator.votes.unwrap() * 20 / validator.para_epochs.len() as u32,
+                "",
+                validator
+                    .para_pattern
+                    .iter()
+                    .map(|p| {
+                        if *p {
+                            '❙'
+                        } else {
+                            '•'
+                        }
+                    })
+                    .collect::<String>()
+            ));
+
+            clode_block.push_str("\n");
+        }
+
+        clode_block.push_str("\n</code></pre>");
+        report.add_raw_text(clode_block);
+
+        report.add_raw_text("——".into());
+        report.add_raw_text(format!(
+            "<code>{} v{}</code>",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION")
+        ));
+
+        report.add_break();
+
+        // Log report
+        report.log();
+
+        report
+    }
 }
 
 impl From<RawDataGroup> for Report {
@@ -1185,6 +1339,11 @@ fn top_performers_report<'a>(
     data: &'a RawData,
     is_short: bool,
 ) -> &'a Report {
+    // If first era just show rank based on avg. points
+    if data.records_total_full_eras == 0 {
+        return top_validators_report(report, &data, is_short);
+    }
+
     // Sort TVP by missed ratio for validators that were p/v in the last X eras
     let mut tvp_sorted = data
         .validators
@@ -1201,15 +1360,10 @@ fn top_performers_report<'a>(
         tvp_sorted.sort_by(|a, b| {
             if a.missed_ratio.unwrap() == b.missed_ratio.unwrap() {
                 if a.para_epochs.len() == b.para_epochs.len() {
-                    if a.total_eras == b.total_eras {
-                        // avg. points in descending order
-                        (b.total_points / b.total_eras)
-                            .partial_cmp(&(&a.total_points / &a.total_eras))
-                            .unwrap()
-                    } else {
-                        // number of eras in descending order
-                        b.total_eras.partial_cmp(&a.total_eras).unwrap()
-                    }
+                    // session avg. points in descending order
+                    ((b.votes.unwrap() * 20) / b.para_epochs.len() as u32)
+                        .partial_cmp(&((&a.votes.unwrap() * 20) / a.para_epochs.len() as u32))
+                        .unwrap()
                 } else {
                     // p/v times in descending order
                     b.para_epochs
@@ -1241,19 +1395,18 @@ fn top_performers_report<'a>(
             ));
         } else {
             report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with lowest missed votes ratio in the last {} eras:", max, data.records_total_full_eras));
-            report.add_raw_text(format!("<i>Sorting: Validators are sorted 1st by missed votes ratio, 2nd by number of X sessions when selected as para-validator, 3rd by number of active eras and 4th by average points in the last {} eras.</i>", data.records_total_full_eras));
-            report.add_raw_text(format!("<i>Legend: val. identity (percentage of missed votes, number of sessions as p/v, number of active eras, avg. points)</i>"));
+            report.add_raw_text(format!("<i>Sorting: Validators are sorted 1st by missed votes ratio, 2nd by number of X sessions when selected as para-validator, 3rd by session average points.</i>"));
+            report.add_raw_text(format!("<i>Legend: val. identity (percentage of missed votes, number of sessions as p/v, session avg. points)</i>"));
         }
         report.add_break();
 
         for v in &tvp_sorted[..max] {
             report.add_raw_text(format!(
-                "* {} ({:.2}%, {}x, {}e, {})",
+                "* {} ({:.2}%, {}x, {})",
                 v.name,
                 v.missed_ratio.unwrap() * 100.0,
                 v.para_epochs.len(),
-                v.total_eras,
-                v.total_points / v.total_eras
+                (v.votes.unwrap() * 20) / v.para_epochs.len() as u32,
             ));
         }
 

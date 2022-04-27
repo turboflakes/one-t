@@ -80,6 +80,7 @@ pub enum ReportType {
     Groups,
     Parachains,
     Validator,
+    Rank,
 }
 
 impl ReportType {
@@ -88,6 +89,7 @@ impl ReportType {
             Self::Groups => "Val. Groups Performance Report".to_string(),
             Self::Parachains => "Parachains Performance Report".to_string(),
             Self::Validator => "Validator Performance Report".to_string(),
+            Self::Rank => "Validator Rank Report".to_string(),
         }
     }
 }
@@ -98,6 +100,7 @@ impl std::fmt::Display for ReportType {
             Self::Groups => write!(f, "Groups"),
             Self::Parachains => write!(f, "Parachains"),
             Self::Validator => write!(f, "Validator"),
+            Self::Rank => write!(f, "Rank"),
         }
     }
 }
@@ -204,10 +207,9 @@ impl Onet {
     }
 
     async fn subscribe_on_chain_events(&self) -> Result<(), OnetError> {
-
         // initialize and load TVP stashes
         try_fetch_stashes_from_remote_url().await?;
-        
+
         match self.runtime {
             SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
@@ -341,16 +343,26 @@ pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID)>, OnetError> {
 
 pub fn get_subscribers_by_epoch(
     report_type: ReportType,
-    epoch: EpochIndex,
+    epoch: Option<EpochIndex>,
 ) -> Result<Vec<UserID>, OnetError> {
     let config = CONFIG.clone();
-    let subscribers_filename = format!(
-        "{}{}.{}.{}",
-        config.data_path,
-        MATRIX_SUBSCRIBERS_FILENAME,
-        report_type.to_string().to_lowercase(),
-        epoch
-    );
+    let subscribers_filename = if let Some(epoch) = epoch {
+        format!(
+            "{}{}.{}.{}",
+            config.data_path,
+            MATRIX_SUBSCRIBERS_FILENAME,
+            report_type.to_string().to_lowercase(),
+            epoch
+        )
+    } else {
+        format!(
+            "{}{}.{}",
+            config.data_path,
+            MATRIX_SUBSCRIBERS_FILENAME,
+            report_type.to_string().to_lowercase()
+        )
+    };
+
     let mut out: Vec<UserID> = Vec::new();
     let file = File::open(&subscribers_filename)?;
 

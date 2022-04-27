@@ -42,6 +42,7 @@ pub type AuthoredBlocks = u32;
 pub type Votes = u32;
 pub type MissedVotes = u32;
 pub type ParaEpochs = Vec<EpochIndex>;
+pub type ParaPattern = Vec<bool>;
 pub type FlaggedEpochs = Vec<EpochIndex>;
 pub type Ratio = f64;
 // pub type RecordKey = String;
@@ -130,8 +131,12 @@ impl Records {
     }
 
     pub fn total_epochs(&self) -> u32 {
+        // Note: initial_epoch_recorded should not count as an full recorded epoch
+        if self.current_epoch == self.initial_epoch_recorded {
+            return 0;
+        }
+        let epochs = self.current_epoch - self.initial_epoch_recorded - 1;
         let config = CONFIG.clone();
-        let epochs = self.current_epoch - self.initial_epoch_recorded;
         if epochs > config.maximum_history_eras * 6 {
             config.maximum_history_eras * 6
         } else {
@@ -269,12 +274,13 @@ impl Records {
     pub fn get_missed_votes_for_all_records(
         &self,
         address: &AccountId32,
-    ) -> Option<(ParaEpochs, Votes, MissedVotes)> {
+    ) -> Option<(ParaEpochs, ParaPattern, Votes, MissedVotes)> {
         // Do not catch missed votes if era is not fully completed
         if self.total_full_eras() == 0 {
             return None;
         }
         let mut para_epochs: ParaEpochs = Vec::new();
+        let mut para_pattern: ParaPattern = Vec::new();
         let mut votes: Votes = 0;
         let mut missed_votes: Votes = 0;
         let eras = self.total_full_eras();
@@ -295,6 +301,9 @@ impl Records {
                         .is_some()
                     {
                         para_epochs.push(epoch_index);
+                        para_pattern.push(true);
+                    } else {
+                        para_pattern.push(false);
                     }
                     if let Some(authority_record) = self
                         .authority_records
@@ -308,7 +317,7 @@ impl Records {
             }
         }
         if votes + missed_votes > 0 {
-            Some((para_epochs, votes, missed_votes))
+            Some((para_epochs, para_pattern, votes, missed_votes))
         } else {
             None
         }

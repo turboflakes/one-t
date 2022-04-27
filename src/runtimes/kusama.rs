@@ -31,8 +31,8 @@ use crate::records::{
     ParaId, ParaRecord, ParaStats, Points, Records, Subscribers,
 };
 use crate::report::{
-    Callout, Network, RawData, RawDataGroup, RawDataPara, RawDataParachains, Report, Session,
-    Subset, Validator, Validators,
+    Callout, Network, RawData, RawDataGroup, RawDataPara, RawDataParachains, RawDataRank, Report,
+    Session, Subset, Validator, Validators,
 };
 
 use async_recursion::async_recursion;
@@ -727,7 +727,7 @@ pub async fn run_groups_report(
 
     let report = Report::from(data);
 
-    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Groups, epoch_index) {
+    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Groups, Some(epoch_index)) {
         for user_id in subs.iter() {
             onet.matrix()
                 .send_private_message(
@@ -804,7 +804,7 @@ pub async fn run_parachains_report(
     // Send report only if para records available
     let report = Report::from(data);
 
-    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Parachains, epoch_index) {
+    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Parachains, Some(epoch_index)) {
         for user_id in subs.iter() {
             onet.matrix()
                 .send_private_message(
@@ -890,13 +890,13 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                 v.subset = Subset::NONTVP;
             } else {
                 v.subset = Subset::TVP;
-                // Get TVP nodes identity
-                v.name = get_display_name(&onet, &stash, None).await?;
             }
             v.is_oversubscribed = verify_oversubscribed(&onet, active_era_index, &stash).await?;
         } else {
             v.subset = Subset::C100;
         }
+        // Get nodes identity
+        v.name = get_display_name(&onet, &stash, None).await?;
         // Check if validator is in active set
         v.is_active = active_validators.contains(&stash);
 
@@ -920,10 +920,13 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         // }
 
         // Get para epochs and missed blocks from last total full eras
-        if let Some((mut para_epochs, votes, missed_votes)) =
+        if let Some((mut para_epochs, mut para_pattern, votes, missed_votes)) =
             records.get_missed_votes_for_all_records(&stash)
         {
             v.para_epochs.append(&mut para_epochs);
+            v.para_pattern.append(&mut para_pattern);
+            v.votes = Some(votes);
+            v.missed_votes = Some(missed_votes);
             v.missed_ratio = Some(missed_votes as f64 / (votes + missed_votes) as f64);
         }
 
@@ -959,10 +962,11 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
     debug!("validators {:?}", validators);
 
+    // Network report data
     let data = RawData {
-        network,
-        validators,
-        session,
+        network: network.clone(),
+        session: session.clone(),
+        validators: validators.clone(),
         records_total_full_eras: records.total_full_eras(),
     };
 
@@ -979,6 +983,50 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             .send_callout_message(&callout.message(), Some(&callout.formatted_message()))
             .await?;
     }
+
+    // Validators rank report data
+
+    // Set era/session details
+    let start_block = records
+        .start_block(EpochKey(
+            active_era_index - (1 * records.total_full_eras()),
+            current_session_index - (6 * records.total_full_eras()),
+        ))
+        .unwrap_or(&0);
+    let end_block = records
+        .end_block(EpochKey(active_era_index - 1, current_session_index - 1))
+        .unwrap_or(&0);
+    let session = Session {
+        active_era_index: active_era_index - 1,
+        start_block: *start_block,
+        end_block: *end_block,
+        ..Default::default()
+    };
+
+    let data = RawDataRank {
+        network,
+        session,
+        report_type: ReportType::Rank,
+        validators,
+        records_total_full_eras: records.total_full_eras(),
+    };
+
+    let report = Report::from(data);
+
+    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Rank, None) {
+        for user_id in subs.iter() {
+            onet.matrix()
+                .send_private_message(
+                    user_id,
+                    &report.message(),
+                    Some(&report.formatted_message()),
+                )
+                .await?;
+            // NOTE: To not overflow matrix with messages just send maximum 2 per second
+            thread::sleep(time::Duration::from_millis(500));
+        }
+    }
+
     Ok(())
 }
 

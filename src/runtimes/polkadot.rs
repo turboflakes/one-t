@@ -727,7 +727,7 @@ pub async fn run_groups_report(
 
     let report = Report::from(data);
 
-    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Groups, epoch_index) {
+    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Groups, Some(epoch_index)) {
         for user_id in subs.iter() {
             onet.matrix()
                 .send_private_message(
@@ -804,7 +804,7 @@ pub async fn run_parachains_report(
     // Send report only if para records available
     let report = Report::from(data);
 
-    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Parachains, epoch_index) {
+    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Parachains, Some(epoch_index)) {
         for user_id in subs.iter() {
             onet.matrix()
                 .send_private_message(
@@ -920,7 +920,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         // }
 
         // Get para epochs and missed blocks from last total full eras
-        if let Some((mut para_epochs, votes, missed_votes)) =
+        if let Some((mut para_epochs, _, votes, missed_votes)) =
             records.get_missed_votes_for_all_records(&stash)
         {
             v.para_epochs.append(&mut para_epochs);
