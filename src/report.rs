@@ -27,7 +27,7 @@ use crate::records::{
 use log::info;
 use rand::Rng;
 use regex::Regex;
-use std::{convert::TryInto, result::Result};
+use std::{convert::TryInto, fs, result::Result};
 use subxt::sp_runtime::AccountId32;
 use subxt::{Client, DefaultConfig};
 
@@ -48,7 +48,8 @@ pub struct Validator {
     pub active_last_era: bool,
     pub flagged_epochs: Vec<EpochIndex>,
     pub para_epochs: Vec<EpochIndex>,
-    pub para_pattern: Vec<bool>,
+    pub para_pattern: Vec<u8>,
+    pub para_points: Option<u32>,
     pub votes: Option<u32>,
     pub missed_votes: Option<u32>,
     pub missed_ratio: Option<f64>,
@@ -75,6 +76,7 @@ impl Validator {
             flagged_epochs: Vec::new(),
             para_epochs: Vec::new(),
             para_pattern: Vec::new(),
+            para_points: None,
             votes: None,
             missed_votes: None,
             missed_ratio: None,
@@ -91,6 +93,16 @@ pub enum Subset {
     TVP,
     NONTVP,
     C100,
+}
+
+impl std::fmt::Display for Subset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TVP => write!(f, "TVP"),
+            Self::NONTVP => write!(f, "OTH"),
+            Self::C100 => write!(f, "100"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -140,6 +152,8 @@ pub struct Session {
     pub current_session_index: u32,
     pub start_block: u64,
     pub end_block: u64,
+    pub start_era: u32,
+    pub end_era: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -225,6 +239,11 @@ impl Report {
         self.body.join("<br>")
     }
 
+    pub fn save(&self, filename: &str) -> Result<(), OnetError> {
+        fs::write(&filename, self.message())?;
+        Ok(())
+    }
+
     pub fn log(&self) {
         info!("__START__");
         for t in &self.body {
@@ -243,47 +262,6 @@ impl From<RawDataRank> for Report {
     fn from(data: RawDataRank) -> Report {
         let mut report = Report::new();
 
-        // Skip the full report if it's the initial record since the epoch is not fully recorded
-        if data.records_total_full_eras == 0 {
-            report.add_raw_text(format!(
-                "💤 Skipping {} for {} // {} due to epoch not being fully recorded.",
-                data.report_type.name(),
-                data.network.name,
-                data.session.active_era_index,
-            ));
-            // Log report
-            report.log();
-
-            return report;
-        }
-
-        // Network info
-        report.add_break();
-        if data.records_total_full_eras > 1 {
-            report.add_raw_text(format!(
-                "📮 {} → <b>{} // {} to {}</b>",
-                data.report_type.name(),
-                data.network.name,
-                data.session.active_era_index - data.records_total_full_eras,
-                data.session.active_era_index,
-            ));
-        } else {
-            report.add_raw_text(format!(
-                "📮 {} → <b>{} // {}</b>",
-                data.report_type.name(),
-                data.network.name,
-                data.session.active_era_index,
-            ));
-        }
-
-        report.add_raw_text(format!(
-            "<i>{} blocks recorded from #{} to #{}</i>",
-            data.session.end_block - data.session.start_block,
-            data.session.start_block,
-            data.session.end_block
-        ));
-        report.add_break();
-
         // Sort validators
         let mut validators_sorted = data
             .validators
@@ -292,33 +270,32 @@ impl From<RawDataRank> for Report {
             .collect::<Vec<&Validator>>();
 
         validators_sorted.sort_by(|a, b| {
-            if a.missed_ratio.unwrap() == b.missed_ratio.unwrap() {
-                if a.para_epochs.len() == b.para_epochs.len() {
-                    // session avg. points in descending order
-                    ((b.votes.unwrap() * 20) / b.para_epochs.len() as u32)
-                        .partial_cmp(&((&a.votes.unwrap() * 20) / a.para_epochs.len() as u32))
-                        .unwrap()
-                } else {
+            if a.para_points.unwrap() == b.para_points.unwrap() {
+                if a.missed_ratio.unwrap() == b.missed_ratio.unwrap() {
                     // p/v times in descending order
                     b.para_epochs
                         .len()
                         .partial_cmp(&a.para_epochs.len())
                         .unwrap()
+                } else {
+                    // missed ratio in ascending order
+                    a.missed_ratio
+                        .unwrap()
+                        .partial_cmp(&b.missed_ratio.unwrap())
+                        .unwrap()
                 }
             } else {
-                // missed ratio in ascending order
-                a.missed_ratio
+                // session avg. points in descending order
+                b.para_points
                     .unwrap()
-                    .partial_cmp(&b.missed_ratio.unwrap())
+                    .partial_cmp(&a.para_points.unwrap())
                     .unwrap()
             }
         });
 
-        let mut clode_block = String::from("<pre><code>");
-
-        clode_block.push_str(&format!(
-            "{:<7}{:<24}{:>4}{:>4}{:>4}{:>8}{:>6}{:>2}{:<24}\n",
-            "#", "VAL", "❖", "✓", "✗", "MVR", "PTS", "", ""
+        report.add_raw_text(format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "#", "!", "GRP", "VAL", "P/V", "✓", "✗", "MVR", "AVG. PTS", "SES"
         ));
 
         for (i, validator) in validators_sorted.iter().enumerate() {
@@ -327,26 +304,24 @@ impl From<RawDataRank> for Report {
             } else {
                 ""
             };
-            clode_block.push_str(&format!(
-                "{:<4}{:^3}{:<24}{:>4}{:>4}{:>4}{:>8}{:>6}{:>2}{:<24}\n",
+            report.add_raw_text(format!(
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 i + 1,
                 flag,
-                slice(&replace_emoji(&validator.name, "_"), 24),
+                validator.subset.to_string(),
+                validator.name,
                 validator.para_epochs.len(),
                 validator.votes.unwrap(),
                 validator.missed_votes.unwrap(),
-                format!(
-                    "{}{}",
-                    flag,
-                    (validator.missed_ratio.unwrap() * 10000.0).round() / 10000.0
-                ),
-                validator.votes.unwrap() * 20 / validator.para_epochs.len() as u32,
-                "",
+                (validator.missed_ratio.unwrap() * 10000.0).round() / 10000.0,
+                validator.para_points.unwrap(),
                 validator
                     .para_pattern
                     .iter()
                     .map(|p| {
-                        if *p {
+                        if *p == 0 {
+                            '⚊'
+                        } else if *p == 1 {
                             '❙'
                         } else {
                             '•'
@@ -354,16 +329,25 @@ impl From<RawDataRank> for Report {
                     })
                     .collect::<String>()
             ));
-
-            clode_block.push_str("\n");
         }
 
-        clode_block.push_str("\n</code></pre>");
-        report.add_raw_text(clode_block);
-
+        report.add_break();
+        report.add_raw_text(format!(
+            "📮 {} → {} // from {} to {}",
+            data.report_type.name(),
+            data.network.name,
+            data.session.start_era,
+            data.session.end_era
+        ));
+        report.add_raw_text(format!(
+            "{} blocks recorded from #{} to #{}",
+            data.session.end_block - data.session.start_block,
+            data.session.start_block,
+            data.session.end_block
+        ));
         report.add_raw_text("——".into());
         report.add_raw_text(format!(
-            "<code>{} v{}</code>",
+            "{} v{}",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION")
         ));
@@ -1358,24 +1342,25 @@ fn top_performers_report<'a>(
 
     if tvp_sorted.len() > 0 {
         tvp_sorted.sort_by(|a, b| {
-            if a.missed_ratio.unwrap() == b.missed_ratio.unwrap() {
-                if a.para_epochs.len() == b.para_epochs.len() {
-                    // session avg. points in descending order
-                    ((b.votes.unwrap() * 20) / b.para_epochs.len() as u32)
-                        .partial_cmp(&((&a.votes.unwrap() * 20) / a.para_epochs.len() as u32))
-                        .unwrap()
-                } else {
+            if a.para_points.unwrap() == b.para_points.unwrap() {
+                if a.missed_ratio.unwrap() == b.missed_ratio.unwrap() {
                     // p/v times in descending order
                     b.para_epochs
                         .len()
                         .partial_cmp(&a.para_epochs.len())
                         .unwrap()
+                } else {
+                    // missed ratio in ascending order
+                    a.missed_ratio
+                        .unwrap()
+                        .partial_cmp(&b.missed_ratio.unwrap())
+                        .unwrap()
                 }
             } else {
-                // missed ratio in ascending order
-                a.missed_ratio
+                // session avg. points in descending order
+                b.para_points
                     .unwrap()
-                    .partial_cmp(&b.missed_ratio.unwrap())
+                    .partial_cmp(&a.para_points.unwrap())
                     .unwrap()
             }
         });
@@ -1390,23 +1375,23 @@ fn top_performers_report<'a>(
 
         if is_short {
             report.add_raw_text(format!(
-                "Top {} TVP Validators with lowest missed votes ratio in the last {} eras:",
+                "Top {} TVP Validators with most average para-validator points per session in the last {} eras:",
                 max, data.records_total_full_eras
             ));
         } else {
-            report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with lowest missed votes ratio in the last {} eras:", max, data.records_total_full_eras));
-            report.add_raw_text(format!("<i>Sorting: Validators are sorted 1st by missed votes ratio, 2nd by number of X sessions when selected as para-validator, 3rd by session average points.</i>"));
-            report.add_raw_text(format!("<i>Legend: val. identity (percentage of missed votes, number of sessions as p/v, session avg. points)</i>"));
+            report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with most average para-validator points per session in the last {} eras:", max, data.records_total_full_eras));
+            report.add_raw_text(format!("<i>Sorting: Validators are sorted 1st by average p/v points per session, 2nd by missed votes ratio, 3rd by number of X sessions when selected as p/v.</i>"));
+            report.add_raw_text(format!("<i>Legend: val. identity (avg. p/v points per session, percentage of missed votes, number of sessions as p/v)</i>"));
         }
         report.add_break();
 
         for v in &tvp_sorted[..max] {
             report.add_raw_text(format!(
-                "* {} ({:.2}%, {}x, {})",
+                "* {} ({}, {:.2}%, {}x)",
                 v.name,
+                v.para_points.unwrap(),
                 v.missed_ratio.unwrap() * 100.0,
-                v.para_epochs.len(),
-                (v.votes.unwrap() * 20) / v.para_epochs.len() as u32,
+                v.para_epochs.len()
             ));
         }
 

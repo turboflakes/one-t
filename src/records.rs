@@ -42,7 +42,7 @@ pub type AuthoredBlocks = u32;
 pub type Votes = u32;
 pub type MissedVotes = u32;
 pub type ParaEpochs = Vec<EpochIndex>;
-pub type ParaPattern = Vec<bool>;
+pub type ParaPattern = Vec<u8>;
 pub type FlaggedEpochs = Vec<EpochIndex>;
 pub type Ratio = f64;
 // pub type RecordKey = String;
@@ -301,9 +301,9 @@ impl Records {
                         .is_some()
                     {
                         para_epochs.push(epoch_index);
-                        para_pattern.push(true);
+                        para_pattern.push(1);
                     } else {
-                        para_pattern.push(false);
+                        para_pattern.push(2);
                     }
                     if let Some(authority_record) = self
                         .authority_records
@@ -312,6 +312,8 @@ impl Records {
                         votes += authority_record.para_points() / 20;
                         missed_votes += authority_record.missed_votes();
                     }
+                } else {
+                    para_pattern.push(0);
                 }
                 epoch_index += 1;
             }

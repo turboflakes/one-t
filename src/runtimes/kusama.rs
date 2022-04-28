@@ -21,6 +21,7 @@
 
 use crate::config::CONFIG;
 use crate::errors::OnetError;
+use crate::matrix::FileInfo;
 use crate::onet::ReportType;
 use crate::onet::{
     get_account_id_from_storage_key, get_subscribers, get_subscribers_by_epoch,
@@ -928,6 +929,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             v.votes = Some(votes);
             v.missed_votes = Some(missed_votes);
             v.missed_ratio = Some(missed_votes as f64 / (votes + missed_votes) as f64);
+            v.para_points = Some((votes * 20) / para_epochs.len() as u32);
         }
 
         //
@@ -987,17 +989,20 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     // Validators rank report data
 
     // Set era/session details
+    let start_era = active_era_index - (1 * records.total_full_eras());
     let start_block = records
         .start_block(EpochKey(
-            active_era_index - (1 * records.total_full_eras()),
+            start_era,
             current_session_index - (6 * records.total_full_eras()),
         ))
         .unwrap_or(&0);
+    let end_era = active_era_index - 1;
     let end_block = records
-        .end_block(EpochKey(active_era_index - 1, current_session_index - 1))
+        .end_block(EpochKey(end_era, current_session_index - 1))
         .unwrap_or(&0);
     let session = Session {
-        active_era_index: active_era_index - 1,
+        start_era,
+        end_era,
         start_block: *start_block,
         end_block: *end_block,
         ..Default::default()
@@ -1013,17 +1018,27 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
     let report = Report::from(data);
 
-    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Ranking, None) {
-        for user_id in subs.iter() {
-            onet.matrix()
-                .send_private_message(
-                    user_id,
-                    &report.message(),
-                    Some(&report.formatted_message()),
-                )
-                .await?;
-            // NOTE: To not overflow matrix with messages just send maximum 2 per second
-            thread::sleep(time::Duration::from_millis(500));
+    // Save file
+    let filename = format!("vprra_{}_to_{}_kusama_onet.txt", start_era, end_era);
+    let path_filename = format!("{}{}", config.data_path, filename);
+    report.save(&path_filename)?;
+    // Get file size
+    let file_size = fs::metadata(&path_filename)?.len();
+
+    if let Some(url) = onet.matrix().upload_file(&path_filename)? {
+        if let Ok(subs) = get_subscribers_by_epoch(ReportType::Ranking, None) {
+            for user_id in subs.iter() {
+                onet.matrix()
+                    .send_private_file(
+                        user_id,
+                        &filename,
+                        &url,
+                        Some(FileInfo::with_size(file_size)),
+                    )
+                    .await?;
+                // NOTE: To not overflow matrix with messages just send maximum 2 per second
+                thread::sleep(time::Duration::from_millis(500));
+            }
         }
     }
 

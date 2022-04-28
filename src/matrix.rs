@@ -27,11 +27,19 @@ use async_recursion::async_recursion;
 use base64::encode;
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
-use std::{fs, fs::OpenOptions, io::Write, path::Path, result::Result, str::FromStr, thread, time};
+use std::{
+    fs,
+    fs::{File, OpenOptions},
+    io::Write,
+    path::Path,
+    result::Result,
+    str::FromStr,
+    thread, time,
+};
 use subxt::sp_runtime::AccountId32;
 use url::form_urlencoded::byte_serialize;
-
 const MATRIX_URL: &str = "https://matrix.org/_matrix/client/r0";
+const MATRIX_MEDIA_URL: &str = "https://matrix.org/_matrix/media/r0";
 const MATRIX_BOT_NAME: &str = "ONE-T";
 const MATRIX_NEXT_BATCH_FILENAME: &str = ".next_batch";
 pub const MATRIX_SUBSCRIBERS_FILENAME: &str = ".subscribers";
@@ -41,6 +49,7 @@ type SyncToken = String;
 type RoomID = String;
 type EventID = String;
 type Stash = String;
+type URI = String;
 pub type UserID = String;
 
 impl SupportedRuntime {
@@ -142,6 +151,71 @@ struct SendRoomMessageRequest {
     format: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     formatted_body: String,
+    #[serde(skip_serializing_if = "FileInfo::is_empty")]
+    info: FileInfo,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    url: String,
+}
+
+impl SendRoomMessageRequest {
+    pub fn with_message(message: &str, formatted_message: Option<&str>) -> Self {
+        if let Some(formatted_msg) = formatted_message {
+            Self {
+                msgtype: "m.text".to_string(),
+                body: message.to_string(),
+                format: "org.matrix.custom.html".to_string(),
+                formatted_body: formatted_msg.to_string(),
+                ..Default::default()
+            }
+        } else {
+            Self {
+                msgtype: "m.text".to_string(),
+                body: message.to_string(),
+                ..Default::default()
+            }
+        }
+    }
+
+    pub fn with_attachment(filename: &str, url: &str, file_info: Option<FileInfo>) -> Self {
+        if let Some(info) = file_info {
+            Self {
+                msgtype: "m.file".to_string(),
+                body: filename.to_string(),
+                url: url.to_string(),
+                info: FileInfo {
+                    mimetype: info.mimetype,
+                    size: info.size,
+                },
+                ..Default::default()
+            }
+        } else {
+            Self {
+                msgtype: "m.file".to_string(),
+                body: filename.to_string(),
+                url: url.to_string(),
+                ..Default::default()
+            }
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct FileInfo {
+    mimetype: String,
+    size: u64,
+}
+
+impl FileInfo {
+    pub fn with_size(size: u64) -> Self {
+        Self {
+            mimetype: "text/plain".to_string(),
+            size,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.mimetype.is_empty() && self.size == 0
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -190,6 +264,11 @@ struct JoinedRoomsResponse {
 #[derive(Deserialize, Debug)]
 struct SyncResponse {
     next_batch: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct UploadResponse {
+    content_uri: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -666,6 +745,35 @@ impl Matrix {
         }
     }
 
+    // Upload file
+    // https://matrix.org/docs/spec/client_server/r0.6.0#m-file
+    pub fn upload_file(&self, filename: &str) -> Result<Option<URI>, MatrixError> {
+        match &self.access_token {
+            Some(access_token) => {
+                let file = File::open(filename)?;
+                let client = reqwest::blocking::Client::new();
+                let res = client
+                    .post(format!(
+                        "{}/upload?access_token={}",
+                        MATRIX_MEDIA_URL, access_token
+                    ))
+                    .body(file)
+                    .send()?;
+                match res.status() {
+                    reqwest::StatusCode::OK => {
+                        let response = res.json::<UploadResponse>()?;
+                        Ok(Some(response.content_uri))
+                    }
+                    _ => {
+                        let response = res.json::<ErrorResponse>()?;
+                        Err(MatrixError::Other(response.error))
+                    }
+                }
+            }
+            None => Err(MatrixError::Other("access_token not defined".to_string())),
+        }
+    }
+
     // Sync
     // https://spec.matrix.org/v1.2/client-server-api/#syncing
     async fn get_next_or_sync(&self) -> Result<Option<SyncToken>, MatrixError> {
@@ -888,8 +996,8 @@ impl Matrix {
         // Get or create user private room
         if let Some(private_room) = self.get_or_create_private_room(to_user_id).await? {
             // Send message to the private room (bot <=> user)
-            self.dispatch_message(&private_room.room_id, &message, &formatted_message)
-                .await?;
+            let req = SendRoomMessageRequest::with_message(&message, formatted_message);
+            self.dispatch_message(&private_room.room_id, &req).await?;
         }
 
         Ok(())
@@ -906,8 +1014,8 @@ impl Matrix {
         let config = CONFIG.clone();
         // Send message to public room (public room available for the connected chain)
         if !config.matrix_public_room_disabled {
-            self.dispatch_message(&self.public_room_id, &message, &formatted_message)
-                .await?;
+            let req = SendRoomMessageRequest::with_message(&message, formatted_message);
+            self.dispatch_message(&self.public_room_id, &req).await?;
         }
 
         Ok(())
@@ -925,9 +1033,29 @@ impl Matrix {
         // Send message to callout public rooms
         if !config.matrix_public_room_disabled {
             for room_id in self.callout_public_room_ids.iter() {
-                self.dispatch_message(&room_id, &message, &formatted_message)
-                    .await?;
+                let req = SendRoomMessageRequest::with_message(&message, formatted_message);
+                self.dispatch_message(&room_id, &req).await?;
             }
+        }
+
+        Ok(())
+    }
+
+    pub async fn send_private_file(
+        &self,
+        to_user_id: &str,
+        filename: &str,
+        url: &str,
+        file_info: Option<FileInfo>,
+    ) -> Result<(), MatrixError> {
+        if self.disabled {
+            return Ok(());
+        }
+        // Get or create user private room
+        if let Some(private_room) = self.get_or_create_private_room(to_user_id).await? {
+            // Send message to the private room (bot <=> user)
+            let req = SendRoomMessageRequest::with_attachment(&filename, &url, file_info);
+            self.dispatch_message(&private_room.room_id, &req).await?;
         }
 
         Ok(())
@@ -937,8 +1065,7 @@ impl Matrix {
     async fn dispatch_message(
         &self,
         room_id: &str,
-        message: &str,
-        formatted_message: &Option<&str>,
+        request: &SendRoomMessageRequest,
     ) -> Result<Option<EventID>, MatrixError> {
         if self.disabled {
             return Ok(None);
@@ -946,27 +1073,12 @@ impl Matrix {
         match &self.access_token {
             Some(access_token) => {
                 let client = self.client.clone();
-                let req = if let Some(formatted_msg) = formatted_message {
-                    SendRoomMessageRequest {
-                        msgtype: "m.text".to_string(),
-                        body: message.to_string(),
-                        format: "org.matrix.custom.html".to_string(),
-                        formatted_body: formatted_msg.to_string(),
-                    }
-                } else {
-                    SendRoomMessageRequest {
-                        msgtype: "m.text".to_string(),
-                        body: message.to_string(),
-                        ..Default::default()
-                    }
-                };
-
                 let res = client
                     .post(format!(
                         "{}/rooms/{}/send/m.room.message?access_token={}",
                         MATRIX_URL, room_id, access_token
                     ))
-                    .json(&req)
+                    .json(request)
                     .send()
                     .await?;
 
@@ -984,9 +1096,7 @@ impl Matrix {
                         let response = res.json::<ErrorResponse>().await?;
                         warn!("Matrix {} -> Wait 5 seconds and try again", response.error);
                         thread::sleep(time::Duration::from_secs(5));
-                        return self
-                            .dispatch_message(room_id, message, formatted_message)
-                            .await;
+                        return self.dispatch_message(room_id, request).await;
                     }
                     _ => {
                         let response = res.json::<ErrorResponse>().await?;
@@ -997,4 +1107,71 @@ impl Matrix {
             None => Err(MatrixError::Other("access_token not defined".to_string())),
         }
     }
+
+    // #[async_recursion]
+    // async fn dispatch_file_message(
+    //     &self,
+    //     room_id: &str,
+    //     filename: &str,
+    //     url: &str,
+    //     file_info: Option<FileInfo>,
+    // ) -> Result<Option<EventID>, MatrixError> {
+    //     if self.disabled {
+    //         return Ok(None);
+    //     }
+    //     match &self.access_token {
+    //         Some(access_token) => {
+    //             let client = self.client.clone();
+    //             let req = if let Some(file_info) = file_info {
+    //                 SendRoomMessageRequest {
+    //                     msgtype: "m.file".to_string(),
+    //                     body: filename.to_string(),
+    //                     url: url.to_string(),
+    //                     info: file_info
+    //                 }
+    //             } else {
+    //                 SendRoomMessageRequest {
+    //                     msgtype: "m.text".to_string(),
+    //                     body: message.to_string(),
+    //                     url: url.to_string(),
+    //                     ..Default::default()
+    //                 }
+    //             };
+
+    //             let res = client
+    //                 .post(format!(
+    //                     "{}/rooms/{}/send/m.room.message?access_token={}",
+    //                     MATRIX_URL, room_id, access_token
+    //                 ))
+    //                 .json(&req)
+    //                 .send()
+    //                 .await?;
+
+    //             debug!("response {:?}", res);
+    //             match res.status() {
+    //                 reqwest::StatusCode::OK => {
+    //                     let response = res.json::<SendRoomMessageResponse>().await?;
+    //                     info!(
+    //                         "messsage dispatched to room_id: {} (event_id: {})",
+    //                         response.event_id, room_id
+    //                     );
+    //                     Ok(Some(response.event_id))
+    //                 }
+    //                 reqwest::StatusCode::TOO_MANY_REQUESTS => {
+    //                     let response = res.json::<ErrorResponse>().await?;
+    //                     warn!("Matrix {} -> Wait 5 seconds and try again", response.error);
+    //                     thread::sleep(time::Duration::from_secs(5));
+    //                     return self
+    //                         .dispatch_file_message(room_id, message, formatted_message)
+    //                         .await;
+    //                 }
+    //                 _ => {
+    //                     let response = res.json::<ErrorResponse>().await?;
+    //                     Err(MatrixError::Other(response.error))
+    //                 }
+    //             }
+    //         }
+    //         None => Err(MatrixError::Other("access_token not defined".to_string())),
+    //     }
+    // }
 }
