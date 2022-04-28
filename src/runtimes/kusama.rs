@@ -1019,7 +1019,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     let report = Report::from(data);
 
     // Save file
-    let filename = format!("vprra_{}_to_{}_kusama_onet.txt", start_era, end_era);
+    let filename = format!("kusama_{}_{}_vprra_onet.txt", start_era, end_era);
     let path_filename = format!("{}{}", config.data_path, filename);
     report.save(&path_filename)?;
     // Get file size
