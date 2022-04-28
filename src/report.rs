@@ -23,13 +23,21 @@ use crate::errors::OnetError;
 use crate::onet::ReportType;
 use crate::records::{
     AuthorityIndex, AuthorityRecord, EpochIndex, ParaId, ParaRecord, ParaStats, Points,
+    ValidatorStatus,
 };
 use log::info;
 use rand::Rng;
 use regex::Regex;
-use std::{convert::TryInto, fs, result::Result};
+use std::{convert::TryInto, result::Result};
 use subxt::sp_runtime::AccountId32;
 use subxt::{Client, DefaultConfig};
+
+use flate2::write;
+use flate2::Compression;
+use std::ffi::OsStr;
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct Validator {
@@ -48,7 +56,7 @@ pub struct Validator {
     pub active_last_era: bool,
     pub flagged_epochs: Vec<EpochIndex>,
     pub para_epochs: Vec<EpochIndex>,
-    pub para_pattern: Vec<u8>,
+    pub status_pattern: Vec<ValidatorStatus>,
     pub para_points: Option<u32>,
     pub votes: Option<u32>,
     pub missed_votes: Option<u32>,
@@ -75,7 +83,7 @@ impl Validator {
             active_last_era: false,
             flagged_epochs: Vec::new(),
             para_epochs: Vec::new(),
-            para_pattern: Vec::new(),
+            status_pattern: Vec::new(),
             para_points: None,
             votes: None,
             missed_votes: None,
@@ -146,20 +154,18 @@ impl Network {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct Session {
+pub struct Metadata {
     pub active_era_index: u32,
     pub active_era_total_stake: u128,
     pub current_session_index: u32,
-    pub start_block: u64,
-    pub end_block: u64,
-    pub start_era: u32,
-    pub end_era: u32,
+    pub blocks_interval: Option<(u64, u64)>,
+    pub eras_interval: Option<(u32, u32)>,
 }
 
 #[derive(Debug, Clone)]
 pub struct RawData {
     pub network: Network,
-    pub session: Session,
+    pub meta: Metadata,
     pub validators: Validators,
     pub records_total_full_eras: u32,
 }
@@ -167,7 +173,7 @@ pub struct RawData {
 #[derive(Debug, Clone)]
 pub struct RawDataRank {
     pub network: Network,
-    pub session: Session,
+    pub meta: Metadata,
     pub report_type: ReportType,
     pub validators: Validators,
     pub records_total_full_eras: u32,
@@ -176,7 +182,7 @@ pub struct RawDataRank {
 #[derive(Debug)]
 pub struct RawDataPara {
     pub network: Network,
-    pub session: Session,
+    pub meta: Metadata,
     pub report_type: ReportType,
     pub is_first_record: bool,
     pub validator: Validator,
@@ -191,7 +197,7 @@ pub struct RawDataPara {
 #[derive(Debug)]
 pub struct RawDataGroup {
     pub network: Network,
-    pub session: Session,
+    pub meta: Metadata,
     pub report_type: ReportType,
     pub is_first_record: bool,
     pub groups: Vec<(u32, Vec<(AuthorityRecord, String, u32)>)>,
@@ -200,7 +206,7 @@ pub struct RawDataGroup {
 #[derive(Debug)]
 pub struct RawDataParachains {
     pub network: Network,
-    pub session: Session,
+    pub meta: Metadata,
     pub report_type: ReportType,
     pub is_first_record: bool,
     pub parachains: Vec<(ParaId, ParaStats)>,
@@ -240,7 +246,21 @@ impl Report {
     }
 
     pub fn save(&self, filename: &str) -> Result<(), OnetError> {
-        fs::write(&filename, self.message())?;
+        let config = CONFIG.clone();
+        let filename = format!("{}{}", config.data_path, filename.to_string());
+        let path = Path::new(&filename);
+        let file = File::create(&path)?;
+        if path.extension() == Some(OsStr::new("gz")) {
+            let mut buf = BufWriter::with_capacity(
+                128 * 1024,
+                write::GzEncoder::new(file, Compression::default()),
+            );
+            buf.write_all(self.message().as_bytes())?;
+        } else {
+            let mut buf = BufWriter::with_capacity(128 * 1024, file);
+            buf.write_all(self.message().as_bytes())?;
+        };
+
         Ok(())
     }
 
@@ -295,7 +315,7 @@ impl From<RawDataRank> for Report {
 
         report.add_raw_text(format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            "#", "!", "GRP", "VAL", "P/V", "✓", "✗", "MVR", "AVG. PTS", "SES"
+            "#", "VAL", "!", "GRP", "P/V", "✓", "✗", "MVR", "PTS", "STA"
         ));
 
         for (i, validator) in validators_sorted.iter().enumerate() {
@@ -307,24 +327,23 @@ impl From<RawDataRank> for Report {
             report.add_raw_text(format!(
                 "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 i + 1,
+                validator.name,
                 flag,
                 validator.subset.to_string(),
-                validator.name,
                 validator.para_epochs.len(),
                 validator.votes.unwrap(),
                 validator.missed_votes.unwrap(),
                 (validator.missed_ratio.unwrap() * 10000.0).round() / 10000.0,
                 validator.para_points.unwrap(),
                 validator
-                    .para_pattern
+                    .status_pattern
                     .iter()
                     .map(|p| {
-                        if *p == 0 {
-                            '⚊'
-                        } else if *p == 1 {
-                            '❙'
-                        } else {
-                            '•'
+                        match *p {
+                            ValidatorStatus::Waiting => '_',
+                            ValidatorStatus::Active => '•',
+                            ValidatorStatus::ActivePV => '❚',
+                            ValidatorStatus::ActivePVLow => '!',
                         }
                     })
                     .collect::<String>()
@@ -332,22 +351,27 @@ impl From<RawDataRank> for Report {
         }
 
         report.add_break();
+        if let Some(eras_interval) = data.meta.eras_interval {
+            report.add_raw_text(format!(
+                "\t📮 {} → {} // from {} to {}",
+                data.report_type.name(),
+                data.network.name,
+                eras_interval.0,
+                eras_interval.1
+            ));
+        }
+
+        if let Some(blocks_interval) = data.meta.blocks_interval {
+            report.add_raw_text(format!(
+                "\t{} blocks recorded from #{} to #{}",
+                blocks_interval.1 - blocks_interval.0,
+                blocks_interval.0,
+                blocks_interval.1
+            ));
+        }
+        report.add_raw_text("\t——".into());
         report.add_raw_text(format!(
-            "📮 {} → {} // from {} to {}",
-            data.report_type.name(),
-            data.network.name,
-            data.session.start_era,
-            data.session.end_era
-        ));
-        report.add_raw_text(format!(
-            "{} blocks recorded from #{} to #{}",
-            data.session.end_block - data.session.start_block,
-            data.session.start_block,
-            data.session.end_block
-        ));
-        report.add_raw_text("——".into());
-        report.add_raw_text(format!(
-            "{} v{}",
+            "\t{} v{}",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION")
         ));
@@ -372,8 +396,8 @@ impl From<RawDataGroup> for Report {
                 "💤 Skipping {} for {} // {} // {} due to epoch not being fully recorded.",
                 data.report_type.name(),
                 data.network.name,
-                data.session.active_era_index,
-                data.session.current_session_index
+                data.meta.active_era_index,
+                data.meta.current_session_index
             ));
             // Log report
             report.log();
@@ -387,15 +411,17 @@ impl From<RawDataGroup> for Report {
             "📮 {} → <b>{} // {} // {}</b>",
             data.report_type.name(),
             data.network.name,
-            data.session.active_era_index,
-            data.session.current_session_index
+            data.meta.active_era_index,
+            data.meta.current_session_index
         ));
-        report.add_raw_text(format!(
-            "<i>{} blocks recorded from #{} to #{}</i>",
-            data.session.end_block - data.session.start_block,
-            data.session.start_block,
-            data.session.end_block
-        ));
+        if let Some(blocks_interval) = data.meta.blocks_interval {
+            report.add_raw_text(format!(
+                "<i>{} blocks recorded from #{} to #{}</i>",
+                blocks_interval.1 - blocks_interval.0,
+                blocks_interval.0,
+                blocks_interval.1
+            ));
+        }
         report.add_break();
 
         // Groups info
@@ -462,8 +488,8 @@ impl From<RawDataParachains> for Report {
                 "💤 Skipping {} for {} // {} // {} due to epoch not being fully recorded.",
                 data.report_type.name(),
                 data.network.name,
-                data.session.active_era_index,
-                data.session.current_session_index
+                data.meta.active_era_index,
+                data.meta.current_session_index
             ));
             // Log report
             report.log();
@@ -477,15 +503,17 @@ impl From<RawDataParachains> for Report {
             "📮 {} → <b>{} // {} // {}</b>",
             data.report_type.name(),
             data.network.name,
-            data.session.active_era_index,
-            data.session.current_session_index
+            data.meta.active_era_index,
+            data.meta.current_session_index
         ));
-        report.add_raw_text(format!(
-            "<i>{} blocks recorded from #{} to #{}</i>",
-            data.session.end_block - data.session.start_block,
-            data.session.start_block,
-            data.session.end_block
-        ));
+        if let Some(blocks_interval) = data.meta.blocks_interval {
+            report.add_raw_text(format!(
+                "<i>{} blocks recorded from #{} to #{}</i>",
+                blocks_interval.1 - blocks_interval.0,
+                blocks_interval.0,
+                blocks_interval.1
+            ));
+        }
         report.add_break();
 
         // Parachains info
@@ -534,8 +562,8 @@ impl From<RawDataPara> for Report {
                 "💤 Skipping {} for {} // {} // {} due to epoch not being fully recorded.",
                 data.report_type.name(),
                 data.network.name,
-                data.session.active_era_index,
-                data.session.current_session_index
+                data.meta.active_era_index,
+                data.meta.current_session_index
             ));
             // Log report
             report.log();
@@ -549,15 +577,17 @@ impl From<RawDataPara> for Report {
             "📮 {} → <b>{} // {} // {}</b>",
             data.report_type.name(),
             data.network.name,
-            data.session.active_era_index,
-            data.session.current_session_index
+            data.meta.active_era_index,
+            data.meta.current_session_index
         ));
-        report.add_raw_text(format!(
-            "<i>{} blocks recorded from #{} to #{}</i>",
-            data.session.end_block - data.session.start_block,
-            data.session.start_block,
-            data.session.end_block
-        ));
+        if let Some(blocks_interval) = data.meta.blocks_interval {
+            report.add_raw_text(format!(
+                "<i>{} blocks recorded from #{} to #{}</i>",
+                blocks_interval.1 - blocks_interval.0,
+                blocks_interval.0,
+                blocks_interval.1
+            ));
+        }
         report.add_break();
 
         // Validator info
@@ -752,7 +782,7 @@ impl From<RawData> for Report {
         report.add_break();
         report.add_raw_text(format!(
             "📒 Network Report → <b>{} // {}</b>",
-            data.network.name, data.session.active_era_index,
+            data.network.name, data.meta.active_era_index,
         ));
         report.add_raw_text(format!(
             "<i>Valid <a href=\"https://wiki.polkadot.network/docs/thousand-validators\">TVP validators</a> are shown in bold (100% Commission • Others • <b>TVP</b>).</i>",
@@ -796,7 +826,7 @@ impl Callout<RawData> for Report {
 
         report.add_raw_text(format!(
             "📣 <b>{} // {}</b>",
-            data.network.name, data.session.active_era_index,
+            data.network.name, data.meta.active_era_index,
         ));
 
         active_validators_report(&mut report, &data, true);
@@ -889,7 +919,7 @@ fn active_validators_report<'a>(
     if is_verbose {
         report.add_raw_text(format!(
             "For era {} there are {} active validators:",
-            data.session.active_era_index, total_active,
+            data.meta.active_era_index, total_active,
         ));
         report.add_raw_text(format!(
             "‣ {} ({:.2}%) are 100% commission validators, {} ({:.2}%) are valid <a href=\"https://wiki.polkadot.network/docs/thousand-validators\">TVP validators</a> and the remainder {} ({:.2}%) other validators.",
@@ -918,7 +948,7 @@ fn active_validators_report<'a>(
 }
 
 fn own_stake_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a Report {
-    let total = data.session.active_era_total_stake;
+    let total = data.meta.active_era_total_stake;
 
     let tvp: Vec<u128> = data
         .validators

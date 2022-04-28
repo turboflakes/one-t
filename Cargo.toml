@@ -25,6 +25,7 @@ url = "2.2.2"
 base64 = "0.13.0"
 rand = "0.8.4"
 quote = "1.0.10"
+flate2 = "1.0"
 # subxt dependencies
 # subxt = { path = "/Users/paulo/Development/github.com/turboflakes/subxt/subxt" }
 subxt = { version = "0.20.0", git = "https://github.com/paritytech/subxt" }

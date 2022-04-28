@@ -89,7 +89,7 @@ impl ReportType {
             Self::Groups => "Val. Groups Performance Report".to_string(),
             Self::Parachains => "Parachains Performance Report".to_string(),
             Self::Validator => "Validator Performance Report".to_string(),
-            Self::Ranking => "Ranking Report".to_string(),
+            Self::Ranking => "ONE-T Performance Ranking Report".to_string(),
         }
     }
 }

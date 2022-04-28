@@ -42,7 +42,7 @@ pub type AuthoredBlocks = u32;
 pub type Votes = u32;
 pub type MissedVotes = u32;
 pub type ParaEpochs = Vec<EpochIndex>;
-pub type ParaPattern = Vec<u8>;
+pub type ValidatorStatusPattern = Vec<ValidatorStatus>;
 pub type FlaggedEpochs = Vec<EpochIndex>;
 pub type Ratio = f64;
 // pub type RecordKey = String;
@@ -63,6 +63,14 @@ pub struct BlockKey(EpochKey, BlockKind);
 enum BlockKind {
     Start,
     End,
+}
+
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub enum ValidatorStatus {
+    Waiting,
+    Active,
+    ActivePV,
+    ActivePVLow,
 }
 
 pub fn decode_authority_index(chain_block: &ChainBlock<DefaultConfig>) -> Option<AuthorityIndex> {
@@ -271,16 +279,19 @@ impl Records {
         }
     }
 
-    pub fn get_missed_votes_for_all_records(
+    pub fn get_performance_data_for_all_records(
         &self,
         address: &AccountId32,
-    ) -> Option<(ParaEpochs, ParaPattern, Votes, MissedVotes)> {
-        // Do not catch missed votes if era is not fully completed
+    ) -> Option<(
+        ValidatorStatusPattern,
+        Option<(ParaEpochs, Votes, MissedVotes)>,
+    )> {
+        // Do not get any data if era is not fully completed
         if self.total_full_eras() == 0 {
             return None;
         }
+        let mut pattern: ValidatorStatusPattern = Vec::new();
         let mut para_epochs: ParaEpochs = Vec::new();
-        let mut para_pattern: ParaPattern = Vec::new();
         let mut votes: Votes = 0;
         let mut missed_votes: Votes = 0;
         let eras = self.total_full_eras();
@@ -301,27 +312,32 @@ impl Records {
                         .is_some()
                     {
                         para_epochs.push(epoch_index);
-                        para_pattern.push(1);
+                        if let Some(authority_record) = self
+                            .authority_records
+                            .get(&RecordKey(key.clone(), auth_idx.clone()))
+                        {
+                            votes += authority_record.para_points() / 20;
+                            missed_votes += authority_record.missed_votes();
+                        }
+                        let missed_ratio = missed_votes as f64 / (votes + missed_votes) as f64;
+                        if missed_ratio > 0.5 {
+                            pattern.push(ValidatorStatus::ActivePVLow);
+                        } else {
+                            pattern.push(ValidatorStatus::ActivePV);
+                        }
                     } else {
-                        para_pattern.push(2);
-                    }
-                    if let Some(authority_record) = self
-                        .authority_records
-                        .get(&RecordKey(key.clone(), auth_idx.clone()))
-                    {
-                        votes += authority_record.para_points() / 20;
-                        missed_votes += authority_record.missed_votes();
+                        pattern.push(ValidatorStatus::Active);
                     }
                 } else {
-                    para_pattern.push(0);
+                    pattern.push(ValidatorStatus::Waiting);
                 }
                 epoch_index += 1;
             }
         }
         if votes + missed_votes > 0 {
-            Some((para_epochs, para_pattern, votes, missed_votes))
+            Some((pattern, Some((para_epochs, votes, missed_votes))))
         } else {
-            None
+            Some((pattern, None))
         }
     }
 

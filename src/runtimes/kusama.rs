@@ -32,8 +32,8 @@ use crate::records::{
     ParaId, ParaRecord, ParaStats, Points, Records, Subscribers,
 };
 use crate::report::{
-    Callout, Network, RawData, RawDataGroup, RawDataPara, RawDataParachains, RawDataRank, Report,
-    Session, Subset, Validator, Validators,
+    Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara, RawDataParachains, RawDataRank,
+    Report, Subset, Validator, Validators,
 };
 
 use async_recursion::async_recursion;
@@ -458,11 +458,10 @@ pub async fn run_val_perf_report(
     let end_block = records
         .end_block(EpochKey(era_index, epoch_index))
         .unwrap_or(&0);
-    let session = Session {
+    let metadata = Metadata {
         active_era_index: era_index,
         current_session_index: epoch_index,
-        start_block: *start_block,
-        end_block: *end_block,
+        blocks_interval: Some((*start_block, *end_block)),
         ..Default::default()
     };
 
@@ -511,7 +510,7 @@ pub async fn run_val_perf_report(
             validator.name = get_display_name(&onet, &stash, None).await?;
             let mut data = RawDataPara {
                 network: network.clone(),
-                session: session.clone(),
+                meta: metadata.clone(),
                 report_type: ReportType::Validator,
                 is_first_record: records.is_initial_epoch(epoch_index),
                 parachains: parachains.clone(),
@@ -668,11 +667,10 @@ pub async fn run_groups_report(
     let end_block = records
         .end_block(EpochKey(era_index, epoch_index))
         .unwrap_or(&0);
-    let session = Session {
+    let metadata = Metadata {
         active_era_index: era_index,
         current_session_index: epoch_index,
-        start_block: *start_block,
-        end_block: *end_block,
+        blocks_interval: Some((*start_block, *end_block)),
         ..Default::default()
     };
 
@@ -720,7 +718,7 @@ pub async fn run_groups_report(
 
     let data = RawDataGroup {
         network: network.clone(),
-        session: session.clone(),
+        meta: metadata.clone(),
         report_type: ReportType::Groups,
         is_first_record: records.is_initial_epoch(epoch_index),
         groups: group_authorities_sorted.clone(),
@@ -762,11 +760,10 @@ pub async fn run_parachains_report(
     let end_block = records
         .end_block(EpochKey(era_index, epoch_index))
         .unwrap_or(&0);
-    let session = Session {
+    let metadata = Metadata {
         active_era_index: era_index,
         current_session_index: epoch_index,
-        start_block: *start_block,
-        end_block: *end_block,
+        blocks_interval: Some((*start_block, *end_block)),
         ..Default::default()
     };
 
@@ -796,7 +793,7 @@ pub async fn run_parachains_report(
 
     let data = RawDataParachains {
         network: network.clone(),
-        session: session.clone(),
+        meta: metadata.clone(),
         report_type: ReportType::Parachains,
         is_first_record: records.is_initial_epoch(epoch_index),
         parachains: parachains_sorted.clone(),
@@ -866,7 +863,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         .await?;
 
     // Set era/session details
-    let session = Session {
+    let metadata = Metadata {
         active_era_index,
         current_session_index,
         active_era_total_stake,
@@ -920,16 +917,18 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         //     v.name = get_display_name(&onet, &stash, None).await?;
         // }
 
-        // Get para epochs and missed blocks from last total full eras
-        if let Some((mut para_epochs, mut para_pattern, votes, missed_votes)) =
-            records.get_missed_votes_for_all_records(&stash)
+        // Get performance data from all full eras
+        if let Some((mut status_pattern, para_data)) =
+            records.get_performance_data_for_all_records(&stash)
         {
-            v.para_epochs.append(&mut para_epochs);
-            v.para_pattern.append(&mut para_pattern);
-            v.votes = Some(votes);
-            v.missed_votes = Some(missed_votes);
-            v.missed_ratio = Some(missed_votes as f64 / (votes + missed_votes) as f64);
-            v.para_points = Some((votes * 20) / para_epochs.len() as u32);
+            v.status_pattern.append(&mut status_pattern);
+            if let Some((mut para_epochs, votes, missed_votes)) = para_data {
+                v.para_epochs.append(&mut para_epochs);
+                v.votes = Some(votes);
+                v.missed_votes = Some(missed_votes);
+                v.missed_ratio = Some(missed_votes as f64 / (votes + missed_votes) as f64);
+                v.para_points = Some((votes * 20) / para_epochs.len() as u32);
+            }
         }
 
         //
@@ -967,7 +966,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     // Network report data
     let data = RawData {
         network: network.clone(),
-        session: session.clone(),
+        meta: metadata.clone(),
         validators: validators.clone(),
         records_total_full_eras: records.total_full_eras(),
     };
@@ -986,7 +985,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             .await?;
     }
 
-    // Validators rank report data
+    // ---- Validators Performance Ranking Report data ----
 
     // Set era/session details
     let start_era = active_era_index - (1 * records.total_full_eras());
@@ -1000,17 +999,15 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     let end_block = records
         .end_block(EpochKey(end_era, current_session_index - 1))
         .unwrap_or(&0);
-    let session = Session {
-        start_era,
-        end_era,
-        start_block: *start_block,
-        end_block: *end_block,
+    let metadata = Metadata {
+        eras_interval: Some((start_era, end_era)),
+        blocks_interval: Some((*start_block, *end_block)),
         ..Default::default()
     };
 
     let data = RawDataRank {
-        network,
-        session,
+        network: network.clone(),
+        meta: metadata.clone(),
         report_type: ReportType::Ranking,
         validators,
         records_total_full_eras: records.total_full_eras(),
@@ -1018,8 +1015,12 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
     let report = Report::from(data);
 
-    // Save file
-    let filename = format!("kusama_{}_{}_vprra_onet.txt", start_era, end_era);
+    let filename = format!(
+        "onet_{}_vprr_{}_{}.txt.gz",
+        config.chain_name.to_lowercase(),
+        start_era,
+        end_era
+    );
     let path_filename = format!("{}{}", config.data_path, filename);
     report.save(&path_filename)?;
     // Get file size
