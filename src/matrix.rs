@@ -64,7 +64,7 @@ enum Commands {
     Help,
     Legends,
     Subscribe(ReportType, UserID, Option<Stash>),
-    Unsubscribe(Stash, UserID),
+    Unsubscribe(ReportType, UserID, Option<Stash>),
     NotSupported,
 }
 
@@ -535,6 +535,59 @@ impl Matrix {
                                         }
                                     }
                                 }
+                                ReportType::Ranking => {
+                                    // Write user in subscribers.ranking file if doesn't already exist
+                                    let subscriber = format!("{who}\n");
+                                    let path = format!(
+                                        "{}.{}",
+                                        subscribers_filename,
+                                        report.to_string().to_lowercase()
+                                    );
+                                    if Path::new(&path).exists() {
+                                        let subscribers = fs::read_to_string(&path)?;
+                                        let mut x = 0;
+                                        for _ in subscribers.lines() {
+                                            x += 1;
+                                        }
+                                        if x == config.maximum_subscribers {
+                                            let message = format!("⛔ The maximum number of subscribers have been reached → {}", config.maximum_subscribers);
+                                            self.send_public_message(&message, None).await?;
+                                            continue;
+                                        }
+
+                                        if !subscribers.contains(&subscriber) {
+                                            let mut file =
+                                                OpenOptions::new().append(true).open(&path)?;
+                                            file.write_all(subscriber.as_bytes())?;
+                                            let message = format!(
+                                                "📥 New subscription! <i>{}</i> subscribed.",
+                                                report.name()
+                                            );
+                                            self.send_private_message(
+                                                who,
+                                                &message,
+                                                Some(&message),
+                                            )
+                                            .await?;
+                                        } else {
+                                            let message = format!("👍 It's here! <i>{}</i> is already subscribed. The report should be sent soon.", report.name());
+                                            self.send_private_message(
+                                                who,
+                                                &message,
+                                                Some(&message),
+                                            )
+                                            .await?;
+                                        }
+                                    } else {
+                                        fs::write(&path, subscriber)?;
+                                        let message = format!(
+                                            "📥 New subscription! <i>{}</i> subscribed.",
+                                            report.name()
+                                        );
+                                        self.send_private_message(who, &message, Some(&message))
+                                            .await?;
+                                    }
+                                }
                                 _ => {
                                     // ReportType::Groups
                                     // ReportType::Parachains
@@ -544,15 +597,14 @@ impl Matrix {
                                     for e in 0..config.maximum_reports {
                                         let subscriber = format!("{who}\n");
                                         let epoch = current_epoch + e;
-                                        let subscribers_groups_filename = format!(
+                                        let path = format!(
                                             "{}.{}.{}",
                                             subscribers_filename,
                                             report.to_string().to_lowercase(),
                                             epoch
                                         );
-                                        if Path::new(&subscribers_groups_filename).exists() {
-                                            let subscribers =
-                                                fs::read_to_string(&subscribers_groups_filename)?;
+                                        if Path::new(&path).exists() {
+                                            let subscribers = fs::read_to_string(&path)?;
                                             let mut x = 0;
                                             for _ in subscribers.lines() {
                                                 x += 1;
@@ -563,9 +615,8 @@ impl Matrix {
                                                 break;
                                             }
                                             if !subscribers.contains(&subscriber) {
-                                                let mut file = OpenOptions::new()
-                                                    .append(true)
-                                                    .open(&subscribers_groups_filename)?;
+                                                let mut file =
+                                                    OpenOptions::new().append(true).open(&path)?;
                                                 file.write_all(subscriber.as_bytes())?;
                                                 let message = format!(
                                                     "📥 <i>{}</i> subscribed for epoch {}.",
@@ -588,7 +639,7 @@ impl Matrix {
                                                 .await?;
                                             }
                                         } else {
-                                            fs::write(&subscribers_groups_filename, subscriber)?;
+                                            fs::write(&path, subscriber)?;
                                             let message = format!(
                                                 "📥 <i>{}</i> subscribed for epoch {}.",
                                                 report.name(),
@@ -605,21 +656,57 @@ impl Matrix {
                                 }
                             }
                         }
-                        Commands::Unsubscribe(stash, who) => {
-                            // Remove stash,user from subscribers file
-                            let subscriber = format!("{stash},{who}\n");
-                            let subscribers_filename =
-                                format!("{}{}", config.data_path, MATRIX_SUBSCRIBERS_FILENAME);
-                            if Path::new(&subscribers_filename).exists() {
-                                let subscribers = fs::read_to_string(&subscribers_filename)?;
-                                if subscribers.contains(&subscriber) {
-                                    fs::write(
-                                        &subscribers_filename,
-                                        subscribers.replace(&subscriber, ""),
-                                    )?;
-                                    let message = format!("🗑️ Unsubscribed {stash}");
-                                    self.send_private_message(who, &message, None).await?;
+                        Commands::Unsubscribe(report, who, stash) => {
+                            match report {
+                                ReportType::Validator => {
+                                    if let Some(stash) = stash {
+                                        // Remove stash,user from subscribers file
+                                        let subscriber = format!("{stash},{who}\n");
+                                        let path = format!(
+                                            "{}{}",
+                                            config.data_path, MATRIX_SUBSCRIBERS_FILENAME
+                                        );
+                                        if Path::new(&path).exists() {
+                                            let subscribers = fs::read_to_string(&path)?;
+                                            if subscribers.contains(&subscriber) {
+                                                fs::write(
+                                                    &path,
+                                                    subscribers.replace(&subscriber, ""),
+                                                )?;
+                                                let message = format!(
+                                                    "🗑️ <i>{}</i> unsubscribed for {stash}",
+                                                    report.name()
+                                                );
+                                                self.send_private_message(who, &message, None)
+                                                    .await?;
+                                            }
+                                        }
+                                    }
                                 }
+                                ReportType::Ranking => {
+                                    // Remove user from subscribers file
+                                    let subscriber = format!("{who}\n");
+                                    let path = format!(
+                                        "{}.{}",
+                                        subscribers_filename,
+                                        report.to_string().to_lowercase()
+                                    );
+                                    if Path::new(&path).exists() {
+                                        let subscribers = fs::read_to_string(&path)?;
+                                        if subscribers.contains(&subscriber) {
+                                            fs::write(&path, subscribers.replace(&subscriber, ""))?;
+                                            let message =
+                                                format!("🗑️ <i>{}</i> unsubscribed.", report.name());
+                                            self.send_private_message(
+                                                who,
+                                                &message,
+                                                Some(&message),
+                                            )
+                                            .await?;
+                                        }
+                                    }
+                                }
+                                _ => (),
                             }
                         }
                         _ => (),
@@ -861,16 +948,29 @@ impl Matrix {
                                                 message.sender.to_string(),
                                                 None,
                                             )),
+                                            "ranking" => commands.push(Commands::Subscribe(
+                                                ReportType::Ranking,
+                                                message.sender.to_string(),
+                                                None,
+                                            )),
                                             stash => commands.push(Commands::Subscribe(
                                                 ReportType::Validator,
                                                 message.sender.to_string(),
                                                 Some(stash.to_string()),
                                             )),
                                         },
-                                        "!unsubscribe" => commands.push(Commands::Unsubscribe(
-                                            value.to_string(),
-                                            message.sender.to_string(),
-                                        )),
+                                        "!unsubscribe" => match value {
+                                            "ranking" => commands.push(Commands::Unsubscribe(
+                                                ReportType::Ranking,
+                                                message.sender.to_string(),
+                                                None,
+                                            )),
+                                            stash => commands.push(Commands::Unsubscribe(
+                                                ReportType::Validator,
+                                                message.sender.to_string(),
+                                                Some(stash.to_string()),
+                                            )),
+                                        },
                                         _ => commands.push(Commands::NotSupported),
                                     },
                                 };
