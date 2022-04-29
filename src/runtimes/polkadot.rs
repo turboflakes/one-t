@@ -53,8 +53,8 @@ mod node_runtime {}
 use node_runtime::{
     runtime_types::{
         pallet_identity::types::Data, polkadot_parachain::primitives::Id,
-        polkadot_primitives::v0::ValidatorIndex, polkadot_primitives::v1::CoreIndex,
-        polkadot_primitives::v1::GroupIndex, polkadot_primitives::v0::ValidityAttestation,
+        polkadot_primitives::v0::ValidatorIndex, polkadot_primitives::v0::ValidityAttestation,
+        polkadot_primitives::v1::CoreIndex, polkadot_primitives::v1::GroupIndex,
         sp_arithmetic::per_things::Perbill,
     },
     session::events::NewSession,
@@ -431,13 +431,11 @@ pub async fn track_records(
                                         para_id, group_authorities
                                     );
 
-                                    if let Some((_, vote)) =
-                                        group_authorities.iter().find(
-                                            |(ValidatorIndex(para_idx), _)| {
-                                                para_idx == para_record.para_index()
-                                            },
-                                        )
-                                    {
+                                    if let Some((_, vote)) = group_authorities.iter().find(
+                                        |(ValidatorIndex(para_idx), _)| {
+                                            para_idx == para_record.para_index()
+                                        },
+                                    ) {
                                         match vote {
                                             ValidityAttestation::Explicit(_) => {
                                                 para_record.inc_explicit_votes(para_id);
@@ -643,44 +641,20 @@ pub async fn run_val_perf_report(
     Ok(())
 }
 
-// Poor performance validators are the ones who missed more than 50% of the blocks
-// compared to the top performer in the group
+// Poor performance validators are the ones who missed more than 50%
 pub fn flag_validators_with_poor_performance(
     era_index: EraIndex,
     epoch_index: EpochIndex,
     records: &mut Records,
 ) -> Result<(), OnetError> {
-    // Populate some maps to get ranks
-    let mut group_authorities_map: BTreeMap<u32, Vec<AuthorityRecord>> = BTreeMap::new();
-
-    if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
+    if let Some(authorities) = records.get_para_authorities(Some(EpochKey(era_index, epoch_index)))
+    {
         for authority_idx in authorities.iter() {
             if let Some(para_record) =
                 records.get_para_record(*authority_idx, Some(EpochKey(era_index, epoch_index)))
             {
-                if let Some(group_idx) = para_record.group() {
-                    if let Some(authority_record) = records.get_authority_record(
-                        *authority_idx,
-                        Some(EpochKey(era_index, epoch_index)),
-                    ) {
-                        let auths = group_authorities_map.entry(group_idx).or_insert(Vec::new());
-                        auths.push(authority_record.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    for (_, authorities) in group_authorities_map.iter() {
-        // Get the maximum_para_points from the authorities in the val. group
-        if let Some(maximum_points) = authorities.iter().map(|a| a.para_points()).max() {
-            for authority_record in authorities.iter() {
-                // Flag authorities with less than 50% points of the top authority
-                if (authority_record.para_points() as f64 / maximum_points as f64) < 0.5 {
-                    records.flag_authority(
-                        authority_record.authority_index().clone(),
-                        EpochKey(era_index, epoch_index),
-                    );
+                if para_record.missed_votes_ratio() > 0.5 {
+                    records.flag_authority(authority_idx.clone(), EpochKey(era_index, epoch_index));
                 }
             }
         }
