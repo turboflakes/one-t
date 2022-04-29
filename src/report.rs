@@ -22,8 +22,8 @@ use crate::config::CONFIG;
 use crate::errors::OnetError;
 use crate::onet::ReportType;
 use crate::records::{
-    AuthorityIndex, AuthorityRecord, EpochIndex, ParaId, ParaRecord, ParaStats, Points,
-    ValidatorStatus,
+    AuthorityIndex, AuthorityRecord, EpochIndex, ParaId, ParaRecord, ParaStats, Pattern,
+    Points,
 };
 use log::info;
 use rand::Rng;
@@ -55,11 +55,16 @@ pub struct Validator {
     pub total_authored_blocks: u32,
     pub active_last_era: bool,
     pub flagged_epochs: Vec<EpochIndex>,
-    pub para_epochs: Vec<EpochIndex>,
-    pub status_pattern: Vec<ValidatorStatus>,
-    pub avg_para_points: Option<u32>,
-    pub votes: Option<u32>,
-    pub missed_votes: Option<u32>,
+    pub pattern: Pattern,
+    pub authored_blocks: u32,
+    pub epochs: u32,
+    pub avg_points: u32,
+    pub para_epochs: u32,
+    pub avg_para_points: u32,
+    pub explicit_votes: u32,
+    pub implicit_votes: u32,
+    pub missed_votes: u32,
+    pub core_assignments: u32,
     pub missed_ratio: Option<f64>,
     pub last_missed_ratio: Option<f64>,
     pub warnings: Vec<String>,
@@ -82,11 +87,16 @@ impl Validator {
             total_authored_blocks: 0,
             active_last_era: false,
             flagged_epochs: Vec::new(),
-            para_epochs: Vec::new(),
-            status_pattern: Vec::new(),
-            avg_para_points: None,
-            votes: None,
-            missed_votes: None,
+            epochs: 0,
+            avg_points: 0,
+            para_epochs: 0,
+            pattern: Vec::new(),
+            authored_blocks: 0,
+            avg_para_points: 0,
+            explicit_votes: 0,
+            implicit_votes: 0,
+            missed_votes: 0,
+            core_assignments: 0,
             missed_ratio: None,
             last_missed_ratio: None,
             warnings: Vec::new(),
@@ -159,7 +169,7 @@ pub struct Metadata {
     pub active_era_total_stake: u128,
     pub current_session_index: u32,
     pub blocks_interval: Option<(u64, u64)>,
-    pub eras_interval: Option<(u32, u32)>,
+    pub interval: Option<((u32, u32), (u32, u32))>,
 }
 
 #[derive(Debug, Clone)]
@@ -200,7 +210,7 @@ pub struct RawDataGroup {
     pub meta: Metadata,
     pub report_type: ReportType,
     pub is_first_record: bool,
-    pub groups: Vec<(u32, Vec<(AuthorityRecord, String, u32, f64)>)>,
+    pub groups: Vec<(u32, Vec<(AuthorityRecord, ParaRecord, String)>)>,
 }
 
 #[derive(Debug)]
@@ -282,21 +292,18 @@ impl From<RawDataRank> for Report {
     fn from(data: RawDataRank) -> Report {
         let mut report = Report::new();
 
-        // Sort validators
+        // Filter validators that were assigned at least once as p/v
         let mut validators_sorted = data
             .validators
             .iter()
-            .filter(|v| v.para_epochs.len() >= 1 && v.missed_ratio.is_some() && v.total_eras >= 1)
+            .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
             .collect::<Vec<&Validator>>();
 
         validators_sorted.sort_by(|a, b| {
-            if a.avg_para_points.unwrap() == b.avg_para_points.unwrap() {
+            if a.avg_para_points == b.avg_para_points {
                 if a.missed_ratio.unwrap() == b.missed_ratio.unwrap() {
                     // p/v times in descending order
-                    b.para_epochs
-                        .len()
-                        .partial_cmp(&a.para_epochs.len())
-                        .unwrap()
+                    b.para_epochs.partial_cmp(&a.para_epochs).unwrap()
                 } else {
                     // missed ratio in ascending order
                     a.missed_ratio
@@ -306,59 +313,85 @@ impl From<RawDataRank> for Report {
                 }
             } else {
                 // session avg. points in descending order
-                b.avg_para_points
-                    .unwrap()
-                    .partial_cmp(&a.avg_para_points.unwrap())
-                    .unwrap()
+                b.avg_para_points.partial_cmp(&a.avg_para_points).unwrap()
             }
         });
 
         report.add_raw_text(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            "#", "VAL", "!", "GRP", "P/V", "✓", "✗", "MVR", "PTS", "STA"
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "#",
+            "Validator",
+            "Group",
+            "Act Sessions",
+            "P/V Sessions",
+            "❒",
+            "↻",
+            "✓i",
+            "✓e",
+            "✗",
+            "Grade",
+            "Missed Votes Ratio",
+            "Avg. P/V Points",
+            "Avg. Total Points",
+            "Pattern"
         ));
 
         for (i, validator) in validators_sorted.iter().enumerate() {
-            let flag = if validator.flagged_epochs.len() > 0 {
-                "!"
+            if let Some(mvr) = validator.missed_ratio {
+                report.add_raw_text(format!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    i + 1,
+                    validator.name,
+                    validator.subset.to_string(),
+                    validator.epochs,
+                    validator.para_epochs,
+                    validator.authored_blocks,
+                    validator.core_assignments,
+                    validator.implicit_votes,
+                    validator.explicit_votes,
+                    validator.missed_votes,
+                    grade(1.0_f64 - mvr),
+                    (mvr * 10000.0).round() / 10000.0,
+                    validator.avg_para_points,
+                    validator.avg_points,
+                    validator
+                        .pattern
+                        .iter()
+                        .map(|g| g.to_string())
+                        .collect::<String>()
+                ));
             } else {
-                ""
-            };
-            report.add_raw_text(format!(
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                i + 1,
-                validator.name,
-                flag,
-                validator.subset.to_string(),
-                validator.para_epochs.len(),
-                validator.votes.unwrap(),
-                validator.missed_votes.unwrap(),
-                (validator.missed_ratio.unwrap() * 10000.0).round() / 10000.0,
-                validator.avg_para_points.unwrap(),
-                validator
-                    .status_pattern
-                    .iter()
-                    .map(|p| {
-                        match *p {
-                            ValidatorStatus::Waiting => '_',
-                            ValidatorStatus::Active => '•',
-                            ValidatorStatus::ActivePV => '❚',
-                            ValidatorStatus::ActivePVLow => '!',
-                            ValidatorStatus::ActivePVIdle => '?',
-                        }
-                    })
-                    .collect::<String>()
-            ));
+                report.add_raw_text(format!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    i + 1,
+                    validator.name,
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                ));
+            }
         }
 
         report.add_break();
-        if let Some(eras_interval) = data.meta.eras_interval {
+        if let Some((start, end)) = data.meta.interval {
             report.add_raw_text(format!(
-                "\t📮 {} → {} // from {} to {}",
+                "\t📮 {} → {} // from {} // {} to {} // {}",
                 data.report_type.name(),
                 data.network.name,
-                eras_interval.0,
-                eras_interval.1
+                start.0,
+                start.1,
+                end.0,
+                end.1
             ));
         }
 
@@ -390,7 +423,7 @@ impl From<RawDataGroup> for Report {
     /// Converts a ONE-T `RawData` into a [`Report`].
     fn from(data: RawDataGroup) -> Report {
         let mut report = Report::new();
-
+        
         // Skip the full report if it's the initial record since the epoch is not fully recorded
         if data.is_first_record {
             report.add_raw_text(format!(
@@ -430,28 +463,53 @@ impl From<RawDataGroup> for Report {
 
         for (i, group) in data.groups.iter().enumerate() {
             clode_block.push_str(&format!(
-                "{:<17}{:>3}{:>4}{:>6}{:>6}\n",
-                format!("{}. VAL. GROUP {}", i + 1, group.0),
-                "↻",
+                "{:<24}{:>4}{:>4}{:>4}{:>4}{:>3}{:>8}{:>6}{:>4}{:>6}\n",
+                format!("{}. VAL_GROUP_{}", i + 1, group.0),
                 "❒",
+                "↻",
+                "✓i",
+                "✓e",
+                "✗",
+                "GRD",
                 "MVR",
-                "PTS"
+                "PPTS",
+                "TPTS",
             ));
-            for (authority_record, val_name, core_assignments, missed_votes_ratio) in group.1.iter()
-            {
-                let flag = if authority_record.is_flagged() {
-                    "!"
+            for (authority_record, para_record, val_name) in group.1.iter() {
+                if let Some(mvr) = para_record.missed_votes_ratio() {
+                    let total_implicit_votes = para_record.total_implicit_votes();
+                    let total_explicit_votes = para_record.total_explicit_votes();
+                    let para_points = (total_implicit_votes + total_explicit_votes) * 20;
+                    let total_points = (authority_record.authored_blocks() * 20) + para_points;
+
+                    clode_block.push_str(&format!(
+                        "{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>4}{:>6}\n",
+                        slice(&replace_emoji(&val_name, "_"), 24),
+                        authority_record.authored_blocks(),
+                        para_record.total_core_assignments(),
+                        total_implicit_votes,
+                        total_explicit_votes,
+                        para_record.total_missed_votes(),
+                        grade(1.0_f64 - mvr),
+                        (mvr * 10000.0).round() / 10000.0,
+                        para_points,
+                        total_points,
+                    ));
                 } else {
-                    " "
-                };
-                clode_block.push_str(&format!(
-                    "{:<17}{:>3}{:>4}{:>6}{:>6}\n",
-                    slice(&replace_emoji(&val_name, "_"), 17),
-                    core_assignments,
-                    authority_record.authored_blocks(),
-                    format!("{}{}", flag, (missed_votes_ratio * 100.0).round() / 100.0),
-                    authority_record.points()
-                ));
+                    clode_block.push_str(&format!(
+                        "{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>4}{:>6}\n",
+                        slice(&replace_emoji(&val_name, "_"), 24),
+                        "-",
+                        "-",
+                        "-",
+                        "-",
+                        "-",
+                        "-",
+                        "-",
+                        "-",
+                        "-"
+                    ));
+                }
             }
             clode_block.push_str("\n");
         }
@@ -518,17 +576,22 @@ impl From<RawDataParachains> for Report {
         let mut clode_block = String::from("<pre><code>");
 
         clode_block.push_str(&format!(
-            "{:<5}{:<9}{:>6}{:>8}{:>8}\n",
-            "#", "PARACHAIN", "↻", "❒", "PTS"
+            "{:<6}{:<10}{:>6}{:>6}{:>6}{:>6}{:>6}{:>8}{:>8}\n",
+            "", "PARACHAIN", "❒", "↻", "✓i", "✓e", "✗", "PPTS", "TPTS"
         ));
+
         for (i, (para_id, stats)) in data.parachains.iter().enumerate() {
             clode_block.push_str(&format!(
-                "{:<5}{:<9}{:>6}{:>8}{:>8}\n",
-                format!("#{}", i + 1),
+                "{:<6}{:<9}{:>4}{:>4}{:>6}{:>6}{:>6}{:>8}{:>8}\n",
+                format!("{}.", i + 1),
                 para_id,
-                stats.core_assignments() / 5,
                 stats.authored_blocks(),
-                stats.points()
+                stats.core_assignments() / 5,
+                stats.implicit_votes(),
+                stats.explicit_votes(),
+                stats.missed_votes(),
+                stats.para_points(),
+                stats.total_points()
             ));
         }
         clode_block.push_str("\n</code></pre>");
@@ -647,97 +710,124 @@ impl From<RawDataPara> for Report {
 
                 // val. group validator names
                 clode_block.push_str(&format!(
-                    "{:<4}{:<24}{:>4}{:>4}{:>4}{:>8}{:>6}\n",
+                    "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
                     "#",
-                    format!("VAL. GROUP {}", para_record.group().unwrap_or_default()),
+                    format!("VAL_GROUP_{}", para_record.group().unwrap_or_default()),
                     "❒",
-                    "✓",
+                    "↻",
+                    "✓i",
+                    "✓e",
                     "✗",
+                    "GRD",
                     "MVR",
-                    "PTS"
+                    "PPTS",
+                    "TPTS",
                 ));
-                // verify if para_record is flagged
-                let authority_flagged = if authority_record.is_flagged() {
-                    "!"
+
+                if let Some(mvr) = para_record.missed_votes_ratio() {
+                    let total_implicit_votes = para_record.total_implicit_votes();
+                    let total_explicit_votes = para_record.total_explicit_votes();
+                    let para_points = (total_implicit_votes + total_explicit_votes) * 20;
+                    let total_points = (authority_record.authored_blocks() * 20) + para_points;
+
+                    clode_block.push_str(&format!(
+                        "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
+                        "*",
+                        slice(&replace_emoji(&data.validator.name, "_"), 24),
+                        authority_record.authored_blocks(),
+                        para_record.total_core_assignments(),
+                        total_implicit_votes,
+                        total_explicit_votes,
+                        para_record.total_missed_votes(),
+                        grade(1.0_f64 - mvr),
+                        (mvr * 10000.0).round() / 10000.0,
+                        para_points,
+                        total_points
+                    ));
                 } else {
-                    ""
-                };
-                clode_block.push_str(&format!(
-                    "{:1}{:^3}{:<24}{:>4}{:>4}{:>4}{:>8}{:>6}\n",
-                    "*",
-                    authority_flagged,
-                    slice(&replace_emoji(&data.validator.name, "_"), 24),
-                    authority_record.authored_blocks(),
-                    para_record.total_implicit_votes() + para_record.total_explicit_votes(),
-                    para_record.total_missed_votes(),
-                    (para_record.missed_votes_ratio() * 10000.0).round() / 10000.0,
-                    authority_record.points()
-                ));
+                    clode_block.push_str(&format!(
+                        "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
+                        "*",
+                        slice(&replace_emoji(&data.validator.name, "_"), 24),
+                        "-",
+                        "-",
+                        "-",
+                        "-",
+                        "-",
+                        "-",
+                        "-",
+                        "-",
+                        "-"
+                    ));
+                }
                 // Print out peers names
                 let peers_letters = vec!["A", "B", "C", "D"];
                 for (i, peer) in data.peers.iter().enumerate() {
-                    // verify if one of the peers is falls below ci
-                    let peer_flagged = if peer.1.is_flagged() { "!" } else { "" };
-                    clode_block.push_str(&format!(
-                        "{:1}{:^3}{:<24}{:>4}{:>4}{:>4}{:>8}{:>6}\n",
-                        peers_letters[i],
-                        peer_flagged,
-                        slice(&replace_emoji(&peer.0.clone(), "_"), 24),
-                        peer.1.authored_blocks(),
-                        peer.2.total_implicit_votes() + peer.2.total_explicit_votes(),
-                        peer.2.total_missed_votes(),
-                        (peer.2.missed_votes_ratio() * 10000.0).round() / 10000.0,
-                        peer.1.points()
-                    ));
+                    if let Some(mvr) = peer.2.missed_votes_ratio() {
+                        let total_implicit_votes = peer.2.total_implicit_votes();
+                        let total_explicit_votes = peer.2.total_explicit_votes();
+                        let para_points = (total_implicit_votes + total_explicit_votes) * 20;
+                        let total_points = (authority_record.authored_blocks() * 20) + para_points;
+
+                        clode_block.push_str(&format!(
+                            "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
+                            peers_letters[i],
+                            slice(&replace_emoji(&peer.0.clone(), "_"), 24),
+                            peer.1.authored_blocks(),
+                            peer.2.total_core_assignments(),
+                            total_implicit_votes,
+                            total_explicit_votes,
+                            peer.2.total_missed_votes(),
+                            grade(1.0_f64 - mvr),
+                            (mvr * 10000.0).round() / 10000.0,
+                            para_points,
+                            total_points
+                        ));
+                    } else {
+                        clode_block.push_str(&format!(
+                            "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
+                            peers_letters[i],
+                            slice(&replace_emoji(&peer.0.clone(), "_"), 24),
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-"
+                        ));
+                    }
                 }
 
-                clode_block.push_str("\nPARACHAINS POINTS BREAKDOWN\n");
+                clode_block.push_str("\nPARACHAINS VOTES BREAKDOWN\n");
                 // Print out parachains breakdown
                 clode_block.push_str(&format!(
-                    "{:<6}{:^5}{:>5}{:>5}{:>5}{:>5}{:>5}\n",
-                    "#", "↻", "*", "A", "B", "C", "D",
+                    "{:<9}{:^12}{:^12}{:^12}{:^12}{:^12}\n",
+                    "", "*", "A", "B", "C", "D",
+                ));
+                clode_block.push_str(&format!(
+                    "{:<6}{:^3}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}\n",
+                    "#", "↻", "✓", "✗", "✓", "✗", "✓", "✗", "✓", "✗", "✓", "✗",
                 ));
                 for para_id in data.parachains.iter() {
-                    // Print out validator points per para id
+                    // Print out votes per para id
                     if let Some(stats) = para_record.get_para_id_stats(*para_id) {
-                        // let peers_avg = mean(
-                        //     &data
-                        //         .peers
-                        //         .iter()
-                        //         .map(|peer| {
-                        //             if let Some(peer_stats) = peer.2.get_para_id_stats(*para_id) {
-                        //                 peer_stats.points() as f64
-                        //             } else {
-                        //                 0.0_f64
-                        //             }
-                        //         })
-                        //         .collect(),
-                        // );
-                        let peers_max = &data
-                            .peers
-                            .iter()
-                            .map(|peer| {
-                                if let Some(peer_stats) = peer.2.get_para_id_stats(*para_id) {
-                                    peer_stats.para_points()
-                                } else {
-                                    0
-                                }
-                            })
-                            .max()
-                            .unwrap_or_default();
                         let mut line: String = format!(
-                            "{:<6}{:^5}{:>5}",
+                            "{:<6}{:^3}{:>5}{:>5}",
                             para_id,
                             stats.core_assignments(),
-                            format!(
-                                "{}{}",
-                                trend(stats.para_points() as f64, *peers_max as f64),
-                                stats.points()
-                            )
+                            stats.total_votes(),
+                            stats.missed_votes(),
                         );
                         for peer in data.peers.iter() {
                             if let Some(peer_stats) = peer.2.get_para_id_stats(*para_id) {
-                                line.push_str(&format!("{:>5}", peer_stats.points()));
+                                line.push_str(&format!(
+                                    "{:>5}{:>5}",
+                                    peer_stats.total_votes(),
+                                    peer_stats.missed_votes()
+                                ));
                             }
                         }
                         clode_block.push_str(&format!("{line}\n"));
@@ -1357,26 +1447,18 @@ fn top_performers_report<'a>(
     }
 
     // Sort TVP by missed ratio for validators that were p/v in the last X eras
-    let mut tvp_sorted = data
+    let mut validators_sorted = data
         .validators
         .iter()
-        .filter(|v| {
-            v.subset == Subset::TVP
-                && v.para_epochs.len() >= 1
-                && v.missed_ratio.is_some()
-                && v.total_eras >= 1
-        })
+        .filter(|v| v.subset == Subset::TVP && v.para_epochs >= 1 && v.missed_ratio.is_some())
         .collect::<Vec<&Validator>>();
 
-    if tvp_sorted.len() > 0 {
-        tvp_sorted.sort_by(|a, b| {
-            if a.avg_para_points.unwrap() == b.avg_para_points.unwrap() {
+    if validators_sorted.len() > 0 {
+        validators_sorted.sort_by(|a, b| {
+            if a.avg_para_points == b.avg_para_points {
                 if a.missed_ratio.unwrap() == b.missed_ratio.unwrap() {
                     // p/v times in descending order
-                    b.para_epochs
-                        .len()
-                        .partial_cmp(&a.para_epochs.len())
-                        .unwrap()
+                    b.para_epochs.partial_cmp(&a.para_epochs).unwrap()
                 } else {
                     // missed ratio in ascending order
                     a.missed_ratio
@@ -1386,19 +1468,16 @@ fn top_performers_report<'a>(
                 }
             } else {
                 // session avg. points in descending order
-                b.avg_para_points
-                    .unwrap()
-                    .partial_cmp(&a.avg_para_points.unwrap())
-                    .unwrap()
+                b.avg_para_points.partial_cmp(&a.avg_para_points).unwrap()
             }
         });
 
-        let max = if tvp_sorted.len() > 4 && is_short {
+        let max = if validators_sorted.len() > 4 && is_short {
             4
-        } else if tvp_sorted.len() > 16 && !is_short {
+        } else if validators_sorted.len() > 16 && !is_short {
             16
         } else {
-            tvp_sorted.len()
+            validators_sorted.len()
         };
 
         if is_short {
@@ -1413,13 +1492,13 @@ fn top_performers_report<'a>(
         }
         report.add_break();
 
-        for v in &tvp_sorted[..max] {
+        for v in &validators_sorted[..max] {
             report.add_raw_text(format!(
                 "* {} ({}, {:.2}%, {}x)",
                 v.name,
-                v.avg_para_points.unwrap(),
+                v.avg_para_points,
                 v.missed_ratio.unwrap() * 100.0,
-                v.para_epochs.len()
+                v.para_epochs
             ));
         }
 
@@ -1430,46 +1509,47 @@ fn top_performers_report<'a>(
     report
 }
 
-#[allow(dead_code)]
-fn low_performers_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a Report {
-    // Sort validators by missed ratio higher than 0.75 that were p/v at least 2 times in the last era
-    let mut tvp_sorted = data
-        .validators
-        .iter()
-        .filter(|v| {
-            v.flagged_epochs.len() >= 1
-                && v.para_epochs.len() >= 2
-                && v.missed_ratio.unwrap() > 0.75_f64
-                && v.total_eras >= 1
-        })
-        .collect::<Vec<&Validator>>();
+// DEPRECATED
+// #[allow(dead_code)]
+// fn low_performers_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a Report {
+//     // Sort validators by missed ratio higher than 0.75 that were p/v at least 2 times in the last era
+//     let mut tvp_sorted = data
+//         .validators
+//         .iter()
+//         .filter(|v| {
+//             v.flagged_epochs.len() >= 1
+//                 && v.para_epochs.len() >= 2
+//                 && v.missed_ratio.unwrap() > 0.75_f64
+//                 && v.total_eras >= 1
+//         })
+//         .collect::<Vec<&Validator>>();
 
-    // Descending order
-    tvp_sorted.sort_by(|a, b| {
-        b.missed_ratio
-            .unwrap()
-            .partial_cmp(&a.missed_ratio.unwrap())
-            .unwrap()
-    });
+//     // Descending order
+//     tvp_sorted.sort_by(|a, b| {
+//         b.missed_ratio
+//             .unwrap()
+//             .partial_cmp(&a.missed_ratio.unwrap())
+//             .unwrap()
+//     });
 
-    if tvp_sorted.len() > 0 {
-        report.add_raw_text(format!("🚨 Validators that missed more than 75% of votes in the previous era when selected as para-validator for at least 2 epochs:"));
-        report.add_raw_text(format!("<i>legend: validator (avg. points, number of epochs selected as para-validator, missed votes percentage)</i>"));
-        report.add_break();
-        for v in tvp_sorted.iter() {
-            report.add_raw_text(format!(
-                "* <del>{}</del> ({}, {}x, {:.2}%)",
-                v.name,
-                v.total_points / v.total_eras,
-                v.para_epochs.len(),
-                v.missed_ratio.unwrap() * 100.0,
-            ));
-        }
+//     if tvp_sorted.len() > 0 {
+//         report.add_raw_text(format!("🚨 Validators that missed more than 75% of votes in the previous era when selected as para-validator for at least 2 epochs:"));
+//         report.add_raw_text(format!("<i>legend: validator (avg. points, number of epochs selected as para-validator, missed votes percentage)</i>"));
+//         report.add_break();
+//         for v in tvp_sorted.iter() {
+//             report.add_raw_text(format!(
+//                 "* <del>{}</del> ({}, {}x, {:.2}%)",
+//                 v.name,
+//                 v.total_points / v.total_eras,
+//                 v.para_epochs.len(),
+//                 v.missed_ratio.unwrap() * 100.0,
+//             ));
+//         }
 
-        report.add_break();
-    }
-    report
-}
+//         report.add_break();
+//     }
+//     report
+// }
 
 fn trend(a: f64, b: f64) -> String {
     if a > b {
@@ -1607,6 +1687,21 @@ fn slice(name: &str, maximum_length: usize) -> String {
         maximum_length
     };
     String::from(&name[..cut])
+}
+
+pub fn grade(ratio: f64) -> String {
+    let p = (ratio * 100.0).round() as u32;
+    match p {
+        90..=100 => "A+".to_string(),
+        80..=89 => "A".to_string(),
+        70..=79 => "B+".to_string(),
+        60..=69 => "B".to_string(),
+        55..=59 => "C+".to_string(),
+        50..=54 => "C".to_string(),
+        45..=49 => "D+".to_string(),
+        40..=44 => "D".to_string(),
+        _ => "F".to_string(),
+    }
 }
 
 #[cfg(test)]

@@ -29,7 +29,7 @@ use crate::onet::{
 };
 use crate::records::{
     decode_authority_index, AuthorityIndex, AuthorityRecord, EpochIndex, EpochKey, EraIndex,
-    ParaId, ParaRecord, ParaStats, Points, Records, Subscribers,
+    ParaId, ParaRecord, ParaStats, Records, Subscribers, Votes,
 };
 use crate::report::{
     Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara, RawDataParachains, RawDataRank,
@@ -290,9 +290,6 @@ pub async fn switch_new_session(
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
 
-    // Flag validators with poor performance in previous epoch
-    flag_validators_with_poor_performance(records.current_era(), records.current_epoch(), records)?;
-
     // keep previous era in context
     let previous_era_index = records.current_era().clone();
 
@@ -522,7 +519,8 @@ pub async fn run_val_perf_report(
     }
 
     // Populate some maps to get ranks
-    let mut group_authorities_map: BTreeMap<u32, Vec<AuthorityRecord>> = BTreeMap::new();
+    let mut group_authorities_map: BTreeMap<u32, Vec<(AuthorityRecord, ParaRecord)>> =
+        BTreeMap::new();
 
     if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
         for authority_idx in authorities.iter() {
@@ -535,8 +533,8 @@ pub async fn run_val_perf_report(
                         Some(EpochKey(era_index, epoch_index)),
                     ) {
                         let auths = group_authorities_map.entry(group_idx).or_insert(Vec::new());
-                        auths.push(authority_record.clone());
-                        auths.sort_by(|a, b| b.points().cmp(&a.points()));
+                        auths.push((authority_record.clone(), para_record.clone()));
+                        auths.sort_by(|(_, a), (_, b)| b.total_votes().cmp(&a.total_votes()));
                     }
                 }
             }
@@ -547,9 +545,9 @@ pub async fn run_val_perf_report(
     let mut group_authorities_sorted = Vec::from_iter(group_authorities_map);
     group_authorities_sorted.sort_by(|(_, a), (_, b)| {
         b.iter()
-            .map(|x| x.points())
-            .sum::<Points>()
-            .cmp(&a.iter().map(|x| x.points()).sum::<Points>())
+            .map(|x| x.1.total_votes())
+            .sum::<Votes>()
+            .cmp(&a.iter().map(|x| x.1.total_votes()).sum::<Votes>())
     });
 
     // Prepare data for each validator subscriber
@@ -590,7 +588,7 @@ pub async fn run_val_perf_report(
                             data.group_rank = Some(group_rank.clone());
                             // Get para validator rank
                             let (_, authorities) = &group_authorities_sorted[group_rank];
-                            if let Some(validator_rank) = authorities.iter().position(|a| {
+                            if let Some(validator_rank) = authorities.iter().position(|(a, _)| {
                                 a.authority_index() == authority_record.authority_index()
                             }) {
                                 data.para_validator_rank = Some((group_rank * 5) + validator_rank);
@@ -641,30 +639,6 @@ pub async fn run_val_perf_report(
     Ok(())
 }
 
-// Poor performance validators are the ones who missed more than 50%
-pub fn flag_validators_with_poor_performance(
-    era_index: EraIndex,
-    epoch_index: EpochIndex,
-    records: &mut Records,
-) -> Result<(), OnetError> {
-    if let Some(authorities) = records.get_para_authorities(Some(EpochKey(era_index, epoch_index)))
-    {
-        for authority_idx in authorities.iter() {
-            if let Some(para_record) =
-                records.get_para_record(*authority_idx, Some(EpochKey(era_index, epoch_index)))
-            {
-                if para_record.missed_votes_ratio() > 0.5 {
-                    records.flag_authority(authority_idx.clone(), EpochKey(era_index, epoch_index));
-                }
-            }
-        }
-    }
-
-    debug!("records {:?}", records);
-
-    Ok(())
-}
-
 pub async fn run_groups_report(
     era_index: EraIndex,
     epoch_index: EpochIndex,
@@ -690,7 +664,7 @@ pub async fn run_groups_report(
     };
 
     // Populate some maps to get ranks
-    let mut group_authorities_map: BTreeMap<u32, Vec<(AuthorityRecord, String, u32, f64)>> =
+    let mut group_authorities_map: BTreeMap<u32, Vec<(AuthorityRecord, ParaRecord, String)>> =
         BTreeMap::new();
 
     if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
@@ -703,25 +677,14 @@ pub async fn run_groups_report(
                         *authority_idx,
                         Some(EpochKey(era_index, epoch_index)),
                     ) {
-                        // collect core_assignments
-                        let core_assignments: u32 = para_record.total_core_assignments();
-
-                        // collect missed_votes_ratio
-                        let missed_votes_ratio: f64 = para_record.missed_votes_ratio();
-
                         // get validator name
                         let name =
                             get_display_name(&onet, &authority_record.address(), None).await?;
 
                         //
                         let auths = group_authorities_map.entry(group_idx).or_insert(Vec::new());
-                        auths.push((
-                            authority_record.clone(),
-                            name,
-                            core_assignments,
-                            missed_votes_ratio,
-                        ));
-                        auths.sort_by(|(a, _, _, _), (b, _, _, _)| b.points().cmp(&a.points()));
+                        auths.push((authority_record.clone(), para_record.clone(), name));
+                        auths.sort_by(|(_, a, _), (_, b, _)| b.total_votes().cmp(&a.total_votes()));
                     }
                 }
             }
@@ -732,9 +695,9 @@ pub async fn run_groups_report(
     let mut group_authorities_sorted = Vec::from_iter(group_authorities_map);
     group_authorities_sorted.sort_by(|(_, a), (_, b)| {
         b.iter()
-            .map(|x| x.0.points())
-            .sum::<Points>()
-            .cmp(&a.iter().map(|x| x.0.points()).sum::<Points>())
+            .map(|x| x.1.total_votes())
+            .sum::<Votes>()
+            .cmp(&a.iter().map(|x| x.1.total_votes()).sum::<Votes>())
     });
 
     let data = RawDataGroup {
@@ -800,7 +763,9 @@ pub async fn run_parachains_report(
                     let s = parachains_map
                         .entry(*para_id)
                         .or_insert(ParaStats::default());
-                    s.points += stats.points();
+                    s.implicit_votes += stats.implicit_votes();
+                    s.explicit_votes += stats.explicit_votes();
+                    s.missed_votes += stats.missed_votes();
                     s.core_assignments += stats.core_assignments();
                     s.authored_blocks += stats.authored_blocks();
                 }
@@ -810,7 +775,7 @@ pub async fn run_parachains_report(
 
     // Convert map to vec and sort group by points
     let mut parachains_sorted = Vec::from_iter(parachains_map);
-    parachains_sorted.sort_by(|(_, a), (_, b)| b.points().cmp(&a.points()));
+    parachains_sorted.sort_by(|(_, a), (_, b)| b.para_points().cmp(&a.para_points()));
 
     let data = RawDataParachains {
         network: network.clone(),
@@ -926,32 +891,44 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         v.active_last_era =
             records.is_active_at(&stash, active_era_index - 1, current_session_index - 1);
 
-        // Get flagged epochs from previous era
-        let mut flagged_epochs =
-            records.get_flagged_epochs(&stash, active_era_index - 1, current_session_index - 6);
-        v.flagged_epochs.append(&mut flagged_epochs);
-
-        // Get para epochs and missed blocks from previous era
+        // Get missed_ratio from previous era
         v.last_missed_ratio = records.get_missed_votes_ratio_for_previous_era(&stash);
-        // Get very low performant nodes identity
-        // if v.last_missed_ratio > 0.75 && v.name.is_empty() {
-        //     v.name = get_display_name(&onet, &stash, None).await?;
-        // }
 
         // Get performance data from all full eras
-        if let Some((mut status_pattern, para_data)) =
-            records.get_performance_data_for_all_records(&stash)
+        if let Some(((mut pattern, authored_blocks), para_data)) =
+            records.get_data_for_all_records(&stash)
         {
-            v.status_pattern.append(&mut status_pattern);
-            if let Some((mut para_epochs, para_points, votes, missed_votes)) = para_data {
-                v.para_epochs.append(&mut para_epochs);
-                v.votes = Some(votes);
-                v.missed_votes = Some(missed_votes);
-                if votes + missed_votes > 0 {
-                    v.missed_ratio = Some(missed_votes as f64 / (votes + missed_votes) as f64);
+            v.pattern.append(&mut pattern);
+            v.authored_blocks = authored_blocks;
+            if let Some((
+                epochs,
+                para_epochs,
+                explicit_votes,
+                implicit_votes,
+                missed_votes,
+                core_assignments,
+            )) = para_data
+            {
+                v.epochs = epochs;
+                v.para_epochs = para_epochs;
+                v.explicit_votes = explicit_votes;
+                v.implicit_votes = implicit_votes;
+                v.missed_votes = missed_votes;
+                v.core_assignments = core_assignments;
+                if explicit_votes + implicit_votes + missed_votes > 0 {
+                    v.missed_ratio = Some(
+                        missed_votes as f64
+                            / (explicit_votes + implicit_votes + missed_votes) as f64,
+                    );
                 }
-                if para_epochs.len() > 0 {
-                    v.avg_para_points = Some(para_points / para_epochs.len() as u32);
+                if epochs > 0 {
+                    let para_points = (explicit_votes + implicit_votes) * 20;
+                    let total_points = para_points + (authored_blocks * 20);
+                    v.avg_points = total_points / epochs;
+                    if para_epochs > 0 {
+                        let para_points = (explicit_votes + implicit_votes) * 20;
+                        v.avg_para_points = para_points / para_epochs;
+                    }
                 }
             }
         }
@@ -1014,18 +991,21 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
     // Set era/session details
     let start_era = active_era_index - (1 * records.total_full_eras());
+    let start_epoch = current_session_index - (6 * records.total_full_eras());
     let start_block = records
         .start_block(EpochKey(
             start_era,
             current_session_index - (6 * records.total_full_eras()),
         ))
         .unwrap_or(&0);
+
     let end_era = active_era_index - 1;
+    let end_epoch = current_session_index - 1;
     let end_block = records
         .end_block(EpochKey(end_era, current_session_index - 1))
         .unwrap_or(&0);
     let metadata = Metadata {
-        eras_interval: Some((start_era, end_era)),
+        interval: Some(((start_era, start_epoch), (end_era, end_epoch))),
         blocks_interval: Some((*start_block, *end_block)),
         ..Default::default()
     };

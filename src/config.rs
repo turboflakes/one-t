@@ -82,6 +82,21 @@ fn default_matrix_callout_epoch_rate() -> u32 {
     6
 }
 
+/// provides default value for mvr_level_1 if ONET_MVR_LEVEL_1 env var is not set
+/// example: 20% = 2000
+fn default_mvr_level_1() -> u32 {
+    2000
+}
+fn default_mvr_level_2() -> u32 {
+    4000
+}
+fn default_mvr_level_3() -> u32 {
+    6000
+}
+fn default_mvr_level_4() -> u32 {
+    8000
+}
+
 #[derive(Clone, Deserialize, Debug)]
 pub struct Config {
     #[serde(default = "default_chain_name")]
@@ -99,6 +114,14 @@ pub struct Config {
     pub maximum_history_eras: u32,
     #[serde(default = "default_maximum_reports")]
     pub maximum_reports: u32,
+    #[serde(default = "default_mvr_level_1")]
+    pub mvr_level_1: u32,
+    #[serde(default = "default_mvr_level_2")]
+    pub mvr_level_2: u32,
+    #[serde(default = "default_mvr_level_3")]
+    pub mvr_level_3: u32,
+    #[serde(default = "default_mvr_level_4")]
+    pub mvr_level_4: u32,
     #[serde(default)]
     pub is_debug: bool,
     // matrix configuration

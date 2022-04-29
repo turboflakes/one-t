@@ -41,12 +41,17 @@ pub type ParaIndex = u32;
 pub type ParaId = u32;
 pub type Points = u32;
 pub type AuthoredBlocks = u32;
+pub type TotalEpochs = u32;
+pub type TotalParaEpochs = u32;
 pub type Votes = u32;
+pub type ExplicitVotes = u32;
+pub type ImplicitVotes = u32;
 pub type MissedVotes = u32;
-pub type ParaEpochs = Vec<EpochIndex>;
-pub type ValidatorStatusPattern = Vec<ValidatorStatus>;
-pub type FlaggedEpochs = Vec<EpochIndex>;
+pub type CoreAssignments = u32;
 pub type Ratio = f64;
+pub type ParaEpochs = Vec<EpochIndex>;
+pub type Pattern = Vec<Glyph>;
+pub type FlaggedEpochs = Vec<EpochIndex>;
 // pub type RecordKey = String;
 pub type SS58 = String;
 
@@ -66,13 +71,58 @@ enum BlockKind {
     End,
 }
 
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub enum ValidatorStatus {
+#[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd)]
+pub enum Glyph {
     Waiting,
     Active,
-    ActivePV,
-    ActivePVLow,
-    ActivePVIdle,
+    ActivePVL0,
+    ActivePVL1,
+    ActivePVL2,
+    ActivePVL3,
+    ActivePVL4,
+    ActivePVidle,
+    NA,
+}
+
+impl Glyph {
+    pub fn from_mvr(ratio: Ratio) -> Self {
+        let config = CONFIG.clone();
+        let rounded: Option<u32> = Some((ratio * 10000.0).round() as u32);
+        match rounded {
+            Some(r) if r > config.mvr_level_4 => Glyph::ActivePVL4,
+            Some(r) if r > config.mvr_level_3 => Glyph::ActivePVL3,
+            Some(r) if r > config.mvr_level_2 => Glyph::ActivePVL2,
+            Some(r) if r > config.mvr_level_1 => Glyph::ActivePVL1,
+            _ => Glyph::ActivePVL0,
+        }
+    }
+
+    pub fn level(&self) -> String {
+        match self {
+            Self::ActivePVL0 => "Excellent".to_string(),
+            Self::ActivePVL1 => "Very Good".to_string(),
+            Self::ActivePVL2 => "Good".to_string(),
+            Self::ActivePVL3 => "Low".to_string(),
+            Self::ActivePVL4 => "Very Low".to_string(),
+            _ => "NA".to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for Glyph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Waiting => write!(f, "_"),
+            Self::Active => write!(f, "•"),
+            Self::ActivePVL0 => write!(f, "❚"),
+            Self::ActivePVL1 => write!(f, "❙"),
+            Self::ActivePVL2 => write!(f, "❘"),
+            Self::ActivePVL3 => write!(f, "!"),
+            Self::ActivePVL4 => write!(f, "¿"),
+            Self::ActivePVidle => write!(f, "?"),
+            Self::NA => write!(f, ""),
+        }
+    }
 }
 
 pub fn decode_authority_index(chain_block: &ChainBlock<DefaultConfig>) -> Option<AuthorityIndex> {
@@ -102,7 +152,6 @@ pub struct Records {
     initial_epoch_recorded: EpochIndex,
     blocks: HashMap<BlockKey, BlockNumber>,
     authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
-    authorities_flagged: HashMap<EpochKey, HashSet<AuthorityIndex>>,
     addresses: HashMap<AddressKey, AuthorityIndex>,
     authority_records: HashMap<RecordKey, AuthorityRecord>,
     para_authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
@@ -126,7 +175,6 @@ impl Records {
             initial_epoch_recorded: current_epoch,
             blocks,
             authorities: HashMap::new(),
-            authorities_flagged: HashMap::new(),
             addresses: HashMap::new(),
             authority_records: HashMap::new(),
             para_authorities: HashMap::new(),
@@ -203,51 +251,7 @@ impl Records {
         );
     }
 
-    // pub fn set_authority_missed_votes(&mut self, index: AuthorityIndex, missed_votes: Votes) {
-    //     if let Some(authority_record) = self.get_mut_authority_record(index) {
-    //         authority_record.inc_missed_votes_by(Some(missed_votes));
-    //     }
-    // }
-
-    pub fn flag_authority(&mut self, index_flagged: AuthorityIndex, key: EpochKey) {
-        if let Some(authorities) = self.authorities_flagged.get_mut(&key) {
-            authorities.insert(index_flagged);
-        } else {
-            self.authorities_flagged
-                .insert(key, HashSet::from([index_flagged]));
-        }
-        if let Some(authority_record) = self.get_mut_authority_record(index_flagged) {
-            authority_record.flag();
-        }
-    }
-
-    pub fn get_flagged_epochs(
-        &self,
-        address: &AccountId32,
-        era_index: EraIndex,
-        epoch_index_0: EpochIndex,
-    ) -> FlaggedEpochs {
-        let mut flagged_epochs: FlaggedEpochs = Vec::new();
-
-        for i in 0..6 {
-            let epoch_index = epoch_index_0 + i as u32;
-            let key = EpochKey(era_index, epoch_index);
-            if let Some(auth_idx) = self
-                .addresses
-                .get(&AddressKey(key.clone(), address.to_string()))
-            {
-                if let Some(flagged_authorities) = self.authorities_flagged.get(&key) {
-                    if flagged_authorities.contains(auth_idx) {
-                        flagged_epochs.push(epoch_index);
-                    }
-                }
-            }
-        }
-        flagged_epochs
-    }
-
     pub fn get_missed_votes_ratio_for_previous_era(&self, address: &AccountId32) -> Option<f64> {
-        let mut para_epochs: ParaEpochs = Vec::new();
         let mut votes: Votes = 0;
         let mut missed_votes: Votes = 0;
         let era_index = self.current_era() - 1;
@@ -263,7 +267,6 @@ impl Records {
                     .para_records
                     .get(&RecordKey(key.clone(), auth_idx.clone()))
                 {
-                    para_epochs.push(epoch_index);
                     votes +=
                         para_record.total_implicit_votes() + para_record.total_explicit_votes();
                     missed_votes += para_record.total_missed_votes();
@@ -279,22 +282,32 @@ impl Records {
         }
     }
 
-    pub fn get_performance_data_for_all_records(
+    pub fn get_data_for_all_records(
         &self,
         address: &AccountId32,
     ) -> Option<(
-        ValidatorStatusPattern,
-        Option<(ParaEpochs, Points, Votes, MissedVotes)>,
+        (Pattern, AuthoredBlocks),
+        Option<(
+            TotalEpochs,
+            TotalParaEpochs,
+            ExplicitVotes,
+            ImplicitVotes,
+            MissedVotes,
+            CoreAssignments,
+        )>,
     )> {
         // Do not get any data if era is not fully completed
         if self.total_full_eras() == 0 {
             return None;
         }
-        let mut pattern: ValidatorStatusPattern = Vec::new();
-        let mut para_epochs: ParaEpochs = Vec::new();
-        let mut para_points: Points = 0;
-        let mut votes: Votes = 0;
+        let mut pattern: Pattern = Vec::new();
+        let mut epochs: TotalEpochs = 0;
+        let mut para_epochs: TotalParaEpochs = 0;
+        let mut authored_blocks: AuthoredBlocks = 0;
+        let mut explicit_votes: Votes = 0;
+        let mut implicit_votes: Votes = 0;
         let mut missed_votes: Votes = 0;
+        let mut core_assignments: CoreAssignments = 0;
         let eras = self.total_full_eras();
         let era_index_0 = self.current_era() - (1 * eras);
         let mut epoch_index = self.current_epoch() - (6 * eras);
@@ -307,48 +320,52 @@ impl Records {
                     .addresses
                     .get(&AddressKey(key.clone(), address.to_string()))
                 {
+                    epochs += 1;
                     if let Some(para_record) = self
                         .para_records
                         .get(&RecordKey(key.clone(), auth_idx.clone()))
                     {
-                        para_epochs.push(epoch_index);
-                        votes +=
-                            para_record.total_implicit_votes() + para_record.total_explicit_votes();
+                        para_epochs += 1;
+                        explicit_votes += para_record.total_explicit_votes();
+                        implicit_votes += para_record.total_implicit_votes();
                         missed_votes += para_record.total_missed_votes();
+                        core_assignments += para_record.total_core_assignments();
 
-                        if votes + missed_votes > 0 {
-                            let missed_ratio = missed_votes as f64 / (votes + missed_votes) as f64;
-                            if missed_ratio > 0.5 {
-                                pattern.push(ValidatorStatus::ActivePVLow);
-                            } else {
-                                pattern.push(ValidatorStatus::ActivePV);
-                            }
+                        if let Some(ratio) = para_record.missed_votes_ratio() {
+                            pattern.push(Glyph::from_mvr(ratio));
                         } else {
-                            pattern.push(ValidatorStatus::ActivePVIdle);
-                        }
-                        // get para points from authority record
-                        if let Some(authority_record) = self
-                            .authority_records
-                            .get(&RecordKey(key.clone(), auth_idx.clone()))
-                        {
-                            para_points += authority_record.para_points();
+                            pattern.push(Glyph::ActivePVidle);
                         }
                     } else {
-                        pattern.push(ValidatorStatus::Active);
+                        pattern.push(Glyph::Active);
+                    }
+                    // get authored blocks
+                    if let Some(authority_record) = self
+                        .authority_records
+                        .get(&RecordKey(key.clone(), auth_idx.clone()))
+                    {
+                        authored_blocks += authority_record.authored_blocks();
                     }
                 } else {
-                    pattern.push(ValidatorStatus::Waiting);
+                    pattern.push(Glyph::Waiting);
                 }
                 epoch_index += 1;
             }
         }
-        if votes + missed_votes > 0 {
+        if explicit_votes + implicit_votes + missed_votes > 0 {
             Some((
-                pattern,
-                Some((para_epochs, para_points, votes, missed_votes)),
+                (pattern, authored_blocks),
+                Some((
+                    epochs,
+                    para_epochs,
+                    explicit_votes,
+                    implicit_votes,
+                    missed_votes,
+                    core_assignments,
+                )),
             ))
         } else {
-            Some((pattern, None))
+            Some(((pattern, authored_blocks), None))
         }
     }
 
@@ -618,13 +635,6 @@ impl Records {
         if self.para_authorities.remove(&epoch_key.clone()).is_some() {
             counter += 1;
         }
-        if self
-            .authorities_flagged
-            .remove(&epoch_key.clone())
-            .is_some()
-        {
-            counter += 1;
-        }
         info!("Removed {} keys from records for {:?}", counter, epoch_key);
     }
 }
@@ -851,17 +861,30 @@ impl ParaRecord {
             .sum()
     }
 
-    pub fn missed_votes_ratio(&self) -> Ratio {
-        let total_missed_votes = self.total_missed_votes();
-        total_missed_votes as f64
-            / (total_missed_votes + self.total_implicit_votes() + self.total_explicit_votes())
-                as f64
+    pub fn total_votes(&self) -> Votes {
+        self.total_implicit_votes() + self.total_explicit_votes()
     }
 
-    pub fn total_core_assignments(&self) -> Votes {
+    pub fn missed_votes_ratio(&self) -> Option<Ratio> {
+        let total_missed_votes = self.total_missed_votes();
+        let total_votes =
+            total_missed_votes + self.total_implicit_votes() + self.total_explicit_votes();
+        if total_votes == 0 {
+            return None;
+        } else {
+            // calculate ratio
+            let ratio = total_missed_votes as f64
+                / (total_missed_votes + self.total_implicit_votes() + self.total_explicit_votes())
+                    as f64;
+
+            return Some(ratio);
+        }
+    }
+
+    pub fn total_core_assignments(&self) -> CoreAssignments {
         self.para_stats
             .iter()
-            .map(|(_, stats)| stats.explicit_votes)
+            .map(|(_, stats)| stats.core_assignments)
             .sum()
     }
 
@@ -885,13 +908,15 @@ pub struct ParaStats {
 }
 
 impl ParaStats {
-    pub fn points(&self) -> Points {
-        self.points
-    }
+    // DEPRECATED
+    // pub fn points(&self) -> Points {
+    //     self.points
+    // }
 
-    pub fn para_points(&self) -> Points {
-        self.points - (self.authored_blocks * 20)
-    }
+    // DEPRECATED
+    // pub fn para_points(&self) -> Points {
+    //     self.points - (self.authored_blocks * 20)
+    // }
 
     pub fn core_assignments(&self) -> u32 {
         self.core_assignments
@@ -899,6 +924,30 @@ impl ParaStats {
 
     pub fn authored_blocks(&self) -> AuthoredBlocks {
         self.authored_blocks
+    }
+
+    pub fn explicit_votes(&self) -> Votes {
+        self.explicit_votes
+    }
+
+    pub fn implicit_votes(&self) -> Votes {
+        self.implicit_votes
+    }
+
+    pub fn total_votes(&self) -> Votes {
+        self.explicit_votes + self.implicit_votes
+    }
+
+    pub fn missed_votes(&self) -> Votes {
+        self.missed_votes
+    }
+
+    pub fn para_points(&self) -> Points {
+        self.total_votes() * 20
+    }
+
+    pub fn total_points(&self) -> Points {
+        self.para_points() + (self.authored_blocks * 20)
     }
 }
 
@@ -1082,19 +1131,19 @@ mod tests {
             assert_eq!(pr.get_para_id_stats(1001).is_some(), true);
             assert_eq!(pr.get_para_id_stats(1002).is_none(), true);
             if let Some(stats) = pr.get_para_id_stats(1001) {
-                assert_eq!(stats.points(), 1600);
+                // assert_eq!(stats.points(), 1600);
                 assert_eq!(stats.core_assignments(), 1);
                 assert_eq!(stats.authored_blocks(), 1);
             }
             pr.update(4, 1001, 10, false);
             if let Some(stats) = pr.get_para_id_stats(1001) {
-                assert_eq!(stats.points(), 1610);
+                // assert_eq!(stats.points(), 1610);
                 assert_eq!(stats.core_assignments(), 2);
                 assert_eq!(stats.authored_blocks(), 1);
             }
             pr.update(5, 1020, 100, false);
             if let Some(stats) = pr.get_para_id_stats(1020) {
-                assert_eq!(stats.points(), 100);
+                // assert_eq!(stats.points(), 100);
                 assert_eq!(stats.core_assignments(), 1);
                 assert_eq!(stats.authored_blocks(), 0);
             }
