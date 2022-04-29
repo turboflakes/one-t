@@ -576,13 +576,13 @@ impl From<RawDataParachains> for Report {
         let mut clode_block = String::from("<pre><code>");
 
         clode_block.push_str(&format!(
-            "{:<6}{:<10}{:>6}{:>6}{:>6}{:>6}{:>6}{:>8}{:>8}\n",
+            "{:<5}{:<10}{:>4}{:>6}{:>6}{:>6}{:>6}{:>8}{:>8}\n",
             "", "PARACHAIN", "❒", "↻", "✓i", "✓e", "✗", "PPTS", "TPTS"
         ));
 
         for (i, (para_id, stats)) in data.parachains.iter().enumerate() {
             clode_block.push_str(&format!(
-                "{:<6}{:<9}{:>4}{:>4}{:>6}{:>6}{:>6}{:>8}{:>8}\n",
+                "{:<5}{:<10}{:>4}{:>6}{:>6}{:>6}{:>6}{:>8}{:>8}\n",
                 format!("{}.", i + 1),
                 para_id,
                 stats.authored_blocks(),
