@@ -22,8 +22,7 @@ use crate::config::CONFIG;
 use crate::errors::OnetError;
 use crate::onet::ReportType;
 use crate::records::{
-    AuthorityIndex, AuthorityRecord, EpochIndex, ParaId, ParaRecord, ParaStats, Pattern,
-    Points,
+    AuthorityIndex, AuthorityRecord, EpochIndex, ParaId, ParaRecord, ParaStats, Pattern, Points,
 };
 use log::info;
 use rand::Rng;
@@ -423,7 +422,7 @@ impl From<RawDataGroup> for Report {
     /// Converts a ONE-T `RawData` into a [`Report`].
     fn from(data: RawDataGroup) -> Report {
         let mut report = Report::new();
-        
+
         // Skip the full report if it's the initial record since the epoch is not fully recorded
         if data.is_first_record {
             report.add_raw_text(format!(
@@ -660,11 +659,7 @@ impl From<RawDataPara> for Report {
                 data.validator.stash,
                 data.validator.name
             ));
-            // report.add_raw_text(format!(
-            //     "‣ 📦 Authored blocks: {}",
-            //     authority_record.authored_blocks(),
-            // ));
-            // report.add_raw_text(format!("‣ 🎲 Points: {}", authority_record.points()));
+
             if let Some(para_record) = data.para_record {
                 // Find position rank
                 let mut v = Vec::<(AuthorityIndex, Points)>::new();
@@ -676,15 +671,20 @@ impl From<RawDataPara> for Report {
                     v.push((*peer.1.authority_index(), peer.1.points()));
                 }
 
-                // Print Ranks
+                // Print Grade
+                if let Some(mvr) = para_record.missed_votes_ratio() {
+                    report.add_raw_text(format!("🎓 Grade: {}", grade(1.0_f64 - mvr)));
+                }
+                report.add_break();
+                // Print Rankings
+                report.add_raw_text(format!("<i>Rankings</i>"));
                 report.add_raw_text(format!(
-                    "‣ 🪂 Para Val. Rank: {}//200 {}",
+                    "✨ All Stars: {} // 200 {}",
                     data.para_validator_rank.unwrap_or_default() + 1,
                     position_emoji(data.para_validator_rank.unwrap_or_default())
                 ));
                 report.add_raw_text(format!(
-                    "‣ 🤝 Val. Group {} Rank: {}//40 {}",
-                    para_record.group().unwrap_or_default(),
+                    "🏀 Groups: {} // 40 {}",
                     data.group_rank.unwrap_or_default() + 1,
                     position_emoji(data.group_rank.unwrap_or_default())
                 ));
@@ -700,10 +700,11 @@ impl From<RawDataPara> for Report {
                     position_emoji(para_validator_group_rank.unwrap_or_default())
                 };
                 report.add_raw_text(format!(
-                    "‣ 🎓 Para Val. Group Rank: {}//5 {}",
+                    "⛹️ Sole: {} // 5 {}",
                     para_validator_group_rank.unwrap_or_default() + 1,
                     emoji
                 ));
+                report.add_break();
 
                 // Print breakdown points
                 let mut clode_block = String::from("<pre><code>");
@@ -804,18 +805,18 @@ impl From<RawDataPara> for Report {
                 clode_block.push_str("\nPARACHAINS VOTES BREAKDOWN\n");
                 // Print out parachains breakdown
                 clode_block.push_str(&format!(
-                    "{:<9}{:^12}{:^12}{:^12}{:^12}{:^12}\n",
-                    "", "*", "A", "B", "C", "D",
+                    "{:<9}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}\n",
+                    "", "*", "*", "A", "A", "B", "B", "C", "C", "D", "D",
                 ));
                 clode_block.push_str(&format!(
-                    "{:<6}{:^3}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}\n",
+                    "{:<6}{:>3}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}\n",
                     "#", "↻", "✓", "✗", "✓", "✗", "✓", "✗", "✓", "✗", "✓", "✗",
                 ));
                 for para_id in data.parachains.iter() {
                     // Print out votes per para id
                     if let Some(stats) = para_record.get_para_id_stats(*para_id) {
                         let mut line: String = format!(
-                            "{:<6}{:^3}{:>5}{:>5}",
+                            "{:<6}{:>3}{:>5}{:>5}",
                             para_id,
                             stats.core_assignments(),
                             stats.total_votes(),
