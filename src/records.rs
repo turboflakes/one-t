@@ -1040,7 +1040,7 @@ mod tests {
         assert_eq!(ar.authored_blocks(), 2);
 
         let pr = ParaRecord::with_index_group_and_peers(1, 2, vec![456, 789]);
-        assert_eq!(pr.para_index(), 1);
+        assert_eq!(pr.para_index(), &1);
         assert_eq!(pr.group(), Some(2));
         assert_eq!(pr.peers(), vec![456, 789]);
 

@@ -431,7 +431,7 @@ pub async fn track_records(
                                         para_id, group_authorities
                                     );
 
-                                    if let Some((ValidatorIndex(para_idx), vote)) =
+                                    if let Some((_, vote)) =
                                         group_authorities.iter().find(
                                             |(ValidatorIndex(para_idx), _)| {
                                                 para_idx == para_record.para_index()

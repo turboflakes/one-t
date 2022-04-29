@@ -431,7 +431,7 @@ pub async fn track_records(
                                         para_id, group_authorities
                                     );
 
-                                    if let Some((ValidatorIndex(para_idx), vote)) =
+                                    if let Some((_, vote)) =
                                         group_authorities.iter().find(
                                             |(ValidatorIndex(para_idx), _)| {
                                                 para_idx == para_record.para_index()
@@ -675,8 +675,6 @@ pub fn flag_validators_with_poor_performance(
         // Get the maximum_para_points from the authorities in the val. group
         if let Some(maximum_points) = authorities.iter().map(|a| a.para_points()).max() {
             for authority_record in authorities.iter() {
-                let missed_votes = (maximum_points - authority_record.para_points()) / 20;
-
                 // Flag authorities with less than 50% points of the top authority
                 if (authority_record.para_points() as f64 / maximum_points as f64) < 0.5 {
                     records.flag_authority(
