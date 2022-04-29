@@ -463,7 +463,7 @@ impl From<RawDataGroup> for Report {
 
         for (i, group) in data.groups.iter().enumerate() {
             clode_block.push_str(&format!(
-                "{:<24}{:>4}{:>4}{:>4}{:>4}{:>3}{:>8}{:>6}{:>4}{:>6}\n",
+                "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>6}{:>6}\n",
                 format!("{}. VAL_GROUP_{}", i + 1, group.0),
                 "❒",
                 "↻",
@@ -483,7 +483,7 @@ impl From<RawDataGroup> for Report {
                     let total_points = (authority_record.authored_blocks() * 20) + para_points;
 
                     clode_block.push_str(&format!(
-                        "{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>4}{:>6}\n",
+                        "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>6}{:>6}\n",
                         slice(&replace_emoji(&val_name, "_"), 24),
                         authority_record.authored_blocks(),
                         para_record.total_core_assignments(),
@@ -497,7 +497,7 @@ impl From<RawDataGroup> for Report {
                     ));
                 } else {
                     clode_block.push_str(&format!(
-                        "{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>4}{:>6}\n",
+                        "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>6}{:>6}\n",
                         slice(&replace_emoji(&val_name, "_"), 24),
                         "-",
                         "-",
