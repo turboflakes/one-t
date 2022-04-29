@@ -38,7 +38,7 @@ use crate::report::{
 
 use async_recursion::async_recursion;
 use futures::StreamExt;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::{
     collections::BTreeMap, convert::TryInto, fs, iter::FromIterator, result::Result, thread, time,
 };
@@ -54,7 +54,8 @@ use node_runtime::{
     runtime_types::{
         pallet_identity::types::Data, polkadot_parachain::primitives::Id,
         polkadot_primitives::v2::CoreIndex, polkadot_primitives::v2::GroupIndex,
-        polkadot_primitives::v2::ValidatorIndex, sp_arithmetic::per_things::Perbill,
+        polkadot_primitives::v2::ValidatorIndex, polkadot_primitives::v2::ValidityAttestation,
+        sp_arithmetic::per_things::Perbill,
     },
     session::events::NewSession,
 };
@@ -113,6 +114,9 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                 let block_number = signed_block.block.header.number;
                 info!("Finalized block #{block_number} received");
 
+                // Update records
+                track_records(&onet, authority_index, &mut records).await?;
+
                 if let Some(new_session_event) = events.find_first::<NewSession>()? {
                     info!("{:?}", new_session_event);
 
@@ -131,8 +135,6 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
                 // Update current block number
                 records.set_current_block_number(block_number.into());
-
-                track_records(&onet, authority_index, &mut records).await?;
             }
         }
     }
@@ -225,7 +227,8 @@ pub async fn initialize_records(onet: &Onet, records: &mut Records) -> Result<()
                                     .collect();
 
                                 // Define ParaRecord
-                                let para_record = ParaRecord::with_group_and_peers(
+                                let para_record = ParaRecord::with_index_group_and_peers(
+                                    *para_idx,
                                     group_idx.try_into().unwrap(),
                                     peers,
                                 );
@@ -384,6 +387,11 @@ pub async fn track_records(
     // Fetch currently scheduled cores
     let scheduled_cores = api.storage().para_scheduler().scheduled(None).await?;
 
+    // Fetch on chain votes
+    let on_chain_votes = api.storage().para_inherent().on_chain_votes(None).await?;
+
+    let current_session = records.current_epoch();
+
     if let Some(authorities) = records.get_authorities(None) {
         // Find groupIdx and peers for each authority
         for authority_idx in authorities.iter() {
@@ -407,7 +415,48 @@ pub async fn track_records(
                 let diff_points = authority_record.update_current_points(current_points);
 
                 if let Some(para_record) = records.get_mut_para_record(*authority_idx) {
-                    // Identify if groupIdx has been assigned to a core
+                    // 1st. Check if the para_id assigned to this authority got any on chain votes
+                    if let Some(ref backing_votes) = on_chain_votes {
+                        // Verify that records are in the same session as on chain votes
+                        if current_session == backing_votes.session {
+                            for (candidate_receipt, group_authorities) in
+                                backing_votes.backing_validators_per_candidate.iter()
+                            {
+                                // Destructure ParaId
+                                let Id(para_id) = candidate_receipt.descriptor.para_id;
+                                // If para id exists increment vote or missed vote
+                                if para_record.is_para_id_assigned(para_id) {
+                                    debug!(
+                                        "para_id: {} group_authorities {:?}",
+                                        para_id, group_authorities
+                                    );
+
+                                    if let Some((ValidatorIndex(para_idx), vote)) =
+                                        group_authorities.iter().find(
+                                            |(ValidatorIndex(para_idx), _)| {
+                                                para_idx == para_record.para_index()
+                                            },
+                                        )
+                                    {
+                                        match vote {
+                                            ValidityAttestation::Explicit(_) => {
+                                                para_record.inc_explicit_votes(para_id);
+                                            }
+                                            ValidityAttestation::Implicit(_) => {
+                                                para_record.inc_implicit_votes(para_id);
+                                            }
+                                        }
+                                    } else {
+                                        para_record.inc_missed_votes(para_id);
+                                    }
+
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // 2nd. Identify if groupIdx has been assigned to a core
                     if let Some(group_idx) = &para_record.group() {
                         if let Some(core_assignment) = scheduled_cores
                             .iter()
@@ -430,6 +479,8 @@ pub async fn track_records(
                             );
                         }
                     }
+
+                    debug!("para_record {:?}", para_record);
                 }
             }
         }

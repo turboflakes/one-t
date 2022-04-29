@@ -225,7 +225,8 @@ pub async fn initialize_records(onet: &Onet, records: &mut Records) -> Result<()
                                     .collect();
 
                                 // Define ParaRecord
-                                let para_record = ParaRecord::with_group_and_peers(
+                                let para_record = ParaRecord::with_index_group_and_peers(
+                                    *para_idx,
                                     group_idx.try_into().unwrap(),
                                     peers,
                                 );

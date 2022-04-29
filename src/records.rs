@@ -36,6 +36,8 @@ pub type EraIndex = u32;
 pub type EpochIndex = u32;
 pub type GroupIndex = u32;
 pub type CoreIndex = u32;
+pub type AuthorityIndex = u32;
+pub type ParaIndex = u32;
 pub type ParaId = u32;
 pub type Points = u32;
 pub type AuthoredBlocks = u32;
@@ -47,7 +49,6 @@ pub type FlaggedEpochs = Vec<EpochIndex>;
 pub type Ratio = f64;
 // pub type RecordKey = String;
 pub type SS58 = String;
-pub type AuthorityIndex = u32;
 
 // Keys to be easily used in BTreeMap
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -103,6 +104,7 @@ pub struct Records {
     authorities_flagged: HashMap<EpochKey, HashSet<AuthorityIndex>>,
     addresses: HashMap<AddressKey, AuthorityIndex>,
     authority_records: HashMap<RecordKey, AuthorityRecord>,
+    para_authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
     para_records: HashMap<RecordKey, ParaRecord>,
 }
 
@@ -126,6 +128,7 @@ impl Records {
             authorities_flagged: HashMap::new(),
             addresses: HashMap::new(),
             authority_records: HashMap::new(),
+            para_authorities: HashMap::new(),
             para_records: HashMap::new(),
         }
     }
@@ -388,6 +391,15 @@ impl Records {
 
         // Map authority_index to the ParaRecord for the current epoch
         if let Some(para_record) = para_record {
+            // Insert authority_index to the set of para_authorities for the current epoch
+            if let Some(para_authorities) = self.get_mut_para_authorities(None) {
+                para_authorities.insert(authority_index);
+            } else {
+                self.para_authorities.insert(
+                    EpochKey(self.current_era, self.current_epoch),
+                    HashSet::from([authority_index]),
+                );
+            }
             self.para_records.entry(record_key).or_insert(para_record);
         }
     }
@@ -400,6 +412,19 @@ impl Records {
         };
         if let Some(authorities) = self.authorities.get(&key) {
             Some(authorities.iter().map(|a| *a).collect())
+        } else {
+            None
+        }
+    }
+
+    pub fn get_para_authorities(&self, key: Option<EpochKey>) -> Option<Vec<AuthorityIndex>> {
+        let key = if let Some(key) = key {
+            key
+        } else {
+            EpochKey(self.current_era, self.current_epoch)
+        };
+        if let Some(para_authorities) = self.para_authorities.get(&key) {
+            Some(para_authorities.iter().map(|a| *a).collect())
         } else {
             None
         }
@@ -423,6 +448,18 @@ impl Records {
     ) -> Option<&mut AuthorityRecord> {
         let record_key = RecordKey(EpochKey(self.current_era, self.current_epoch), index);
         self.authority_records.get_mut(&record_key)
+    }
+
+    pub fn get_mut_para_authorities(
+        &mut self,
+        key: Option<EpochKey>,
+    ) -> Option<&mut HashSet<AuthorityIndex>> {
+        if let Some(key) = key {
+            self.para_authorities.get_mut(&key)
+        } else {
+            let key = EpochKey(self.current_era, self.current_epoch);
+            self.para_authorities.get_mut(&key)
+        }
     }
 
     pub fn get_mut_para_record(&mut self, index: AuthorityIndex) -> Option<&mut ParaRecord> {
@@ -508,6 +545,7 @@ impl Records {
         // authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
         // addresses: HashMap<AddressKey, AuthorityIndex>,
         // authority_records: HashMap<RecordKey, AuthorityRecord>,
+        // para_authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
         // para_records: HashMap<RecordKey, ParaRecord>,
 
         let mut counter = 0;
@@ -568,6 +606,10 @@ impl Records {
         if self.authorities.remove(&epoch_key.clone()).is_some() {
             counter += 1;
         }
+        // remove para_authorities
+        if self.para_authorities.remove(&epoch_key.clone()).is_some() {
+            counter += 1;
+        }
         if self
             .authorities_flagged
             .remove(&epoch_key.clone())
@@ -581,6 +623,7 @@ impl Records {
 
 #[derive(Debug, Clone)]
 pub struct AuthorityRecord {
+    // index is the position of the stash in session().validators(None)
     index: AuthorityIndex,
     address: AccountId32,
     start_points: Points,
@@ -695,20 +738,33 @@ impl AuthorityRecord {
 
 #[derive(Debug, Clone, Default)]
 pub struct ParaRecord {
+    // index is the position of the authority in paras_shared().active_validator_indices(None)
+    index: ParaIndex,
     group: Option<GroupIndex>,
     core: Option<CoreIndex>,
+    para_id: Option<ParaId>,
     peers: Vec<AuthorityIndex>,
     para_stats: BTreeMap<ParaId, ParaStats>,
 }
 
 impl ParaRecord {
-    pub fn with_group_and_peers(group_index: GroupIndex, peers: Vec<AuthorityIndex>) -> Self {
+    pub fn with_index_group_and_peers(
+        index: ParaIndex,
+        group_index: GroupIndex,
+        peers: Vec<AuthorityIndex>,
+    ) -> Self {
         Self {
+            index,
             group: Some(group_index),
             core: None,
+            para_id: None,
             peers,
             para_stats: BTreeMap::new(),
         }
+    }
+
+    pub fn para_index(&self) -> &ParaIndex {
+        &self.index
     }
 
     pub fn group(&self) -> Option<GroupIndex> {
@@ -717,6 +773,19 @@ impl ParaRecord {
 
     pub fn core(&self) -> Option<CoreIndex> {
         self.core
+    }
+
+    pub fn para_id(&self) -> Option<ParaId> {
+        self.para_id
+    }
+
+    pub fn is_para_id_assigned(&self, id: ParaId) -> bool {
+        if let Some(para_id) = self.para_id {
+            if para_id == id {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn peers(&self) -> Vec<AuthorityIndex> {
@@ -736,6 +805,7 @@ impl ParaRecord {
             true
         };
         self.core = Some(core);
+        self.para_id = Some(para_id);
 
         // increment current points, increment core assignments and increment authored blocks
         let stats = self
@@ -745,6 +815,33 @@ impl ParaRecord {
         stats.points += points;
         stats.core_assignments += is_different_core as u32;
         stats.authored_blocks += is_block_author as u32;
+    }
+
+    pub fn inc_explicit_votes(&mut self, para_id: ParaId) {
+        // increment current explicit_votes
+        let stats = self
+            .para_stats
+            .entry(para_id)
+            .or_insert(ParaStats::default());
+        stats.explicit_votes += 1;
+    }
+
+    pub fn inc_implicit_votes(&mut self, para_id: ParaId) {
+        // increment current explicit_votes
+        let stats = self
+            .para_stats
+            .entry(para_id)
+            .or_insert(ParaStats::default());
+        stats.implicit_votes += 1;
+    }
+
+    pub fn inc_missed_votes(&mut self, para_id: ParaId) {
+        // increment current explicit_votes
+        let stats = self
+            .para_stats
+            .entry(para_id)
+            .or_insert(ParaStats::default());
+        stats.missed_votes += 1;
     }
 
     pub fn get_para_id_stats(&self, para_id: ParaId) -> Option<&ParaStats> {
@@ -761,6 +858,9 @@ pub struct ParaStats {
     pub points: Points,
     pub core_assignments: u32,
     pub authored_blocks: AuthoredBlocks,
+    pub explicit_votes: u32,
+    pub implicit_votes: u32,
+    pub missed_votes: u32,
 }
 
 impl ParaStats {
