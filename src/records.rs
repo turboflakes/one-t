@@ -72,6 +72,7 @@ pub enum ValidatorStatus {
     Active,
     ActivePV,
     ActivePVLow,
+    ActivePVIdle,
 }
 
 pub fn decode_authority_index(chain_block: &ChainBlock<DefaultConfig>) -> Option<AuthorityIndex> {
@@ -202,11 +203,11 @@ impl Records {
         );
     }
 
-    pub fn set_authority_missed_votes(&mut self, index: AuthorityIndex, missed_votes: Votes) {
-        if let Some(authority_record) = self.get_mut_authority_record(index) {
-            authority_record.inc_missed_votes_by(Some(missed_votes));
-        }
-    }
+    // pub fn set_authority_missed_votes(&mut self, index: AuthorityIndex, missed_votes: Votes) {
+    //     if let Some(authority_record) = self.get_mut_authority_record(index) {
+    //         authority_record.inc_missed_votes_by(Some(missed_votes));
+    //     }
+    // }
 
     pub fn flag_authority(&mut self, index_flagged: AuthorityIndex, key: EpochKey) {
         if let Some(authorities) = self.authorities_flagged.get_mut(&key) {
@@ -258,25 +259,21 @@ impl Records {
                 .addresses
                 .get(&AddressKey(key.clone(), address.to_string()))
             {
-                if self
+                if let Some(para_record) = self
                     .para_records
                     .get(&RecordKey(key.clone(), auth_idx.clone()))
-                    .is_some()
                 {
                     para_epochs.push(epoch_index);
-                }
-                if let Some(authority_record) = self
-                    .authority_records
-                    .get(&RecordKey(key.clone(), auth_idx.clone()))
-                {
-                    votes += authority_record.para_points() / 20;
-                    missed_votes += authority_record.missed_votes();
+                    votes +=
+                        para_record.total_implicit_votes() + para_record.total_explicit_votes();
+                    missed_votes += para_record.total_missed_votes();
                 }
             }
             epoch_index += 1;
         }
         if votes + missed_votes > 0 {
-            Some(missed_votes as f64 / (votes + missed_votes) as f64)
+            let ratio = missed_votes as f64 / (votes + missed_votes) as f64;
+            Some(ratio)
         } else {
             None
         }
@@ -287,7 +284,7 @@ impl Records {
         address: &AccountId32,
     ) -> Option<(
         ValidatorStatusPattern,
-        Option<(ParaEpochs, Votes, MissedVotes)>,
+        Option<(ParaEpochs, Points, Votes, MissedVotes)>,
     )> {
         // Do not get any data if era is not fully completed
         if self.total_full_eras() == 0 {
@@ -295,6 +292,7 @@ impl Records {
         }
         let mut pattern: ValidatorStatusPattern = Vec::new();
         let mut para_epochs: ParaEpochs = Vec::new();
+        let mut para_points: Points = 0;
         let mut votes: Votes = 0;
         let mut missed_votes: Votes = 0;
         let eras = self.total_full_eras();
@@ -309,24 +307,31 @@ impl Records {
                     .addresses
                     .get(&AddressKey(key.clone(), address.to_string()))
                 {
-                    if self
+                    if let Some(para_record) = self
                         .para_records
                         .get(&RecordKey(key.clone(), auth_idx.clone()))
-                        .is_some()
                     {
                         para_epochs.push(epoch_index);
+                        votes +=
+                            para_record.total_implicit_votes() + para_record.total_explicit_votes();
+                        missed_votes += para_record.total_missed_votes();
+
+                        if votes + missed_votes > 0 {
+                            let missed_ratio = missed_votes as f64 / (votes + missed_votes) as f64;
+                            if missed_ratio > 0.5 {
+                                pattern.push(ValidatorStatus::ActivePVLow);
+                            } else {
+                                pattern.push(ValidatorStatus::ActivePV);
+                            }
+                        } else {
+                            pattern.push(ValidatorStatus::ActivePVIdle);
+                        }
+                        // get para points from authority record
                         if let Some(authority_record) = self
                             .authority_records
                             .get(&RecordKey(key.clone(), auth_idx.clone()))
                         {
-                            votes += authority_record.para_points() / 20;
-                            missed_votes += authority_record.missed_votes();
-                        }
-                        let missed_ratio = missed_votes as f64 / (votes + missed_votes) as f64;
-                        if missed_ratio > 0.5 {
-                            pattern.push(ValidatorStatus::ActivePVLow);
-                        } else {
-                            pattern.push(ValidatorStatus::ActivePV);
+                            para_points += authority_record.para_points();
                         }
                     } else {
                         pattern.push(ValidatorStatus::Active);
@@ -338,7 +343,10 @@ impl Records {
             }
         }
         if votes + missed_votes > 0 {
-            Some((pattern, Some((para_epochs, votes, missed_votes))))
+            Some((
+                pattern,
+                Some((para_epochs, para_points, votes, missed_votes)),
+            ))
         } else {
             Some((pattern, None))
         }
@@ -629,7 +637,6 @@ pub struct AuthorityRecord {
     start_points: Points,
     end_points: Option<Points>,
     authored_blocks: AuthoredBlocks,
-    missed_votes: Votes,
     is_flagged: bool,
 }
 
@@ -646,7 +653,6 @@ impl AuthorityRecord {
             start_points,
             end_points: None,
             authored_blocks,
-            missed_votes: 0,
             is_flagged: false,
         }
     }
@@ -690,32 +696,12 @@ impl AuthorityRecord {
         self.authored_blocks += 1;
     }
 
-    pub fn votes(&self) -> Votes {
-        self.para_points() / 20
-    }
-
-    pub fn missed_votes(&self) -> Votes {
-        self.missed_votes
-    }
-
-    pub fn missed_ratio(&self) -> f64 {
-        self.missed_votes() as f64 / (self.votes() + self.missed_votes()) as f64
+    pub fn flag(&mut self) {
+        self.is_flagged = true;
     }
 
     pub fn is_flagged(&self) -> bool {
         self.is_flagged
-    }
-
-    pub fn inc_missed_votes_by(&mut self, n: Option<Votes>) {
-        if let Some(n) = n {
-            self.missed_votes += n;
-        } else {
-            self.missed_votes += 1;
-        }
-    }
-
-    pub fn flag(&mut self) {
-        self.is_flagged = true;
     }
 
     pub fn update_current_points(&mut self, current_points: Points) -> Points {
@@ -836,12 +822,47 @@ impl ParaRecord {
     }
 
     pub fn inc_missed_votes(&mut self, para_id: ParaId) {
-        // increment current explicit_votes
+        // increment current missed_votes
         let stats = self
             .para_stats
             .entry(para_id)
             .or_insert(ParaStats::default());
         stats.missed_votes += 1;
+    }
+
+    pub fn total_missed_votes(&self) -> Votes {
+        self.para_stats
+            .iter()
+            .map(|(_, stats)| stats.missed_votes)
+            .sum()
+    }
+
+    pub fn total_implicit_votes(&self) -> Votes {
+        self.para_stats
+            .iter()
+            .map(|(_, stats)| stats.implicit_votes)
+            .sum()
+    }
+
+    pub fn total_explicit_votes(&self) -> Votes {
+        self.para_stats
+            .iter()
+            .map(|(_, stats)| stats.explicit_votes)
+            .sum()
+    }
+
+    pub fn missed_votes_ratio(&self) -> Ratio {
+        let total_missed_votes = self.total_missed_votes();
+        total_missed_votes as f64
+            / (total_missed_votes + self.total_implicit_votes() + self.total_explicit_votes())
+                as f64
+    }
+
+    pub fn total_core_assignments(&self) -> Votes {
+        self.para_stats
+            .iter()
+            .map(|(_, stats)| stats.explicit_votes)
+            .sum()
     }
 
     pub fn get_para_id_stats(&self, para_id: ParaId) -> Option<&ParaStats> {
@@ -1018,7 +1039,8 @@ mod tests {
         assert_eq!(ar.end_points().is_none(), true);
         assert_eq!(ar.authored_blocks(), 2);
 
-        let pr = ParaRecord::with_group_and_peers(2, vec![456, 789]);
+        let pr = ParaRecord::with_index_group_and_peers(1, 2, vec![456, 789]);
+        assert_eq!(pr.para_index(), 1);
         assert_eq!(pr.group(), Some(2));
         assert_eq!(pr.peers(), vec![456, 789]);
 

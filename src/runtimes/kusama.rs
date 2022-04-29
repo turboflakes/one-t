@@ -38,7 +38,7 @@ use crate::report::{
 
 use async_recursion::async_recursion;
 use futures::StreamExt;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use std::{
     collections::BTreeMap, convert::TryInto, fs, iter::FromIterator, result::Result, thread, time,
 };
@@ -677,14 +677,6 @@ pub fn flag_validators_with_poor_performance(
             for authority_record in authorities.iter() {
                 let missed_votes = (maximum_points - authority_record.para_points()) / 20;
 
-                // Record missed votes
-                if missed_votes > 0 {
-                    records.set_authority_missed_votes(
-                        authority_record.authority_index().clone(),
-                        missed_votes,
-                    );
-                }
-
                 // Flag authorities with less than 50% points of the top authority
                 if (authority_record.para_points() as f64 / maximum_points as f64) < 0.5 {
                     records.flag_authority(
@@ -726,7 +718,7 @@ pub async fn run_groups_report(
     };
 
     // Populate some maps to get ranks
-    let mut group_authorities_map: BTreeMap<u32, Vec<(AuthorityRecord, String, u32)>> =
+    let mut group_authorities_map: BTreeMap<u32, Vec<(AuthorityRecord, String, u32, f64)>> =
         BTreeMap::new();
 
     if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
@@ -740,18 +732,24 @@ pub async fn run_groups_report(
                         Some(EpochKey(era_index, epoch_index)),
                     ) {
                         // collect core_assignments
-                        let core_assignments: u32 = para_record
-                            .para_stats()
-                            .iter()
-                            .map(|(_, s)| s.core_assignments())
-                            .sum();
+                        let core_assignments: u32 = para_record.total_core_assignments();
+
+                        // collect missed_votes_ratio
+                        let missed_votes_ratio: f64 = para_record.missed_votes_ratio();
 
                         // get validator name
                         let name =
                             get_display_name(&onet, &authority_record.address(), None).await?;
+
+                        //
                         let auths = group_authorities_map.entry(group_idx).or_insert(Vec::new());
-                        auths.push((authority_record.clone(), name, core_assignments));
-                        auths.sort_by(|(a, _, _), (b, _, _)| b.points().cmp(&a.points()));
+                        auths.push((
+                            authority_record.clone(),
+                            name,
+                            core_assignments,
+                            missed_votes_ratio,
+                        ));
+                        auths.sort_by(|(a, _, _, _), (b, _, _, _)| b.points().cmp(&a.points()));
                     }
                 }
             }
@@ -973,12 +971,16 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             records.get_performance_data_for_all_records(&stash)
         {
             v.status_pattern.append(&mut status_pattern);
-            if let Some((mut para_epochs, votes, missed_votes)) = para_data {
+            if let Some((mut para_epochs, para_points, votes, missed_votes)) = para_data {
                 v.para_epochs.append(&mut para_epochs);
                 v.votes = Some(votes);
                 v.missed_votes = Some(missed_votes);
-                v.missed_ratio = Some(missed_votes as f64 / (votes + missed_votes) as f64);
-                v.para_points = Some((votes * 20) / para_epochs.len() as u32);
+                if votes + missed_votes > 0 {
+                    v.missed_ratio = Some(missed_votes as f64 / (votes + missed_votes) as f64);
+                }
+                if para_epochs.len() > 0 {
+                    v.avg_para_points = Some(para_points / para_epochs.len() as u32);
+                }
             }
         }
 

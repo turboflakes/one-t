@@ -57,7 +57,7 @@ pub struct Validator {
     pub flagged_epochs: Vec<EpochIndex>,
     pub para_epochs: Vec<EpochIndex>,
     pub status_pattern: Vec<ValidatorStatus>,
-    pub para_points: Option<u32>,
+    pub avg_para_points: Option<u32>,
     pub votes: Option<u32>,
     pub missed_votes: Option<u32>,
     pub missed_ratio: Option<f64>,
@@ -84,7 +84,7 @@ impl Validator {
             flagged_epochs: Vec::new(),
             para_epochs: Vec::new(),
             status_pattern: Vec::new(),
-            para_points: None,
+            avg_para_points: None,
             votes: None,
             missed_votes: None,
             missed_ratio: None,
@@ -200,7 +200,7 @@ pub struct RawDataGroup {
     pub meta: Metadata,
     pub report_type: ReportType,
     pub is_first_record: bool,
-    pub groups: Vec<(u32, Vec<(AuthorityRecord, String, u32)>)>,
+    pub groups: Vec<(u32, Vec<(AuthorityRecord, String, u32, f64)>)>,
 }
 
 #[derive(Debug)]
@@ -290,7 +290,7 @@ impl From<RawDataRank> for Report {
             .collect::<Vec<&Validator>>();
 
         validators_sorted.sort_by(|a, b| {
-            if a.para_points.unwrap() == b.para_points.unwrap() {
+            if a.avg_para_points.unwrap() == b.avg_para_points.unwrap() {
                 if a.missed_ratio.unwrap() == b.missed_ratio.unwrap() {
                     // p/v times in descending order
                     b.para_epochs
@@ -306,9 +306,9 @@ impl From<RawDataRank> for Report {
                 }
             } else {
                 // session avg. points in descending order
-                b.para_points
+                b.avg_para_points
                     .unwrap()
-                    .partial_cmp(&a.para_points.unwrap())
+                    .partial_cmp(&a.avg_para_points.unwrap())
                     .unwrap()
             }
         });
@@ -334,7 +334,7 @@ impl From<RawDataRank> for Report {
                 validator.votes.unwrap(),
                 validator.missed_votes.unwrap(),
                 (validator.missed_ratio.unwrap() * 10000.0).round() / 10000.0,
-                validator.para_points.unwrap(),
+                validator.avg_para_points.unwrap(),
                 validator
                     .status_pattern
                     .iter()
@@ -344,6 +344,7 @@ impl From<RawDataRank> for Report {
                             ValidatorStatus::Active => '•',
                             ValidatorStatus::ActivePV => '❚',
                             ValidatorStatus::ActivePVLow => '!',
+                            ValidatorStatus::ActivePVIdle => '?',
                         }
                     })
                     .collect::<String>()
@@ -436,7 +437,8 @@ impl From<RawDataGroup> for Report {
                 "MVR",
                 "PTS"
             ));
-            for (authority_record, val_name, core_assignments) in group.1.iter() {
+            for (authority_record, val_name, core_assignments, missed_votes_ratio) in group.1.iter()
+            {
                 let flag = if authority_record.is_flagged() {
                     "!"
                 } else {
@@ -447,11 +449,7 @@ impl From<RawDataGroup> for Report {
                     slice(&replace_emoji(&val_name, "_"), 17),
                     core_assignments,
                     authority_record.authored_blocks(),
-                    format!(
-                        "{}{}",
-                        flag,
-                        (authority_record.missed_ratio() * 100.0).round() / 100.0
-                    ),
+                    format!("{}{}", flag, (missed_votes_ratio * 100.0).round() / 100.0),
                     authority_record.points()
                 ));
             }
@@ -670,9 +668,9 @@ impl From<RawDataPara> for Report {
                     authority_flagged,
                     slice(&replace_emoji(&data.validator.name, "_"), 24),
                     authority_record.authored_blocks(),
-                    authority_record.votes(),
-                    authority_record.missed_votes(),
-                    (authority_record.missed_ratio() * 10000.0).round() / 10000.0,
+                    para_record.total_implicit_votes() + para_record.total_explicit_votes(),
+                    para_record.total_missed_votes(),
+                    (para_record.missed_votes_ratio() * 10000.0).round() / 10000.0,
                     authority_record.points()
                 ));
                 // Print out peers names
@@ -686,9 +684,9 @@ impl From<RawDataPara> for Report {
                         peer_flagged,
                         slice(&replace_emoji(&peer.0.clone(), "_"), 24),
                         peer.1.authored_blocks(),
-                        peer.1.votes(),
-                        peer.1.missed_votes(),
-                        (peer.1.missed_ratio() * 10000.0).round() / 10000.0,
+                        peer.2.total_implicit_votes() + peer.2.total_explicit_votes(),
+                        peer.2.total_missed_votes(),
+                        (peer.2.missed_votes_ratio() * 10000.0).round() / 10000.0,
                         peer.1.points()
                     ));
                 }
@@ -1372,7 +1370,7 @@ fn top_performers_report<'a>(
 
     if tvp_sorted.len() > 0 {
         tvp_sorted.sort_by(|a, b| {
-            if a.para_points.unwrap() == b.para_points.unwrap() {
+            if a.avg_para_points.unwrap() == b.avg_para_points.unwrap() {
                 if a.missed_ratio.unwrap() == b.missed_ratio.unwrap() {
                     // p/v times in descending order
                     b.para_epochs
@@ -1388,9 +1386,9 @@ fn top_performers_report<'a>(
                 }
             } else {
                 // session avg. points in descending order
-                b.para_points
+                b.avg_para_points
                     .unwrap()
-                    .partial_cmp(&a.para_points.unwrap())
+                    .partial_cmp(&a.avg_para_points.unwrap())
                     .unwrap()
             }
         });
@@ -1419,7 +1417,7 @@ fn top_performers_report<'a>(
             report.add_raw_text(format!(
                 "* {} ({}, {:.2}%, {}x)",
                 v.name,
-                v.para_points.unwrap(),
+                v.avg_para_points.unwrap(),
                 v.missed_ratio.unwrap() * 100.0,
                 v.para_epochs.len()
             ));
