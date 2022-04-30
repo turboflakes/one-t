@@ -887,16 +887,19 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         // Fetch own stake
         v.own_stake = get_own_stake(&onet, &stash).await?;
 
-        // Check if validator was active last era
-        v.active_last_era =
-            records.is_active_at(&stash, active_era_index - 1, current_session_index - 1);
+        // Get highlights from previous era
+        if let Some((is_active, para_data)) = records.get_data_from_previous_era(&stash) {
+            v.previous_era_active = is_active;
+            if let Some((para_epochs, flagged_epochs, mvr)) = para_data {
+                v.previous_era_para_epochs = para_epochs;
+                v.previous_era_flagged_epochs = flagged_epochs;
+                v.previous_era_missed_ratio = Some(mvr);
+            }
+        }
 
-        // Get missed_ratio from previous era
-        v.last_missed_ratio = records.get_missed_votes_ratio_for_previous_era(&stash);
-
-        // Get performance data from all full eras
+        // Get performance data from all eras available
         if let Some(((mut pattern, authored_blocks), para_data)) =
-            records.get_data_for_all_records(&stash)
+            records.get_data_from_all_records(&stash)
         {
             v.pattern.append(&mut pattern);
             v.authored_blocks = authored_blocks;
@@ -916,10 +919,9 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                 v.missed_votes = missed_votes;
                 v.core_assignments = core_assignments;
                 if explicit_votes + implicit_votes + missed_votes > 0 {
-                    v.missed_ratio = Some(
-                        missed_votes as f64
-                            / (explicit_votes + implicit_votes + missed_votes) as f64,
-                    );
+                    let mvr = missed_votes as f64
+                        / (explicit_votes + implicit_votes + missed_votes) as f64;
+                    v.missed_ratio = Some(mvr);
                 }
                 if epochs > 0 {
                     let para_points = (explicit_votes + implicit_votes) * 20;
@@ -970,7 +972,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         network: network.clone(),
         meta: metadata.clone(),
         validators: validators.clone(),
-        records_total_full_eras: records.total_full_eras(),
+        records_total_full_epochs: records.total_full_epochs(),
     };
 
     let report = Report::from(data.clone());
@@ -991,11 +993,11 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
     // Set era/session details
     let start_era = active_era_index - (1 * records.total_full_eras());
-    let start_epoch = current_session_index - (6 * records.total_full_eras());
+    let start_epoch = current_session_index - records.total_full_epochs();
     let start_block = records
         .start_block(EpochKey(
             start_era,
-            current_session_index - (6 * records.total_full_eras()),
+            start_epoch,
         ))
         .unwrap_or(&0);
 
@@ -1015,7 +1017,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         meta: metadata.clone(),
         report_type: ReportType::Ranking,
         validators,
-        records_total_full_eras: records.total_full_eras(),
+        records_total_full_epochs: records.total_full_epochs(),
     };
 
     let report = Report::from(data);

@@ -43,6 +43,7 @@ pub type Points = u32;
 pub type AuthoredBlocks = u32;
 pub type TotalEpochs = u32;
 pub type TotalParaEpochs = u32;
+pub type TotalFlaggedEpochs = u32;
 pub type Votes = u32;
 pub type ExplicitVotes = u32;
 pub type ImplicitVotes = u32;
@@ -125,6 +126,21 @@ impl std::fmt::Display for Glyph {
     }
 }
 
+pub fn grade(ratio: f64) -> String {
+    let p = (ratio * 100.0).round() as u32;
+    match p {
+        90..=100 => "A+".to_string(),
+        80..=89 => "A".to_string(),
+        70..=79 => "B+".to_string(),
+        60..=69 => "B".to_string(),
+        55..=59 => "C+".to_string(),
+        50..=54 => "C".to_string(),
+        45..=49 => "D+".to_string(),
+        40..=44 => "D".to_string(),
+        _ => "F".to_string(),
+    }
+}
+
 pub fn decode_authority_index(chain_block: &ChainBlock<DefaultConfig>) -> Option<AuthorityIndex> {
     match chain_block.block.header.digest() {
         Digest { logs } => {
@@ -190,12 +206,12 @@ impl Records {
         self.initial_epoch_recorded == index
     }
 
-    pub fn total_epochs(&self) -> u32 {
-        // Note: initial_epoch_recorded should not count as an full recorded epoch
-        if self.current_epoch == self.initial_epoch_recorded {
+    pub fn total_full_epochs(&self) -> u32 {
+        // Note: initial_epoch_recorded should not count as a full recorded session
+        if self.current_epoch <= self.initial_epoch_recorded + 1 {
             return 0;
         }
-        let epochs = self.current_epoch - self.initial_epoch_recorded - 1;
+        let epochs = self.current_epoch - self.initial_epoch_recorded + 1;
         let config = CONFIG.clone();
         if epochs > config.maximum_history_eras * 6 {
             config.maximum_history_eras * 6
@@ -205,7 +221,7 @@ impl Records {
     }
 
     pub fn total_full_eras(&self) -> u32 {
-        self.total_epochs() / 6
+        self.total_full_epochs() / 6
     }
 
     pub fn current_epoch(&self) -> EpochIndex {
@@ -251,38 +267,55 @@ impl Records {
         );
     }
 
-    pub fn get_missed_votes_ratio_for_previous_era(&self, address: &AccountId32) -> Option<f64> {
-        let mut votes: Votes = 0;
+    pub fn get_data_from_previous_era(
+        &self,
+        address: &AccountId32,
+    ) -> Option<(bool, Option<(TotalParaEpochs, TotalFlaggedEpochs, Ratio)>)> {
+        let mut is_active = false;
+        let mut para_epochs: TotalParaEpochs = 0;
+        let mut flagged_epochs: TotalFlaggedEpochs = 0;
+        let mut total_votes: Votes = 0;
         let mut missed_votes: Votes = 0;
         let era_index = self.current_era() - 1;
         let mut epoch_index = self.current_epoch() - 6;
-
         for _i in 0..6 {
+            // Skip initial and older sessions
+            if epoch_index <= self.initial_epoch_recorded {
+                continue;
+            }
             let key = EpochKey(era_index, epoch_index);
             if let Some(auth_idx) = self
                 .addresses
                 .get(&AddressKey(key.clone(), address.to_string()))
             {
+                is_active = true;
                 if let Some(para_record) = self
                     .para_records
                     .get(&RecordKey(key.clone(), auth_idx.clone()))
                 {
-                    votes +=
-                        para_record.total_implicit_votes() + para_record.total_explicit_votes();
-                    missed_votes += para_record.total_missed_votes();
+                    para_epochs += 1;
+                    let tv = para_record.total_votes();
+                    let mv = para_record.total_missed_votes();
+                    let mvr = missed_votes as f64 / (total_votes + missed_votes) as f64;
+                    // Flag epochs which grade is F (fail)
+                    if grade(1.0_f64 - mvr) == "F" {
+                        flagged_epochs += 1;
+                    }
+                    total_votes += tv;
+                    missed_votes += mv;
                 }
             }
             epoch_index += 1;
         }
-        if votes + missed_votes > 0 {
-            let ratio = missed_votes as f64 / (votes + missed_votes) as f64;
-            Some(ratio)
+        if total_votes + missed_votes > 0 {
+            let mvr = missed_votes as f64 / (total_votes + missed_votes) as f64;
+            Some((is_active, Some((para_epochs, flagged_epochs, mvr))))
         } else {
-            None
+            Some((is_active, None))
         }
     }
 
-    pub fn get_data_for_all_records(
+    pub fn get_data_from_all_records(
         &self,
         address: &AccountId32,
     ) -> Option<(
@@ -296,10 +329,6 @@ impl Records {
             CoreAssignments,
         )>,
     )> {
-        // Do not get any data if era is not fully completed
-        if self.total_full_eras() == 0 {
-            return None;
-        }
         let mut pattern: Pattern = Vec::new();
         let mut epochs: TotalEpochs = 0;
         let mut para_epochs: TotalParaEpochs = 0;
@@ -315,6 +344,10 @@ impl Records {
         for e in 0..eras {
             let era_index = era_index_0 + e as u32;
             for _i in 0..6 {
+                // Skip initial and older sessions
+                if epoch_index <= self.initial_epoch_recorded {
+                    continue;
+                }
                 let key = EpochKey(era_index, epoch_index);
                 if let Some(auth_idx) = self
                     .addresses

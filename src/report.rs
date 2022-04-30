@@ -22,7 +22,7 @@ use crate::config::CONFIG;
 use crate::errors::OnetError;
 use crate::onet::ReportType;
 use crate::records::{
-    AuthorityIndex, AuthorityRecord, EpochIndex, ParaId, ParaRecord, ParaStats, Pattern, Points,
+    grade, AuthorityIndex, AuthorityRecord, ParaId, ParaRecord, ParaStats, Pattern, Points,
 };
 use log::info;
 use rand::Rng;
@@ -52,8 +52,10 @@ pub struct Validator {
     pub maximum_history_total_points: u32,
     pub maximum_history_total_eras: u32,
     pub total_authored_blocks: u32,
-    pub active_last_era: bool,
-    pub flagged_epochs: Vec<EpochIndex>,
+    pub previous_era_active: bool,
+    pub previous_era_para_epochs: u32,
+    pub previous_era_flagged_epochs: u32,
+    pub previous_era_missed_ratio: Option<f64>,
     pub pattern: Pattern,
     pub authored_blocks: u32,
     pub epochs: u32,
@@ -65,7 +67,6 @@ pub struct Validator {
     pub missed_votes: u32,
     pub core_assignments: u32,
     pub missed_ratio: Option<f64>,
-    pub last_missed_ratio: Option<f64>,
     pub warnings: Vec<String>,
 }
 
@@ -84,8 +85,10 @@ impl Validator {
             maximum_history_total_points: 0,
             maximum_history_total_eras: 0,
             total_authored_blocks: 0,
-            active_last_era: false,
-            flagged_epochs: Vec::new(),
+            previous_era_active: false,
+            previous_era_para_epochs: 0,
+            previous_era_flagged_epochs: 0,
+            previous_era_missed_ratio: None,
             epochs: 0,
             avg_points: 0,
             para_epochs: 0,
@@ -97,7 +100,6 @@ impl Validator {
             missed_votes: 0,
             core_assignments: 0,
             missed_ratio: None,
-            last_missed_ratio: None,
             warnings: Vec::new(),
         }
     }
@@ -176,7 +178,7 @@ pub struct RawData {
     pub network: Network,
     pub meta: Metadata,
     pub validators: Validators,
-    pub records_total_full_eras: u32,
+    pub records_total_full_epochs: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -185,7 +187,7 @@ pub struct RawDataRank {
     pub meta: Metadata,
     pub report_type: ReportType,
     pub validators: Validators,
-    pub records_total_full_eras: u32,
+    pub records_total_full_epochs: u32,
 }
 
 #[derive(Debug)]
@@ -1289,61 +1291,76 @@ fn flagged_validators_report<'a>(
     let total_active = data
         .validators
         .iter()
-        .filter(|v| v.active_last_era)
+        .filter(|v| v.previous_era_active)
         .collect::<Vec<&Validator>>()
         .len();
 
     let total_tvp = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP && v.active_last_era)
+        .filter(|v| v.subset == Subset::TVP && v.previous_era_active)
         .collect::<Vec<&Validator>>()
         .len();
 
     let total_tvp_flagged = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP && v.active_last_era && v.flagged_epochs.len() >= 1)
+        .filter(|v| {
+            v.subset == Subset::TVP
+                && v.previous_era_active
+                && v.previous_era_para_epochs >= 1
+                && v.previous_era_flagged_epochs >= 1
+        })
         .collect::<Vec<&Validator>>()
         .len();
 
     let total_non_tvp = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::NONTVP && v.active_last_era)
+        .filter(|v| v.subset == Subset::NONTVP && v.previous_era_active)
         .collect::<Vec<&Validator>>()
         .len();
 
     let total_non_tvp_flagged = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::NONTVP && v.active_last_era && v.flagged_epochs.len() >= 1)
+        .filter(|v| {
+            v.subset == Subset::NONTVP
+                && v.previous_era_active
+                && v.previous_era_para_epochs >= 1
+                && v.previous_era_flagged_epochs >= 1
+        })
         .collect::<Vec<&Validator>>()
         .len();
 
     let total_c100 = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::C100 && v.active_last_era)
+        .filter(|v| v.subset == Subset::C100 && v.previous_era_active)
         .collect::<Vec<&Validator>>()
         .len();
 
     let total_c100_flagged = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::C100 && v.active_last_era && v.flagged_epochs.len() >= 1)
+        .filter(|v| {
+            v.subset == Subset::C100
+                && v.previous_era_active
+                && v.previous_era_para_epochs >= 1
+                && v.previous_era_flagged_epochs >= 1
+        })
         .collect::<Vec<&Validator>>()
         .len();
 
     let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
     if total_flagged != 0 {
-        let warning = if total_flagged as f32 / total_active as f32 > 0.1 {
+        let warning = if total_flagged as f32 / total_active as f32 > 0.25 {
             "⚠️ "
         } else {
             ""
         };
         report.add_raw_text(format!(
-            "{}In the previous era, {} ({:.2}%) validators missed more than 50% of votes when selected as para-validator for at least one epoch:",
+            "{}In the previous era, {} ({:.2}%) validators missed more than 60% of votes when selected as para-validator for at least one session:",
             warning,
             total_flagged,
             (total_flagged as f32 / total_active as f32) * 100.0
@@ -1371,13 +1388,14 @@ fn flagged_validators_report<'a>(
             .validators
             .iter()
             .filter(|v| {
-                v.active_last_era
-                    && v.flagged_epochs.len() >= 1
-                    && v.last_missed_ratio.unwrap() > 0.75_f64
+                v.previous_era_active
+                    && v.previous_era_para_epochs >= 1
+                    && v.previous_era_flagged_epochs >= 1
+                    && v.previous_era_missed_ratio.unwrap() > 0.80_f64
             })
             .collect::<Vec<&Validator>>();
         if elp.len() > 0 {
-            report.add_raw_text(format!("‣ 🚨 {} missed more than 75% of votes.", elp.len()));
+            report.add_raw_text(format!("‣ 🚨 {} missed more than 80% of votes.", elp.len()));
         }
         report.add_break();
     }
@@ -1442,8 +1460,8 @@ fn top_performers_report<'a>(
     data: &'a RawData,
     is_short: bool,
 ) -> &'a Report {
-    // If first era just show rank based on avg. points
-    if data.records_total_full_eras == 0 {
+    // If no full sessions than just show rank based on avg. points
+    if data.records_total_full_epochs == 0 {
         return top_validators_report(report, &data, is_short);
     }
 
@@ -1483,11 +1501,11 @@ fn top_performers_report<'a>(
 
         if is_short {
             report.add_raw_text(format!(
-                "Top {} TVP Validators with most average para-validator points per session in the last {} eras:",
-                max, data.records_total_full_eras
+                "Top {} TVP Validators with most average para-validator points per session in the last {} sessions:",
+                max, data.records_total_full_epochs
             ));
         } else {
-            report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with most average para-validator points per session in the last {} eras:", max, data.records_total_full_eras));
+            report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with most average para-validator points per session in the last {} sessions:", max, data.records_total_full_epochs));
             report.add_raw_text(format!("<i>Sorting: Validators are sorted 1st by average p/v points per session, 2nd by missed votes ratio, 3rd by number of X sessions when selected as p/v.</i>"));
             report.add_raw_text(format!("<i>Legend: val. identity (avg. p/v points per session, percentage of missed votes, number of sessions as p/v)</i>"));
         }
@@ -1688,21 +1706,6 @@ fn slice(name: &str, maximum_length: usize) -> String {
         maximum_length
     };
     String::from(&name[..cut])
-}
-
-pub fn grade(ratio: f64) -> String {
-    let p = (ratio * 100.0).round() as u32;
-    match p {
-        90..=100 => "A+".to_string(),
-        80..=89 => "A".to_string(),
-        70..=79 => "B+".to_string(),
-        60..=69 => "B".to_string(),
-        55..=59 => "C+".to_string(),
-        50..=54 => "C".to_string(),
-        45..=49 => "D+".to_string(),
-        40..=44 => "D".to_string(),
-        _ => "F".to_string(),
-    }
 }
 
 #[cfg(test)]
