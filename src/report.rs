@@ -777,7 +777,7 @@ impl From<RawDataPara> for Report {
                         let total_implicit_votes = peer.2.total_implicit_votes();
                         let total_explicit_votes = peer.2.total_explicit_votes();
                         let para_points = (total_implicit_votes + total_explicit_votes) * 20;
-                        let total_points = (authority_record.authored_blocks() * 20) + para_points;
+                        let total_points = (peer.1.authored_blocks() * 20) + para_points;
 
                         clode_block.push_str(&format!(
                             "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
