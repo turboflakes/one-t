@@ -317,7 +317,7 @@ impl From<RawDataRank> for Report {
                 b.avg_para_points.partial_cmp(&a.avg_para_points).unwrap()
             }
         });
-        
+
         // Report title
         if let Some((start, end)) = data.meta.interval {
             report.add_raw_text(format!(
@@ -678,7 +678,11 @@ impl From<RawDataPara> for Report {
 
                 // Print Grade
                 if let Some(mvr) = para_record.missed_votes_ratio() {
-                    report.add_raw_text(format!("🎓 Grade: {}", grade(1.0_f64 - mvr)));
+                    report.add_raw_text(format!(
+                        "🎓 Finished session {} with grade <b>{}</b>",
+                        data.meta.current_session_index,
+                        grade(1.0_f64 - mvr)
+                    ));
                 }
                 report.add_break();
                 // Print Rankings
