@@ -677,7 +677,7 @@ impl Matrix {
                                                     "🗑️ <i>{}</i> unsubscribed for {stash}",
                                                     report.name()
                                                 );
-                                                self.send_private_message(who, &message, None)
+                                                self.send_private_message(who, &message, Some(&message))
                                                     .await?;
                                             }
                                         }
@@ -1027,15 +1027,18 @@ impl Matrix {
     pub async fn reply_help(&self) -> Result<(), MatrixError> {
         let config = CONFIG.clone();
         let mut message = String::from("✨ Supported commands:<br>");
-        message.push_str("<b>!subscribe <i>STASH_ADDRESS</i></b> - Subscribe to the <i>Validator Performance Report</i> for the stash address specified. The report is sent via DM at the end of an epoch only if the <i>Para Validator</i> role was assigned to the validator.<br>");
+        message.push_str("<b>!subscribe <i>STASH_ADDRESS</i></b> - Subscribe to the <i>Validator Performance Report</i> for the stash address specified. The report is sent via DM at the end of each session until unsubscribed. The report is only sent if the <i>para-validator</i> role was assigned to the validator on the previous session.<br>");
         message.push_str(
             "<b>!unsubscribe <i>STASH_ADDRESS</i></b> - Unsubscribe the stash address from the <i>Validator Performance Report</i> subscribers list.<br>",
         );
-        message.push_str(&format!("<b>!subscribe groups</b> - Subscribe to the <i>Validator Groups Performance Report</i>. The report is sent via DM at the end of the next {} epochs.<br>", config.maximum_reports));
-        message.push_str(&format!("<b>!subscribe parachains</b> - Subscribe to the <i>Parachains Performance Report</i>. The report is sent via DM at the end of the next {} epochs.<br>", config.maximum_reports));
+        message.push_str(&format!("<b>!subscribe groups</b> - Subscribe to the <i>Validator Groups Performance Report</i>. The report is sent via DM at the end of the next {} sessions.<br>", config.maximum_reports));
+        message.push_str(&format!("<b>!subscribe parachains</b> - Subscribe to the <i>Parachains Performance Report</i>. The report is sent via DM at the end of the next {} sessions.<br>", config.maximum_reports));
+        message.push_str("<b>!subscribe ranking</b> - Subscribe to the <i>ONE-T Performance Ranking Report</i>. The report is a Tab-delimited gzip compressed file, sent via DM at the end of each era until unsubscribed.<br>");
+        message.push_str(
+            "<b>!unsubscribe ranking</b> - Unsubscribe to the <i>ONE-T Performance Ranking Report</i> subscribers list.<br>",
+        );
         // message.push_str("!report - Send validator \\<Stash Address\\> performance report for the current epoch.<br>");
         message.push_str("<b>!legends</b> - Print legends of all reports.<br>");
-        message.push_str("<b>!help</b> - Print this message.<br>");
         message.push_str("<b>!help</b> - Print this message.<br>");
         message.push_str("——<br>");
         message.push_str(&format!(
