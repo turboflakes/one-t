@@ -995,10 +995,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     let start_era = active_era_index - (1 * records.total_full_eras());
     let start_epoch = current_session_index - records.total_full_epochs();
     let start_block = records
-        .start_block(EpochKey(
-            start_era,
-            start_epoch,
-        ))
+        .start_block(EpochKey(start_era, start_epoch))
         .unwrap_or(&0);
 
     let end_era = active_era_index - 1;

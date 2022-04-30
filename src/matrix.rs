@@ -1036,6 +1036,14 @@ impl Matrix {
         // message.push_str("!report - Send validator \\<Stash Address\\> performance report for the current epoch.<br>");
         message.push_str("<b>!legends</b> - Print legends of all reports.<br>");
         message.push_str("<b>!help</b> - Print this message.<br>");
+        message.push_str("<b>!help</b> - Print this message.<br>");
+        message.push_str("——<br>");
+        message.push_str(&format!(
+            "<code>{} v{}</code><br>",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION")
+        ));
+
         return self.send_public_message(&message, Some(&message)).await;
     }
 
@@ -1044,41 +1052,52 @@ impl Matrix {
             "💡 Stats are collected between the interval of blocks specified in each report.<br>",
         );
         message.push_str("<br>");
-        message.push_str("<i>Network performance report legend:</i><br>");
-        message.push_str("Low-performance inference is made from Para validator points that earned less than 50% of the maximum points earned by the top performer in the same Val. Group.<br>");
-        message.push_str("<br>");
         message.push_str("<i>Val. performance report legend:</i><br>");
         message.push_str("→: !subscribe STASH_ADDRESS<br>");
         message.push_str("↻: Total number of core assignments (parachains) by the validator.<br>");
         message.push_str("❒: Total number of authored blocks by the validator.<br>");
-        message.push_str("✓: Total number of votes by the validator.<br>");
-        message.push_str("✗: Total number of missed votes by the validator against the best validator in the same Val. Group.<br>");
+        message.push_str("✓i: Total number of implicit votes by the validator.<br>");
+        message.push_str("✓e: Total number of explicit votes by the validator.<br>");
+        message.push_str("✗: Total number of missed votes by the validator.<br>");
+        message.push_str("GRD: Grade reflects Total Votes Ratio (TVR). TVR = (✓i + ✓e) / (✓i + ✓e + ✗)). Grade system: A+ >= 90% ; A >= 80% ; B+ >= 70% ; B >= 60% ; C+ >= 55% ; C >= 50% ; D+ >= 45% ; D >= 40% ; F < 40%).<br>");
         message.push_str("MVR: Missed Votes Ratio.<br>");
-        message.push_str("!: If MVR is greater than 0.5 the validator is flagged with an exclamation mark, !.<br>");
+        message.push_str("PPTS: Sum of para-validator points the validator earned.<br>");
         message.push_str(
-            "PTS: Sum of points the validator earned while assigned to the val. group.<br>",
+            "TPTS: Sum of para-validator points + authored blocks points the validator earned.<br>",
         );
-        message.push_str("*: Sum of points earned by the subscribed validator while assigned to the parachain.<br>");
-        message.push_str("A, B, C, D: Sum of points earned by each validator in the same val. group as the subscribed validator, while assigned to the parachain.<br>");
+        message.push_str("*: ✓ is the Total number of (implicit + explicit) votes and ✗ is the Total number of missed votes by the subscribed validator while assigned to the parachain.<br>");
+        message.push_str("A, B, C, D: Represents each validator in the same val. group as the subscribed validator, while assigned to the parachain.<br>");
         message.push_str("<br>");
         message.push_str("<i>Val. groups performance report legend:</i><br>");
         message.push_str("→: !subscribe groups<br>");
         message.push_str("↻: Total number of core assignements.<br>");
         message.push_str("❒: Total number of authored blocks.<br>");
+        message.push_str("✓i: Total number of implicit votes.<br>");
+        message.push_str("✓e: Total number of explicit votes.<br>");
+        message.push_str("✗: Total number of missed votes by the validator.<br>");
+        message.push_str("GRD: Grade reflects Total Votes Ratio.<br>");
         message.push_str("MVR: Missed Votes Ratio.<br>");
-        message.push_str("!: If MVR is greater than 0.5 the validator is flagged with an exclamation mark, !.<br>");
-        message.push_str("PTS: Sum of points earned while assigned to the val. group.<br>");
+        message.push_str("PPTS: Sum of para-validator points the validator earned.<br>");
+        message.push_str(
+            "TPTS: Sum of para-validator points + authored blocks points the validator earned.<br>",
+        );
         message
-            .push_str("Val. groups and validators are sorted by points in descending order.<br>");
+            .push_str("NOTE: Val. groups and validators are sorted by para-validator points in descending order.<br>");
         message.push_str("<br>");
         message.push_str("<i>Parachains performance report legend:</i><br>");
         message.push_str("→: !subscribe parachains<br>");
         message.push_str("↻: Total number of validator group rotations per parachain.<br>");
-        message.push_str("❒: Total number of authored blocks by the validators while assigned to the parachain.<br>");
+        message.push_str("❒: Total number of authored blocks from all validators when assigned to the parachain.<br>");
+        message.push_str("✓i: Total number of implicit votes from all validators when assigned to the parachain.<br>");
+        message.push_str("✓e: Total number of explicit votes from all validators when assigned to the parachain.<br>");
+        message.push_str("✗: Total number of missed votes from all validators when assigned to the parachain.<br>");
+        message.push_str("PPTS: Sum of para-validator points from all validators.<br>");
         message.push_str(
-            "PTS: Sum of points earned by the validators while assigned to the parachain.<br>",
+            "TPTS: Sum of para-validator points + authored blocks points from all validators.<br>",
         );
-        message.push_str("Parachains are sorted by points in descending order.<br>");
+        message.push_str(
+            "NOTE: Parachains are sorted by para-validator points in descending order.<br>",
+        );
         message.push_str("<br>");
 
         return self.send_public_message(&message, Some(&message)).await;
