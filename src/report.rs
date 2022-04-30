@@ -119,7 +119,7 @@ impl std::fmt::Display for Subset {
         match self {
             Self::TVP => write!(f, "TVP"),
             Self::NONTVP => write!(f, "OTH"),
-            Self::C100 => write!(f, "100"),
+            Self::C100 => write!(f, "100C"),
         }
     }
 }
@@ -317,13 +317,36 @@ impl From<RawDataRank> for Report {
                 b.avg_para_points.partial_cmp(&a.avg_para_points).unwrap()
             }
         });
+        
+        // Report title
+        if let Some((start, end)) = data.meta.interval {
+            report.add_raw_text(format!(
+                "\t📮 {} → {} // from {} // {} to {} // {}",
+                data.report_type.name(),
+                data.network.name,
+                start.0,
+                start.1,
+                end.0,
+                end.1
+            ));
+        }
+
+        if let Some(blocks_interval) = data.meta.blocks_interval {
+            report.add_raw_text(format!(
+                "\t{} blocks recorded from #{} to #{}",
+                blocks_interval.1 - blocks_interval.0,
+                blocks_interval.0,
+                blocks_interval.1
+            ));
+        }
+        report.add_break();
 
         report.add_raw_text(format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             "#",
             "Validator",
-            "Group",
-            "Act Sessions",
+            "Subset",
+            "Active Sessions",
             "P/V Sessions",
             "❒",
             "↻",
@@ -331,10 +354,10 @@ impl From<RawDataRank> for Report {
             "✓e",
             "✗",
             "Grade",
-            "Missed Votes Ratio",
-            "Avg. P/V Points",
-            "Avg. Total Points",
-            "Pattern"
+            "MVR",
+            "Avg. PPTS",
+            "Avg. TPTS",
+            "Timeline"
         ));
 
         for (i, validator) in validators_sorted.iter().enumerate() {
@@ -384,26 +407,6 @@ impl From<RawDataRank> for Report {
         }
 
         report.add_break();
-        if let Some((start, end)) = data.meta.interval {
-            report.add_raw_text(format!(
-                "\t📮 {} → {} // from {} // {} to {} // {}",
-                data.report_type.name(),
-                data.network.name,
-                start.0,
-                start.1,
-                end.0,
-                end.1
-            ));
-        }
-
-        if let Some(blocks_interval) = data.meta.blocks_interval {
-            report.add_raw_text(format!(
-                "\t{} blocks recorded from #{} to #{}",
-                blocks_interval.1 - blocks_interval.0,
-                blocks_interval.0,
-                blocks_interval.1
-            ));
-        }
         report.add_raw_text("\t——".into());
         report.add_raw_text(format!(
             "\t{} v{}",
