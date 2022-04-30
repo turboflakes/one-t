@@ -1085,7 +1085,7 @@ impl Matrix {
             "TPTS: Sum of para-validator points + authored blocks points the validator earned.<br>",
         );
         message
-            .push_str("NOTE: Val. groups and validators are sorted by para-validator points in descending order.<br>");
+            .push_str("Note: Val. groups and validators are sorted by para-validator points in descending order.<br>");
         message.push_str("<br>");
         message.push_str("<i>Parachains performance report legend:</i><br>");
         message.push_str("→: !subscribe parachains<br>");
@@ -1099,7 +1099,7 @@ impl Matrix {
             "TPTS: Sum of para-validator points + authored blocks points from all validators.<br>",
         );
         message.push_str(
-            "NOTE: Parachains are sorted by para-validator points in descending order.<br>",
+            "Note: Parachains are sorted by para-validator points in descending order.<br>",
         );
         message.push_str("<br>");
 
