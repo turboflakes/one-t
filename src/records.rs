@@ -41,7 +41,7 @@ pub type ParaIndex = u32;
 pub type ParaId = u32;
 pub type Points = u32;
 pub type AuthoredBlocks = u32;
-pub type TotalEpochs = u32;
+pub type TotalActiveEpochs = u32;
 pub type TotalParaEpochs = u32;
 pub type TotalFlaggedEpochs = u32;
 pub type Votes = u32;
@@ -165,7 +165,8 @@ pub fn decode_authority_index(chain_block: &ChainBlock<DefaultConfig>) -> Option
 pub struct Records {
     current_era: EraIndex,
     current_epoch: EpochIndex,
-    initial_epoch_recorded: EpochIndex,
+    first_epoch: EpochIndex,
+    eras: HashMap<EpochIndex, EraIndex>,
     blocks: HashMap<BlockKey, BlockNumber>,
     authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
     addresses: HashMap<AddressKey, AuthorityIndex>,
@@ -185,10 +186,13 @@ impl Records {
             BlockKey(EpochKey(current_era, current_epoch), BlockKind::Start),
             start_block,
         );
+        let mut eras = HashMap::new();
+        eras.insert(current_epoch, current_era);
         Self {
             current_era,
             current_epoch,
-            initial_epoch_recorded: current_epoch,
+            first_epoch: current_epoch,
+            eras,
             blocks,
             authorities: HashMap::new(),
             addresses: HashMap::new(),
@@ -202,16 +206,16 @@ impl Records {
         self.current_era
     }
 
-    pub fn is_initial_epoch(&self, index: EpochIndex) -> bool {
-        self.initial_epoch_recorded == index
+    pub fn is_first_epoch(&self, index: EpochIndex) -> bool {
+        self.first_epoch == index
     }
 
     pub fn total_full_epochs(&self) -> u32 {
-        // Note: initial_epoch_recorded should not count as a full recorded session
-        if self.current_epoch <= self.initial_epoch_recorded + 1 {
+        // NOTE: first_epoch and current_epoch should not count as a full recorded sessions
+        if self.current_epoch - self.first_epoch <= 1 {
             return 0;
         }
-        let epochs = self.current_epoch - self.initial_epoch_recorded + 1;
+        let epochs = self.current_epoch - self.first_epoch - 1;
         let config = CONFIG.clone();
         if epochs > config.maximum_history_eras * 6 {
             config.maximum_history_eras * 6
@@ -246,7 +250,8 @@ impl Records {
     pub fn start_new_epoch(&mut self, era: EraIndex, epoch: EpochIndex) {
         self.current_era = era;
         self.current_epoch = epoch;
-        info!("New epoch {} at era {} started", epoch, era);
+        self.eras.insert(epoch, era);
+        info!("New epoch {} at era {} started.", epoch, era);
     }
 
     pub fn set_current_block_number(&mut self, block_number: BlockNumber) {
@@ -267,47 +272,58 @@ impl Records {
         );
     }
 
-    pub fn get_data_from_previous_era(
+    pub fn get_era_index(&self, epoch_index: Option<EpochIndex>) -> Option<&EraIndex> {
+        let ei = if let Some(epoch_index) = epoch_index {
+            epoch_index
+        } else {
+            self.current_epoch()
+        };
+        self.eras.get(&ei)
+    }
+
+    pub fn get_data_from_previous_epochs(
         &self,
         address: &AccountId32,
+        number_of_epochs: u32,
     ) -> Option<(bool, Option<(TotalParaEpochs, TotalFlaggedEpochs, Ratio)>)> {
+        if self.total_full_epochs() == 0 {
+            return None;
+        }
         let mut is_active = false;
         let mut para_epochs: TotalParaEpochs = 0;
         let mut flagged_epochs: TotalFlaggedEpochs = 0;
         let mut total_votes: Votes = 0;
         let mut missed_votes: Votes = 0;
-        let era_index = self.current_era() - 1;
-        let mut epoch_index = self.current_epoch() - 6;
-        for _i in 0..6 {
-            // Skip initial and older sessions
-            if epoch_index <= self.initial_epoch_recorded {
-                continue;
-            }
-            let key = EpochKey(era_index, epoch_index);
-            if let Some(auth_idx) = self
-                .addresses
-                .get(&AddressKey(key.clone(), address.to_string()))
-            {
-                is_active = true;
-                if let Some(para_record) = self
-                    .para_records
-                    .get(&RecordKey(key.clone(), auth_idx.clone()))
+
+        let mut epoch_index = self.current_epoch() - number_of_epochs;
+        while epoch_index < self.current_epoch() {
+            if let Some(era_index) = self.eras.get(&epoch_index) {
+                let key = EpochKey(*era_index, epoch_index);
+                if let Some(auth_idx) = self
+                    .addresses
+                    .get(&AddressKey(key.clone(), address.to_string()))
                 {
-                    para_epochs += 1;
-                    let tv = para_record.total_votes();
-                    let mv = para_record.total_missed_votes();
-                    let mvr = missed_votes as f64 / (total_votes + missed_votes) as f64;
-                    // Flag epochs which grade is F (fail)
-                    if grade(1.0_f64 - mvr) == "F" {
-                        flagged_epochs += 1;
+                    is_active = true;
+                    if let Some(para_record) = self
+                        .para_records
+                        .get(&RecordKey(key.clone(), auth_idx.clone()))
+                    {
+                        para_epochs += 1;
+                        let tv = para_record.total_votes();
+                        let mv = para_record.total_missed_votes();
+                        let mvr = missed_votes as f64 / (total_votes + missed_votes) as f64;
+                        // Flag epochs which grade is F (fail)
+                        if grade(1.0_f64 - mvr) == "F" {
+                            flagged_epochs += 1;
+                        }
+                        total_votes += tv;
+                        missed_votes += mv;
                     }
-                    total_votes += tv;
-                    missed_votes += mv;
                 }
             }
             epoch_index += 1;
         }
-        if total_votes + missed_votes > 0 {
+        if para_epochs > 0 && total_votes + missed_votes > 0 {
             let mvr = missed_votes as f64 / (total_votes + missed_votes) as f64;
             Some((is_active, Some((para_epochs, flagged_epochs, mvr))))
         } else {
@@ -315,82 +331,81 @@ impl Records {
         }
     }
 
-    pub fn get_data_from_all_records(
+    pub fn get_data_from_all_full_epochs(
         &self,
         address: &AccountId32,
     ) -> Option<(
-        (Pattern, AuthoredBlocks),
+        (TotalActiveEpochs, AuthoredBlocks, Pattern),
         Option<(
-            TotalEpochs,
             TotalParaEpochs,
+            Points,
             ExplicitVotes,
             ImplicitVotes,
             MissedVotes,
             CoreAssignments,
         )>,
     )> {
+        if self.total_full_epochs() == 0 {
+            return None;
+        }
         let mut pattern: Pattern = Vec::new();
-        let mut epochs: TotalEpochs = 0;
+        let mut active_epochs: TotalActiveEpochs = 0;
         let mut para_epochs: TotalParaEpochs = 0;
+        let mut para_points: Points = 0;
         let mut authored_blocks: AuthoredBlocks = 0;
         let mut explicit_votes: Votes = 0;
         let mut implicit_votes: Votes = 0;
         let mut missed_votes: Votes = 0;
         let mut core_assignments: CoreAssignments = 0;
-        let eras = self.total_full_eras();
-        let era_index_0 = self.current_era() - (1 * eras);
-        let mut epoch_index = self.current_epoch() - (6 * eras);
 
-        for e in 0..eras {
-            let era_index = era_index_0 + e as u32;
-            for _i in 0..6 {
-                // Skip initial and older sessions
-                if epoch_index <= self.initial_epoch_recorded {
-                    continue;
-                }
-                let key = EpochKey(era_index, epoch_index);
+        let mut epoch_index = self.current_epoch() - self.total_full_epochs();
+        while epoch_index < self.current_epoch() {
+            if let Some(era_index) = self.eras.get(&epoch_index) {
+                let key = EpochKey(*era_index, epoch_index);
                 if let Some(auth_idx) = self
                     .addresses
                     .get(&AddressKey(key.clone(), address.to_string()))
                 {
-                    epochs += 1;
-                    if let Some(para_record) = self
-                        .para_records
-                        .get(&RecordKey(key.clone(), auth_idx.clone()))
-                    {
-                        para_epochs += 1;
-                        explicit_votes += para_record.total_explicit_votes();
-                        implicit_votes += para_record.total_implicit_votes();
-                        missed_votes += para_record.total_missed_votes();
-                        core_assignments += para_record.total_core_assignments();
-
-                        if let Some(ratio) = para_record.missed_votes_ratio() {
-                            pattern.push(Glyph::from_mvr(ratio));
-                        } else {
-                            pattern.push(Glyph::ActivePVidle);
-                        }
-                    } else {
-                        pattern.push(Glyph::Active);
-                    }
-                    // get authored blocks
+                    active_epochs += 1;
                     if let Some(authority_record) = self
                         .authority_records
                         .get(&RecordKey(key.clone(), auth_idx.clone()))
                     {
                         authored_blocks += authority_record.authored_blocks();
+                        para_points += authority_record.para_points();
+                        // Get para data
+                        if let Some(para_record) = self
+                            .para_records
+                            .get(&RecordKey(key.clone(), auth_idx.clone()))
+                        {
+                            para_epochs += 1;
+                            explicit_votes += para_record.total_explicit_votes();
+                            implicit_votes += para_record.total_implicit_votes();
+                            missed_votes += para_record.total_missed_votes();
+                            core_assignments += para_record.total_core_assignments();
+
+                            if let Some(ratio) = para_record.missed_votes_ratio() {
+                                pattern.push(Glyph::from_mvr(ratio));
+                            } else {
+                                pattern.push(Glyph::ActivePVidle);
+                            }
+                        } else {
+                            pattern.push(Glyph::Active);
+                        }
                     }
                 } else {
                     pattern.push(Glyph::Waiting);
                 }
-                epoch_index += 1;
             }
+            epoch_index += 1;
         }
-        if explicit_votes + implicit_votes + missed_votes > 0 {
+
+        if para_epochs > 0 && explicit_votes + implicit_votes + missed_votes > 0 {
             Some((
-                (pattern, authored_blocks),
+                (active_epochs, authored_blocks, pattern),
                 Some((
-                    epochs,
                     para_epochs,
+                    para_points,
                     explicit_votes,
                     implicit_votes,
                     missed_votes,
@@ -398,7 +413,7 @@ impl Records {
                 )),
             ))
         } else {
-            Some(((pattern, authored_blocks), None))
+            Some(((active_epochs, authored_blocks, pattern), None))
         }
     }
 
@@ -941,15 +956,13 @@ pub struct ParaStats {
 }
 
 impl ParaStats {
-    // DEPRECATED
-    // pub fn points(&self) -> Points {
-    //     self.points
-    // }
+    pub fn points(&self) -> Points {
+        self.points
+    }
 
-    // DEPRECATED
-    // pub fn para_points(&self) -> Points {
-    //     self.points - (self.authored_blocks * 20)
-    // }
+    pub fn para_points(&self) -> Points {
+        self.points - (self.authored_blocks * 20)
+    }
 
     pub fn core_assignments(&self) -> u32 {
         self.core_assignments
@@ -975,12 +988,8 @@ impl ParaStats {
         self.missed_votes
     }
 
-    pub fn para_points(&self) -> Points {
+    pub fn votes_points(&self) -> Points {
         self.total_votes() * 20
-    }
-
-    pub fn total_points(&self) -> Points {
-        self.para_points() + (self.authored_blocks * 20)
     }
 }
 

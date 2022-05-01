@@ -677,8 +677,12 @@ impl Matrix {
                                                     "🗑️ <i>{}</i> unsubscribed for {stash}",
                                                     report.name()
                                                 );
-                                                self.send_private_message(who, &message, Some(&message))
-                                                    .await?;
+                                                self.send_private_message(
+                                                    who,
+                                                    &message,
+                                                    Some(&message),
+                                                )
+                                                .await?;
                                             }
                                         }
                                     }

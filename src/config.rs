@@ -82,6 +82,12 @@ fn default_matrix_callout_epoch_rate() -> u32 {
     6
 }
 
+/// provides default value for callout_epoch_rate if ONET_MATRIX_NETWORK_REPORT_EPOCH_RATE env var is not set
+/// example: 1 era = 6 sessions/epochs
+fn default_matrix_network_report_epoch_rate() -> u32 {
+    6
+}
+
 /// provides default value for mvr_level_1 if ONET_MVR_LEVEL_1 env var is not set
 /// example: 20% = 2000
 fn default_mvr_level_1() -> u32 {
@@ -133,6 +139,8 @@ pub struct Config {
     pub matrix_callout_public_room_ids: Vec<String>,
     #[serde(default = "default_matrix_callout_epoch_rate")]
     pub matrix_callout_epoch_rate: u32,
+    #[serde(default = "default_matrix_network_report_epoch_rate")]
+    pub matrix_network_report_epoch_rate: u32,
     #[serde(default)]
     pub matrix_bot_user: String,
     #[serde(default)]
@@ -255,6 +263,12 @@ fn get_config() -> Config {
             .help("The frequency at which the callout message is triggered. Recommended every 6 sessions on Polkadot (24 hours) and every 24 sessions on Kusama (24 hours). [default: 6]")
     )
     .arg(
+      Arg::with_name("matrix-network-report-epoch-rate")
+            .long("matrix-network-report-epoch-rate")
+            .takes_value(true)
+            .help("The frequency at which the network report message is triggered. Recommended every 6 sessions on Polkadot (24 hours) and every 6 sessions on Kusama (6 hours). [default: 6]")
+    )
+    .arg(
       Arg::with_name("config-path")
         .short("c")
         .long("config-path")
@@ -269,7 +283,6 @@ fn get_config() -> Config {
       Arg::with_name("data-path")
         .long("data-path")
         .takes_value(true)
-        .default_value("./")
         .help(
           "Sets a custom directory path to store data files. The data directory contains 'one-t' data files.",
         ),
@@ -357,6 +370,15 @@ fn get_config() -> Config {
 
     if let Some(matrix_callout_epoch_rate) = matches.value_of("matrix-callout-epoch-rate") {
         env::set_var("ONET_MATRIX_CALLOUT_EPOCH_RATE", matrix_callout_epoch_rate);
+    }
+
+    if let Some(matrix_network_report_epoch_rate) =
+        matches.value_of("matrix-network-report-epoch-rate")
+    {
+        env::set_var(
+            "ONET_MATRIX_NETWORK_REPORT_EPOCH_RATE",
+            matrix_network_report_epoch_rate,
+        );
     }
 
     if let Some(matrix_bot_user) = matches.value_of("matrix-bot-user") {

@@ -29,7 +29,7 @@ use crate::onet::{
 };
 use crate::records::{
     decode_authority_index, AuthorityIndex, AuthorityRecord, EpochIndex, EpochKey, EraIndex,
-    ParaId, ParaRecord, ParaStats, Records, Subscribers, Votes,
+    ParaId, ParaRecord, ParaStats, Points, Records, Subscribers, Votes,
 };
 use crate::report::{
     Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara, RawDataParachains, RawDataRank,
@@ -38,7 +38,7 @@ use crate::report::{
 
 use async_recursion::async_recursion;
 use futures::StreamExt;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::{
     collections::BTreeMap, convert::TryInto, fs, iter::FromIterator, result::Result, thread, time,
 };
@@ -559,7 +559,7 @@ pub async fn run_val_perf_report(
                 network: network.clone(),
                 meta: metadata.clone(),
                 report_type: ReportType::Validator,
-                is_first_record: records.is_initial_epoch(epoch_index),
+                is_first_record: records.is_first_epoch(epoch_index),
                 parachains: parachains.clone(),
                 validator,
                 authority_record: None,
@@ -684,7 +684,7 @@ pub async fn run_groups_report(
                         //
                         let auths = group_authorities_map.entry(group_idx).or_insert(Vec::new());
                         auths.push((authority_record.clone(), para_record.clone(), name));
-                        auths.sort_by(|(_, a, _), (_, b, _)| b.total_votes().cmp(&a.total_votes()));
+                        auths.sort_by(|(a, _, _), (b, _, _)| b.para_points().cmp(&a.para_points()));
                     }
                 }
             }
@@ -695,16 +695,16 @@ pub async fn run_groups_report(
     let mut group_authorities_sorted = Vec::from_iter(group_authorities_map);
     group_authorities_sorted.sort_by(|(_, a), (_, b)| {
         b.iter()
-            .map(|x| x.1.total_votes())
-            .sum::<Votes>()
-            .cmp(&a.iter().map(|x| x.1.total_votes()).sum::<Votes>())
+            .map(|x| x.0.para_points())
+            .sum::<Points>()
+            .cmp(&a.iter().map(|x| x.0.para_points()).sum::<Points>())
     });
 
     let data = RawDataGroup {
         network: network.clone(),
         meta: metadata.clone(),
         report_type: ReportType::Groups,
-        is_first_record: records.is_initial_epoch(epoch_index),
+        is_first_record: records.is_first_epoch(epoch_index),
         groups: group_authorities_sorted.clone(),
     };
 
@@ -768,6 +768,7 @@ pub async fn run_parachains_report(
                     s.missed_votes += stats.missed_votes();
                     s.core_assignments += stats.core_assignments();
                     s.authored_blocks += stats.authored_blocks();
+                    s.points += stats.points();
                 }
             }
         }
@@ -781,7 +782,7 @@ pub async fn run_parachains_report(
         network: network.clone(),
         meta: metadata.clone(),
         report_type: ReportType::Parachains,
-        is_first_record: records.is_initial_epoch(epoch_index),
+        is_first_record: records.is_first_epoch(epoch_index),
         parachains: parachains_sorted.clone(),
     };
 
@@ -809,15 +810,18 @@ pub async fn try_run_network_report(
     epoch_index: EpochIndex,
     records: &Records,
 ) -> Result<(), OnetError> {
-    //
-    // Trigger network report every 6 epochs (every era)
-    if (epoch_index as f64 % 6.0_f64) == 0.0_f64 {
-        let records_cloned = records.clone();
-        async_std::task::spawn(async move {
-            if let Err(e) = run_network_report(&records_cloned).await {
-                error!("try_run_network_report error: {:?}", e);
-            }
-        });
+    let config = CONFIG.clone();
+    if (epoch_index as f64 % config.matrix_network_report_epoch_rate as f64) == 0.0_f64 {
+        if records.total_full_epochs() > 0 {
+            let records_cloned = records.clone();
+            async_std::task::spawn(async move {
+                if let Err(e) = run_network_report(&records_cloned).await {
+                    error!("try_run_network_report error: {:?}", e);
+                }
+            });
+        } else {
+            warn!("No full sessions yet to run the network report.")
+        }
     }
 
     Ok(())
@@ -879,16 +883,14 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         } else {
             v.subset = Subset::C100;
         }
-        // Get nodes identity
-        v.name = get_display_name(&onet, &stash, None).await?;
         // Check if validator is in active set
         v.is_active = active_validators.contains(&stash);
 
         // Fetch own stake
         v.own_stake = get_own_stake(&onet, &stash).await?;
 
-        // Get highlights from previous era
-        if let Some((is_active, para_data)) = records.get_data_from_previous_era(&stash) {
+        // Get highlights from previous 6 sessions (last era)
+        if let Some((is_active, para_data)) = records.get_data_from_previous_epochs(&stash, 6) {
             v.previous_era_active = is_active;
             if let Some((para_epochs, flagged_epochs, mvr)) = para_data {
                 v.previous_era_para_epochs = para_epochs;
@@ -898,21 +900,24 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         }
 
         // Get performance data from all eras available
-        if let Some(((mut pattern, authored_blocks), para_data)) =
-            records.get_data_from_all_records(&stash)
+        if let Some(((active_epochs, authored_blocks, mut pattern), para_data)) =
+            records.get_data_from_all_full_epochs(&stash)
         {
-            v.pattern.append(&mut pattern);
+            v.active_epochs = active_epochs;
             v.authored_blocks = authored_blocks;
+            v.pattern.append(&mut pattern);
             if let Some((
-                epochs,
                 para_epochs,
+                para_points,
                 explicit_votes,
                 implicit_votes,
                 missed_votes,
                 core_assignments,
             )) = para_data
             {
-                v.epochs = epochs;
+                // Note: If Para data exists than get node identity to be visible in the report
+                v.name = get_display_name(&onet, &stash, None).await?;
+                //
                 v.para_epochs = para_epochs;
                 v.explicit_votes = explicit_votes;
                 v.implicit_votes = implicit_votes;
@@ -923,14 +928,8 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                         / (explicit_votes + implicit_votes + missed_votes) as f64;
                     v.missed_ratio = Some(mvr);
                 }
-                if epochs > 0 {
-                    let para_points = (explicit_votes + implicit_votes) * 20;
-                    let total_points = para_points + (authored_blocks * 20);
-                    v.avg_points = total_points / epochs;
-                    if para_epochs > 0 {
-                        let para_points = (explicit_votes + implicit_votes) * 20;
-                        v.avg_para_points = para_points / para_epochs;
-                    }
+                if para_epochs > 0 {
+                    v.avg_para_points = para_points / para_epochs;
                 }
             }
         }
@@ -939,31 +938,32 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         validators.push(v);
     }
 
+    // Deprecated
     // Collect era points for maximum_history_eras and incremental
-    let start_era_index = active_era_index - config.maximum_history_eras;
-    for era_index in start_era_index..active_era_index {
-        let start_incremental_era_index = active_era_index - (1 * records.total_full_eras());
-        let era_reward_points = api
-            .storage()
-            .staking()
-            .eras_reward_points(&era_index, None)
-            .await?;
-        debug!("era_reward_points: {:?}", era_reward_points);
+    // let start_era_index = active_era_index - config.maximum_history_eras;
+    // for era_index in start_era_index..active_era_index {
+    //     let start_incremental_era_index = active_era_index - (1 * records.total_full_eras());
+    //     let era_reward_points = api
+    //         .storage()
+    //         .staking()
+    //         .eras_reward_points(&era_index, None)
+    //         .await?;
+    //     debug!("era_reward_points: {:?}", era_reward_points);
 
-        for (stash, points) in era_reward_points.individual.iter() {
-            validators
-                .iter_mut()
-                .filter(|v| v.stash == *stash)
-                .for_each(|v| {
-                    (*v).maximum_history_total_eras += 1;
-                    (*v).maximum_history_total_points += points;
-                    if era_index >= start_incremental_era_index {
-                        (*v).total_eras += 1;
-                        (*v).total_points += points;
-                    }
-                });
-        }
-    }
+    //     for (stash, points) in era_reward_points.individual.iter() {
+    //         validators
+    //             .iter_mut()
+    //             .filter(|v| v.stash == *stash)
+    //             .for_each(|v| {
+    //                 (*v).maximum_history_total_eras += 1;
+    //                 (*v).maximum_history_total_points += points;
+    //                 if era_index >= start_incremental_era_index {
+    //                     (*v).total_eras += 1;
+    //                     (*v).total_points += points;
+    //                 }
+    //             });
+    //     }
+    // }
 
     debug!("validators {:?}", validators);
 
@@ -992,57 +992,61 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     // ---- Validators Performance Ranking Report data ----
 
     // Set era/session details
-    let start_era = active_era_index - (1 * records.total_full_eras());
     let start_epoch = current_session_index - records.total_full_epochs();
-    let start_block = records
-        .start_block(EpochKey(start_era, start_epoch))
-        .unwrap_or(&0);
+    if let Some(start_era) = records.get_era_index(Some(start_epoch)) {
+        let start_block = records
+            .start_block(EpochKey(*start_era, start_epoch))
+            .unwrap_or(&0);
 
-    let end_era = active_era_index - 1;
-    let end_epoch = current_session_index - 1;
-    let end_block = records
-        .end_block(EpochKey(end_era, current_session_index - 1))
-        .unwrap_or(&0);
-    let metadata = Metadata {
-        interval: Some(((start_era, start_epoch), (end_era, end_epoch))),
-        blocks_interval: Some((*start_block, *end_block)),
-        ..Default::default()
-    };
+        let end_epoch = current_session_index - 1;
+        if let Some(end_era) = records.get_era_index(Some(end_epoch)) {
+            let end_block = records
+                .end_block(EpochKey(*end_era, current_session_index - 1))
+                .unwrap_or(&0);
+            let metadata = Metadata {
+                interval: Some(((*start_era, start_epoch), (*end_era, end_epoch))),
+                blocks_interval: Some((*start_block, *end_block)),
+                ..Default::default()
+            };
 
-    let data = RawDataRank {
-        network: network.clone(),
-        meta: metadata.clone(),
-        report_type: ReportType::Ranking,
-        validators,
-        records_total_full_epochs: records.total_full_epochs(),
-    };
+            let data = RawDataRank {
+                network: network.clone(),
+                meta: metadata.clone(),
+                report_type: ReportType::Ranking,
+                validators,
+                records_total_full_epochs: records.total_full_epochs(),
+            };
 
-    let report = Report::from(data);
+            let report = Report::from(data);
 
-    let filename = format!(
-        "onet_{}_vprr_{}_{}.txt.gz",
-        config.chain_name.to_lowercase(),
-        start_era,
-        end_era
-    );
-    let path_filename = format!("{}{}", config.data_path, filename);
-    report.save(&path_filename)?;
-    // Get file size
-    let file_size = fs::metadata(&path_filename)?.len();
+            // Save file
+            let filename = format!(
+                "onet_{}_vprr_{}_{}.txt.gz",
+                config.chain_name.to_lowercase(),
+                start_era,
+                end_era
+            );
+            report.save(&filename)?;
 
-    if let Some(url) = onet.matrix().upload_file(&path_filename)? {
-        if let Ok(subs) = get_subscribers_by_epoch(ReportType::Ranking, None) {
-            for user_id in subs.iter() {
-                onet.matrix()
-                    .send_private_file(
-                        user_id,
-                        &filename,
-                        &url,
-                        Some(FileInfo::with_size(file_size)),
-                    )
-                    .await?;
-                // NOTE: To not overflow matrix with messages just send maximum 2 per second
-                thread::sleep(time::Duration::from_millis(500));
+            // Get upload file and send message DM
+            let path_filename = format!("{}{}", config.data_path, filename);
+            let file_size = fs::metadata(&path_filename)?.len();
+
+            if let Some(url) = onet.matrix().upload_file(&path_filename)? {
+                if let Ok(subs) = get_subscribers_by_epoch(ReportType::Ranking, None) {
+                    for user_id in subs.iter() {
+                        onet.matrix()
+                            .send_private_file(
+                                user_id,
+                                &filename,
+                                &url,
+                                Some(FileInfo::with_size(file_size)),
+                            )
+                            .await?;
+                        // NOTE: To not overflow matrix with messages just send maximum 2 per second
+                        thread::sleep(time::Duration::from_millis(500));
+                    }
+                }
             }
         }
     }

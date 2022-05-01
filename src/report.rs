@@ -58,8 +58,7 @@ pub struct Validator {
     pub previous_era_missed_ratio: Option<f64>,
     pub pattern: Pattern,
     pub authored_blocks: u32,
-    pub epochs: u32,
-    pub avg_points: u32,
+    pub active_epochs: u32,
     pub para_epochs: u32,
     pub avg_para_points: u32,
     pub explicit_votes: u32,
@@ -89,11 +88,10 @@ impl Validator {
             previous_era_para_epochs: 0,
             previous_era_flagged_epochs: 0,
             previous_era_missed_ratio: None,
-            epochs: 0,
-            avg_points: 0,
-            para_epochs: 0,
             pattern: Vec::new(),
             authored_blocks: 0,
+            active_epochs: 0,
+            para_epochs: 0,
             avg_para_points: 0,
             explicit_votes: 0,
             implicit_votes: 0,
@@ -342,7 +340,7 @@ impl From<RawDataRank> for Report {
         report.add_break();
 
         report.add_raw_text(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             "#",
             "Validator",
             "Subset",
@@ -356,18 +354,17 @@ impl From<RawDataRank> for Report {
             "Grade",
             "MVR",
             "Avg. PPTS",
-            "Avg. TPTS",
             "Timeline"
         ));
 
         for (i, validator) in validators_sorted.iter().enumerate() {
             if let Some(mvr) = validator.missed_ratio {
                 report.add_raw_text(format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     i + 1,
-                    validator.name,
+                    replace_crln(&validator.name, ""),
                     validator.subset.to_string(),
-                    validator.epochs,
+                    validator.active_epochs,
                     validator.para_epochs,
                     validator.authored_blocks,
                     validator.core_assignments,
@@ -377,7 +374,6 @@ impl From<RawDataRank> for Report {
                     grade(1.0_f64 - mvr),
                     (mvr * 10000.0).round() / 10000.0,
                     validator.avg_para_points,
-                    validator.avg_points,
                     validator
                         .pattern
                         .iter()
@@ -386,10 +382,9 @@ impl From<RawDataRank> for Report {
                 ));
             } else {
                 report.add_raw_text(format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     i + 1,
                     validator.name,
-                    "-",
                     "-",
                     "-",
                     "-",
@@ -481,23 +476,18 @@ impl From<RawDataGroup> for Report {
             ));
             for (authority_record, para_record, val_name) in group.1.iter() {
                 if let Some(mvr) = para_record.missed_votes_ratio() {
-                    let total_implicit_votes = para_record.total_implicit_votes();
-                    let total_explicit_votes = para_record.total_explicit_votes();
-                    let para_points = (total_implicit_votes + total_explicit_votes) * 20;
-                    let total_points = (authority_record.authored_blocks() * 20) + para_points;
-
                     clode_block.push_str(&format!(
                         "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>6}{:>6}\n",
                         slice(&replace_emoji(&val_name, "_"), 24),
                         authority_record.authored_blocks(),
                         para_record.total_core_assignments(),
-                        total_implicit_votes,
-                        total_explicit_votes,
+                        para_record.total_implicit_votes(),
+                        para_record.total_explicit_votes(),
                         para_record.total_missed_votes(),
                         grade(1.0_f64 - mvr),
                         (mvr * 10000.0).round() / 10000.0,
-                        para_points,
-                        total_points,
+                        authority_record.para_points(),
+                        authority_record.points(),
                     ));
                 } else {
                     clode_block.push_str(&format!(
@@ -595,7 +585,7 @@ impl From<RawDataParachains> for Report {
                 stats.explicit_votes(),
                 stats.missed_votes(),
                 stats.para_points(),
-                stats.total_points()
+                stats.points()
             ));
         }
         clode_block.push_str("\n</code></pre>");
@@ -1335,7 +1325,7 @@ fn flagged_validators_report<'a>(
             v.subset == Subset::NONTVP
                 && v.previous_era_active
                 && v.previous_era_para_epochs >= 1
-                && v.previous_era_flagged_epochs >= 1
+                && v.previous_era_flagged_epochs >= 2
         })
         .collect::<Vec<&Validator>>()
         .len();
@@ -1354,7 +1344,7 @@ fn flagged_validators_report<'a>(
             v.subset == Subset::C100
                 && v.previous_era_active
                 && v.previous_era_para_epochs >= 1
-                && v.previous_era_flagged_epochs >= 1
+                && v.previous_era_flagged_epochs >= 2
         })
         .collect::<Vec<&Validator>>()
         .len();
