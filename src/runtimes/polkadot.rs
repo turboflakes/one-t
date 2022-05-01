@@ -938,32 +938,26 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         validators.push(v);
     }
 
-    // Deprecated
-    // Collect era points for maximum_history_eras and incremental
-    // let start_era_index = active_era_index - config.maximum_history_eras;
-    // for era_index in start_era_index..active_era_index {
-    //     let start_incremental_era_index = active_era_index - (1 * records.total_full_eras());
-    //     let era_reward_points = api
-    //         .storage()
-    //         .staking()
-    //         .eras_reward_points(&era_index, None)
-    //         .await?;
-    //     debug!("era_reward_points: {:?}", era_reward_points);
+    // Collect era points for maximum_history_eras
+    let start_era_index = active_era_index - config.maximum_history_eras;
+    for era_index in start_era_index..active_era_index {
+        let era_reward_points = api
+            .storage()
+            .staking()
+            .eras_reward_points(&era_index, None)
+            .await?;
+        debug!("era_reward_points: {:?}", era_reward_points);
 
-    //     for (stash, points) in era_reward_points.individual.iter() {
-    //         validators
-    //             .iter_mut()
-    //             .filter(|v| v.stash == *stash)
-    //             .for_each(|v| {
-    //                 (*v).maximum_history_total_eras += 1;
-    //                 (*v).maximum_history_total_points += points;
-    //                 if era_index >= start_incremental_era_index {
-    //                     (*v).total_eras += 1;
-    //                     (*v).total_points += points;
-    //                 }
-    //             });
-    //     }
-    // }
+        for (stash, points) in era_reward_points.individual.iter() {
+            validators
+                .iter_mut()
+                .filter(|v| v.stash == *stash)
+                .for_each(|v| {
+                    (*v).maximum_history_total_eras += 1;
+                    (*v).maximum_history_total_points += points;
+                });
+        }
+    }
 
     debug!("validators {:?}", validators);
 
