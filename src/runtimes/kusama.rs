@@ -163,15 +163,29 @@ pub async fn initialize_records(onet: &Onet, records: &mut Records) -> Result<()
         .validator_groups(None)
         .await?;
 
+    // Fetch para validator indices
+    let active_validator_indices = api
+        .storage()
+        .paras_shared()
+        .active_validator_indices(None)
+        .await?;
+
+    // Update records groups with respective authorities
+    for (group_idx, group) in validator_groups.iter().enumerate() {
+        let auths: Vec<AuthorityIndex> = group
+            .into_iter()
+            .map(|ValidatorIndex(i)| {
+                let ValidatorIndex(auth_idx) = active_validator_indices.get(*i as usize).unwrap();
+                *auth_idx
+            })
+            .collect();
+
+        records.insert_group(group_idx.try_into().unwrap(), auths);
+    }
+
     // Find groupIdx and peers for each authority
     for (auth_idx, stash) in authorities.iter().enumerate() {
         let auth_idx: AuthorityIndex = auth_idx.try_into().unwrap();
-        // Find para groupIdx
-        let active_validator_indices = api
-            .storage()
-            .paras_shared()
-            .active_validator_indices(None)
-            .await?;
 
         // Verify if is a para validator
         if let Some(auth_para_idx) = active_validator_indices
@@ -374,18 +388,33 @@ pub async fn track_records(
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
 
+    // Fetch on chain votes
+    let on_chain_votes = api.storage().para_inherent().on_chain_votes(None).await?;
+
+    // Fetch currently scheduled cores
+    let scheduled_cores = api.storage().para_scheduler().scheduled(None).await?;
+
+    // Update records para_group
+    for core_assignment in scheduled_cores.iter() {
+        debug!("core_assignment: {:?}", core_assignment);
+        // CoreAssignment { core: CoreIndex(16), para_id: Id(2087), kind: Parachain, group_idx: GroupIndex(31) }
+
+        // Destructure GroupIndex
+        let GroupIndex(group_idx) = core_assignment.group_idx;
+        // Destructure CoreIndex
+        let CoreIndex(core) = core_assignment.core;
+        // Destructure Id
+        let Id(para_id) = core_assignment.para_id;
+
+        records.update_para_group(para_id, core, group_idx);
+    }
+
     // Fetch Era reward points
     let era_reward_points = api
         .storage()
         .staking()
         .eras_reward_points(&records.current_era(), None)
         .await?;
-
-    // Fetch currently scheduled cores
-    let scheduled_cores = api.storage().para_scheduler().scheduled(None).await?;
-
-    // Fetch on chain votes
-    let on_chain_votes = api.storage().para_inherent().on_chain_votes(None).await?;
 
     let current_session = records.current_epoch();
 
@@ -408,26 +437,28 @@ pub async fn track_records(
                 } else {
                     0
                 };
-                // Update current points and get the difference
+                // Update authority current points and get the difference
                 let diff_points = authority_record.update_current_points(current_points);
 
                 if let Some(para_record) = records.get_mut_para_record(*authority_idx) {
-                    // 1st. Check if the para_id assigned to this authority got any on chain votes
+                    // 1st. Increment current para_id diff_points and authored blocks if the author of the finalized block
+                    para_record.update_points(diff_points, authority_index == *authority_idx);
+
+                    // 2nd. Check if the para_id assigned to this authority got any on chain votes
                     if let Some(ref backing_votes) = on_chain_votes {
                         // Verify that records are in the same session as on chain votes
                         if current_session == backing_votes.session {
                             for (candidate_receipt, group_authorities) in
                                 backing_votes.backing_validators_per_candidate.iter()
                             {
+                                warn!(
+                                    "para_id: {:?} group_authorities {:?}",
+                                    candidate_receipt.descriptor.para_id, group_authorities
+                                );
                                 // Destructure ParaId
                                 let Id(para_id) = candidate_receipt.descriptor.para_id;
                                 // If para id exists increment vote or missed vote
                                 if para_record.is_para_id_assigned(para_id) {
-                                    debug!(
-                                        "para_id: {} group_authorities {:?}",
-                                        para_id, group_authorities
-                                    );
-
                                     if let Some((_, vote)) = group_authorities.iter().find(
                                         |(ValidatorIndex(para_idx), _)| {
                                             para_idx == para_record.para_index()
@@ -442,40 +473,49 @@ pub async fn track_records(
                                             }
                                         }
                                     } else {
-                                        para_record.inc_missed_votes(para_id);
+                                        // Try to guarantee that one of the peers is in the same group
+                                        if group_authorities.len() > 0 {
+                                            let (ValidatorIndex(para_idx), _) =
+                                                group_authorities[0];
+                                            if let Some(group_idx) = para_record.group() {
+                                                if para_idx / 5 == group_idx {
+                                                    para_record.inc_missed_votes(para_id);
+                                                }
+                                            }
+                                        } else {
+                                            para_record.inc_missed_votes(para_id);
+                                        }
                                     }
 
                                     break;
+                                } else {
+                                    debug!("On chain votes para_id: {:?} is different from the para_id: {:?} current assigned to the validator index: {}.", para_id, para_record.para_id(), para_record.para_index());
                                 }
                             }
-                        }
-                    }
-
-                    // 2nd. Identify if groupIdx has been assigned to a core
-                    if let Some(group_idx) = &para_record.group() {
-                        if let Some(core_assignment) = scheduled_cores
-                            .iter()
-                            .find(|ca| ca.group_idx == GroupIndex(*group_idx))
-                        {
-                            debug!("core_assignment: {:?}", core_assignment);
-                            // CoreAssignment { core: CoreIndex(16), para_id: Id(2087), kind: Parachain, group_idx: GroupIndex(31) }
-
-                            // Destructure CoreIndex
-                            let CoreIndex(core) = core_assignment.core;
-                            // Destructure Id
-                            let Id(para_id) = core_assignment.para_id;
-
-                            // Update authority ParaRecord
-                            para_record.update(
-                                core,
-                                para_id,
-                                diff_points,
-                                authority_index == *authority_idx,
+                        } else {
+                            warn!(
+                                "Backing votes session: {} is different from records.current_session: {}",
+                                backing_votes.session, current_session
                             );
                         }
                     }
 
-                    debug!("para_record {:?}", para_record);
+                    // debug!("------");
+                    // debug!("------");
+                    // debug!("authored_blocks: {} points: {}", authored_blocks, points);
+                    // debug!(
+                    //     "validator_index: {:?} group: {:?} para_id: {:?} peers: {:?}",
+                    //     para_record.para_index(),
+                    //     para_record.group(),
+                    //     para_record.para_id(),
+                    //     para_record.peers()
+                    // );
+                    // for (k, s) in para_record.para_stats().iter() {
+                    //     debug!("para_id: {}", k);
+                    //     debug!("stats: {:?}", s);
+                    // }
+                    // debug!("------");
+                    // debug!("------");
                 }
             }
         }
@@ -1015,10 +1055,12 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
             // Save file
             let filename = format!(
-                "onet_{}_vprr_{}_{}.txt.gz",
+                "onet_{}_e{}s{}_e{}s{}.txt.gz",
                 config.chain_name.to_lowercase(),
                 start_era,
-                end_era
+                start_epoch,
+                end_era,
+                end_epoch
             );
             report.save(&filename)?;
 

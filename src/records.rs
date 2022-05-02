@@ -173,6 +173,9 @@ pub struct Records {
     authority_records: HashMap<RecordKey, AuthorityRecord>,
     para_authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
     para_records: HashMap<RecordKey, ParaRecord>,
+    // Note: we use the following maps to easily manage missed votes and para_id assignment changes
+    para_group: HashMap<ParaId, GroupIndex>,
+    groups: HashMap<GroupIndex, Vec<AuthorityIndex>>,
 }
 
 impl Records {
@@ -199,6 +202,8 @@ impl Records {
             authority_records: HashMap::new(),
             para_authorities: HashMap::new(),
             para_records: HashMap::new(),
+            para_group: HashMap::new(),
+            groups: HashMap::new(),
         }
     }
 
@@ -427,6 +432,42 @@ impl Records {
         self.addresses
             .get(&AddressKey(key.clone(), address.to_string()))
             .is_some()
+    }
+
+    pub fn insert_group(&mut self, group_idx: GroupIndex, authorities: Vec<AuthorityIndex>) {
+        self.groups.insert(group_idx, authorities);
+    }
+
+    pub fn get_authorities_from_group(&self, index: GroupIndex) -> Option<Vec<AuthorityIndex>> {
+        if let Some(authorities) = self.groups.get(&index) {
+            Some(authorities.iter().map(|a| *a).collect())
+        } else {
+            None
+        }
+    }
+
+    pub fn update_para_group(&mut self, para_id: ParaId, core: CoreIndex, group_idx: GroupIndex) {
+        if let Some(previous_group_idx) = self.para_group.insert(para_id, group_idx) {
+            if previous_group_idx == group_idx {
+                return;
+            }
+            // remove assignement from authorities assigned to the current group
+            if let Some(authorities) = self.get_authorities_from_group(previous_group_idx) {
+                for authority_idx in authorities.iter() {
+                    if let Some(para_record) = self.get_mut_para_record(*authority_idx) {
+                        para_record.remove_scheduled_core(para_id);
+                    }
+                }
+            }
+        }
+        // update scheduled core and para_id to the authorities assigned to the group_idx
+        if let Some(authorities) = self.get_authorities_from_group(group_idx) {
+            for authority_idx in authorities.iter() {
+                if let Some(para_record) = self.get_mut_para_record(authority_idx.clone()) {
+                    para_record.update_scheduled_core(para_id, core);
+                }
+            }
+        }
     }
 
     pub fn insert(
@@ -836,29 +877,45 @@ impl ParaRecord {
         self.peers.to_vec()
     }
 
-    pub fn update(
-        &mut self,
-        core: CoreIndex,
-        para_id: ParaId,
-        points: Points,
-        is_block_author: bool,
-    ) {
+    pub fn update_scheduled_core(&mut self, para_id: ParaId, core: CoreIndex) {
+        // Assign current scheduled para_id
+        self.para_id = Some(para_id);
+        // Verify if a different core as been assigned
         let is_different_core = if let Some(previous_core) = self.core {
             previous_core != core
         } else {
             true
         };
         self.core = Some(core);
-        self.para_id = Some(para_id);
+        // if different core increment assignments
+        if is_different_core {
+            let stats = self
+                .para_stats
+                .entry(para_id)
+                .or_insert(ParaStats::default());
+            stats.core_assignments += 1;
+        }
+    }
 
-        // increment current points, increment core assignments and increment authored blocks
-        let stats = self
-            .para_stats
-            .entry(para_id)
-            .or_insert(ParaStats::default());
-        stats.points += points;
-        stats.core_assignments += is_different_core as u32;
-        stats.authored_blocks += is_block_author as u32;
+    pub fn remove_scheduled_core(&mut self, para_id: ParaId) {
+        if let Some(pid) = self.para_id {
+            if pid == para_id {
+                self.para_id = None;
+                self.core = None;
+            }
+        }
+    }
+
+    pub fn update_points(&mut self, points: Points, is_block_author: bool) {
+        if let Some(para_id) = self.para_id {
+            // increment current points and authored blocks if the author of the current finalized block
+            let stats = self
+                .para_stats
+                .entry(para_id)
+                .or_insert(ParaStats::default());
+            stats.points += points;
+            stats.authored_blocks += is_block_author as u32;
+        }
     }
 
     pub fn inc_explicit_votes(&mut self, para_id: ParaId) {
@@ -1167,27 +1224,18 @@ mod tests {
 
         // Increment authored blocks and current points
         if let Some(pr) = records.get_mut_para_record(authority_idx) {
-            pr.update(3, 1001, 1600, true);
-            assert_eq!(pr.group(), Some(2));
-            assert_eq!(pr.core(), Some(3));
+            pr.update_scheduled_core(1001, 3);
+            pr.update_points(1600, true);
             assert_eq!(pr.get_para_id_stats(1001).is_some(), true);
             assert_eq!(pr.get_para_id_stats(1002).is_none(), true);
             if let Some(stats) = pr.get_para_id_stats(1001) {
-                // assert_eq!(stats.points(), 1600);
-                assert_eq!(stats.core_assignments(), 1);
+                assert_eq!(stats.points(), 1600);
                 assert_eq!(stats.authored_blocks(), 1);
             }
-            pr.update(4, 1001, 10, false);
+            pr.update_scheduled_core(1001, 4);
             if let Some(stats) = pr.get_para_id_stats(1001) {
-                // assert_eq!(stats.points(), 1610);
+                assert_eq!(stats.points(), 1600);
                 assert_eq!(stats.core_assignments(), 2);
-                assert_eq!(stats.authored_blocks(), 1);
-            }
-            pr.update(5, 1020, 100, false);
-            if let Some(stats) = pr.get_para_id_stats(1020) {
-                // assert_eq!(stats.points(), 100);
-                assert_eq!(stats.core_assignments(), 1);
-                assert_eq!(stats.authored_blocks(), 0);
             }
         }
     }
