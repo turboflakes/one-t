@@ -1292,17 +1292,17 @@ fn flagged_validators_report<'a>(
     //     .collect::<Vec<&Validator>>()
     //     .len();
 
-    let total_tvp_flagged = data
-        .validators
-        .iter()
-        .filter(|v| {
-            v.subset == Subset::TVP
-                && v.previous_era_active
-                && v.previous_era_para_epochs >= 1
-                && v.previous_era_flagged_epochs >= 1
-        })
-        .collect::<Vec<&Validator>>()
-        .len();
+    // let total_tvp_flagged = data
+    //     .validators
+    //     .iter()
+    //     .filter(|v| {
+    //         v.subset == Subset::TVP
+    //             && v.previous_era_active
+    //             && v.previous_era_para_epochs >= 1
+    //             && v.previous_era_flagged_epochs >= 1
+    //     })
+    //     .collect::<Vec<&Validator>>()
+    //     .len();
 
     // let total_non_tvp = data
     //     .validators
@@ -1311,17 +1311,17 @@ fn flagged_validators_report<'a>(
     //     .collect::<Vec<&Validator>>()
     //     .len();
 
-    let total_non_tvp_flagged = data
-        .validators
-        .iter()
-        .filter(|v| {
-            v.subset == Subset::NONTVP
-                && v.previous_era_active
-                && v.previous_era_para_epochs >= 1
-                && v.previous_era_flagged_epochs >= 2
-        })
-        .collect::<Vec<&Validator>>()
-        .len();
+    // let total_non_tvp_flagged = data
+    //     .validators
+    //     .iter()
+    //     .filter(|v| {
+    //         v.subset == Subset::NONTVP
+    //             && v.previous_era_active
+    //             && v.previous_era_para_epochs >= 1
+    //             && v.previous_era_flagged_epochs >= 2
+    //     })
+    //     .collect::<Vec<&Validator>>()
+    //     .len();
 
     // let total_c100 = data
     //     .validators
@@ -1330,19 +1330,31 @@ fn flagged_validators_report<'a>(
     //     .collect::<Vec<&Validator>>()
     //     .len();
 
-    let total_c100_flagged = data
+    // let total_c100_flagged = data
+    //     .validators
+    //     .iter()
+    //     .filter(|v| {
+    //         v.subset == Subset::C100
+    //             && v.previous_era_active
+    //             && v.previous_era_para_epochs >= 1
+    //             && v.previous_era_flagged_epochs >= 2
+    //     })
+    //     .collect::<Vec<&Validator>>()
+    //     .len();
+
+    // let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
+
+    let total_flagged = data
         .validators
         .iter()
         .filter(|v| {
-            v.subset == Subset::C100
-                && v.previous_era_active
+            v.previous_era_active
                 && v.previous_era_para_epochs >= 1
-                && v.previous_era_flagged_epochs >= 2
+                && v.previous_era_flagged_epochs >= 1
         })
         .collect::<Vec<&Validator>>()
         .len();
 
-    let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
     if total_flagged != 0 {
         let warning = if total_flagged as f32 / total_active as f32 > 0.25 {
             "⚠️ "
@@ -1352,7 +1364,10 @@ fn flagged_validators_report<'a>(
         let description = if data.records_total_full_epochs >= 6 {
             format!("{}In the previous era", warning)
         } else {
-            format!("{}In the last {} sessions", warning, data.records_total_full_epochs)
+            format!(
+                "{}In the last {} sessions",
+                warning, data.records_total_full_epochs
+            )
         };
         report.add_raw_text(format!(
             "{}, {} ({:.2}%) validators missed more than 60% of votes when selected as para-validator for at least one session:",
