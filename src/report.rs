@@ -1276,7 +1276,7 @@ fn inclusion_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
 fn flagged_validators_report<'a>(
     report: &'a mut Report,
     data: &'a RawData,
-    is_short: bool,
+    _is_short: bool,
 ) -> &'a Report {
     let total_active = data
         .validators
@@ -1285,12 +1285,12 @@ fn flagged_validators_report<'a>(
         .collect::<Vec<&Validator>>()
         .len();
 
-    let total_tvp = data
-        .validators
-        .iter()
-        .filter(|v| v.subset == Subset::TVP && v.previous_era_active)
-        .collect::<Vec<&Validator>>()
-        .len();
+    // let total_tvp = data
+    //     .validators
+    //     .iter()
+    //     .filter(|v| v.subset == Subset::TVP && v.previous_era_active)
+    //     .collect::<Vec<&Validator>>()
+    //     .len();
 
     let total_tvp_flagged = data
         .validators
@@ -1304,12 +1304,12 @@ fn flagged_validators_report<'a>(
         .collect::<Vec<&Validator>>()
         .len();
 
-    let total_non_tvp = data
-        .validators
-        .iter()
-        .filter(|v| v.subset == Subset::NONTVP && v.previous_era_active)
-        .collect::<Vec<&Validator>>()
-        .len();
+    // let total_non_tvp = data
+    //     .validators
+    //     .iter()
+    //     .filter(|v| v.subset == Subset::NONTVP && v.previous_era_active)
+    //     .collect::<Vec<&Validator>>()
+    //     .len();
 
     let total_non_tvp_flagged = data
         .validators
@@ -1323,12 +1323,12 @@ fn flagged_validators_report<'a>(
         .collect::<Vec<&Validator>>()
         .len();
 
-    let total_c100 = data
-        .validators
-        .iter()
-        .filter(|v| v.subset == Subset::C100 && v.previous_era_active)
-        .collect::<Vec<&Validator>>()
-        .len();
+    // let total_c100 = data
+    //     .validators
+    //     .iter()
+    //     .filter(|v| v.subset == Subset::C100 && v.previous_era_active)
+    //     .collect::<Vec<&Validator>>()
+    //     .len();
 
     let total_c100_flagged = data
         .validators
@@ -1352,7 +1352,7 @@ fn flagged_validators_report<'a>(
         let description = if data.records_total_full_epochs >= 6 {
             format!("{}In the previous era", warning)
         } else {
-            format!("{}In the last {}", warning, data.records_total_full_epochs)
+            format!("{}In the last {} sessions", warning, data.records_total_full_epochs)
         };
         report.add_raw_text(format!(
             "{}, {} ({:.2}%) validators missed more than 60% of votes when selected as para-validator for at least one session:",
@@ -1360,24 +1360,24 @@ fn flagged_validators_report<'a>(
             total_flagged,
             (total_flagged as f32 / total_active as f32) * 100.0
         ));
-        if is_short {
-            report.add_raw_text(format!(
-                "‣ {} are 100% commission validators, {} are valid TVP validators and the remainder {} other validators.",
-                total_c100_flagged,
-                total_tvp_flagged,
-                total_non_tvp_flagged
-            ));
-        } else {
-            report.add_raw_text(format!(
-                "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
-                total_c100_flagged,
-                (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
-                total_non_tvp_flagged,
-                (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
-                total_tvp_flagged,
-                (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
-            ));
-        }
+        // if is_short {
+        //     report.add_raw_text(format!(
+        //         "‣ {} are 100% commission validators, {} are valid TVP validators and the remainder {} other validators.",
+        //         total_c100_flagged,
+        //         total_tvp_flagged,
+        //         total_non_tvp_flagged
+        //     ));
+        // } else {
+        //     report.add_raw_text(format!(
+        //         "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
+        //         total_c100_flagged,
+        //         (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
+        //         total_non_tvp_flagged,
+        //         (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
+        //         total_tvp_flagged,
+        //         (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
+        //     ));
+        // }
         // extremely low-performance
         let elp = data
             .validators
