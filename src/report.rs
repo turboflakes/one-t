@@ -725,24 +725,19 @@ impl From<RawDataPara> for Report {
                 ));
 
                 if let Some(mvr) = para_record.missed_votes_ratio() {
-                    let total_implicit_votes = para_record.total_implicit_votes();
-                    let total_explicit_votes = para_record.total_explicit_votes();
-                    let para_points = (total_implicit_votes + total_explicit_votes) * 20;
-                    let total_points = (authority_record.authored_blocks() * 20) + para_points;
-
                     clode_block.push_str(&format!(
                         "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
                         "*",
                         slice(&replace_emoji(&data.validator.name, "_"), 24),
                         authority_record.authored_blocks(),
                         para_record.total_core_assignments(),
-                        total_implicit_votes,
-                        total_explicit_votes,
+                        para_record.total_implicit_votes(),
+                        para_record.total_explicit_votes(),
                         para_record.total_missed_votes(),
                         grade(1.0_f64 - mvr),
                         (mvr * 10000.0).round() / 10000.0,
-                        para_points,
-                        total_points
+                        authority_record.para_points(),
+                        authority_record.points(),
                     ));
                 } else {
                     clode_block.push_str(&format!(
@@ -764,24 +759,19 @@ impl From<RawDataPara> for Report {
                 let peers_letters = vec!["A", "B", "C", "D"];
                 for (i, peer) in data.peers.iter().enumerate() {
                     if let Some(mvr) = peer.2.missed_votes_ratio() {
-                        let total_implicit_votes = peer.2.total_implicit_votes();
-                        let total_explicit_votes = peer.2.total_explicit_votes();
-                        let para_points = (total_implicit_votes + total_explicit_votes) * 20;
-                        let total_points = (peer.1.authored_blocks() * 20) + para_points;
-
                         clode_block.push_str(&format!(
                             "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
                             peers_letters[i],
                             slice(&replace_emoji(&peer.0.clone(), "_"), 24),
                             peer.1.authored_blocks(),
                             peer.2.total_core_assignments(),
-                            total_implicit_votes,
-                            total_explicit_votes,
+                            peer.2.total_implicit_votes(),
+                            peer.2.total_explicit_votes(),
                             peer.2.total_missed_votes(),
                             grade(1.0_f64 - mvr),
                             (mvr * 10000.0).round() / 10000.0,
-                            para_points,
-                            total_points
+                            peer.1.para_points(),
+                            peer.1.points()
                         ));
                     } else {
                         clode_block.push_str(&format!(
@@ -801,22 +791,23 @@ impl From<RawDataPara> for Report {
                     }
                 }
 
-                clode_block.push_str("\nPARACHAINS VOTES BREAKDOWN\n");
+                clode_block.push_str("\nPARACHAINS BREAKDOWN\n");
                 // Print out parachains breakdown
                 clode_block.push_str(&format!(
-                    "{:<9}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}\n",
+                    "{:<12}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}\n",
                     "", "*", "*", "*", "A", "A", "A", "B", "B", "B", "C", "C", "C", "D", "D", "D",
                 ));
                 clode_block.push_str(&format!(
-                    "{:<6}{:>3}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}\n",
-                    "#", "↻", "✓", "✗","p", "✓", "✗", "p", "✓", "✗", "p","✓", "✗", "p","✓", "✗", "p",
+                    "{:<6}{:>3}{:>3}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}\n",
+                    "#","❒","↻", "✓", "✗","p", "✓", "✗", "p", "✓", "✗", "p","✓", "✗", "p","✓", "✗", "p",
                 ));
                 for para_id in data.parachains.iter() {
                     // Print out votes per para id
                     if let Some(stats) = para_record.get_para_id_stats(*para_id) {
                         let mut line: String = format!(
-                            "{:<6}{:>3}{:>5}{:>5}{:>5}",
+                            "{:<6}{:>3}{:>3}{:>4}{:>4}{:>5}",
                             para_id,
+                            stats.authored_blocks(),
                             stats.core_assignments(),
                             stats.total_votes(),
                             stats.missed_votes(),
@@ -825,7 +816,7 @@ impl From<RawDataPara> for Report {
                         for peer in data.peers.iter() {
                             if let Some(peer_stats) = peer.2.get_para_id_stats(*para_id) {
                                 line.push_str(&format!(
-                                    "{:>5}{:>5}{:>5}",
+                                    "{:>4}{:>4}{:>5}",
                                     peer_stats.total_votes(),
                                     peer_stats.missed_votes(),
                                     peer_stats.para_points()
