@@ -451,7 +451,7 @@ pub async fn track_records(
                             for (candidate_receipt, group_authorities) in
                                 backing_votes.backing_validators_per_candidate.iter()
                             {
-                                warn!(
+                                debug!(
                                     "para_id: {:?} group_authorities {:?}",
                                     candidate_receipt.descriptor.para_id, group_authorities
                                 );
