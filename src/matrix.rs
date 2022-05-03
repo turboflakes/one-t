@@ -932,11 +932,12 @@ impl Matrix {
                         // Parse message to commands
                         for message in events.chunk.iter() {
                             if message.content.msgtype == "m.text" {
-                                match message.content.body.split_once(' ') {
+                                let body = message.content.body.trim();
+                                match body.split_once(' ') {
                                     None => {
-                                        if message.content.body == "!help" {
+                                        if body == "!help" {
                                             commands.push(Commands::Help);
-                                        } else if message.content.body == "!legends" {
+                                        } else if body == "!legends" {
                                             commands.push(Commands::Legends);
                                         }
                                     }
