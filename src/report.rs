@@ -392,6 +392,32 @@ impl From<RawDataRank> for Report {
         }
 
         report.add_break();
+        report.add_break();
+        report.add_raw_text("\tLegend:".into());
+        report.add_raw_text("\tscore = (1 - mvr) * 0.5 + ((avg_pts - min_avg_pts) / (max_avg_pts - min_avg_pts)) * 0.4 + (pv_sessions / total_sessions) * 0.1".into());
+        report.add_break();
+        report.add_raw_text("\tTimeline:".into());
+        report.add_raw_text("\t❚ = 1-MVR >= 80%".into());
+        report.add_raw_text("\t❙ = 1-MVR >= 60%".into());
+        report.add_raw_text("\t❘ = 1-MVR >= 40%".into());
+        report.add_raw_text("\t! = 1-MVR >= 20%".into());
+        report.add_raw_text("\t¿ = 1-MVR < 20%".into());
+        report.add_raw_text("\t? = No-votes".into());
+        report.add_raw_text("\t• = Not P/V".into());
+        report.add_raw_text("\t_ = Waiting".into());
+        report.add_break();
+        report.add_raw_text("\tGrade:".into());
+        report.add_raw_text("\tA+ = 1-MVR >= 90%".into());
+        report.add_raw_text("\tA = 1-MVR >= 80%".into());
+        report.add_raw_text("\tB+ = 1-MVR >= 70%".into());
+        report.add_raw_text("\tB = 1-MVR >= 60%".into());
+        report.add_raw_text("\tC+ = 1-MVR >= 55%".into());
+        report.add_raw_text("\tC = 1-MVR >= 50%".into());
+        report.add_raw_text("\tD+ = 1-MVR >= 45%".into());
+        report.add_raw_text("\tD = 1-MVR >= 40%".into());
+        report.add_raw_text("\tF = 1-MVR < 40%".into());
+        report.add_break();
+        report.add_break();
         report.add_raw_text("\t——".into());
         report.add_raw_text(format!(
             "\t{} v{}",
@@ -659,7 +685,7 @@ impl From<RawDataPara> for Report {
                 // Print Grade
                 if let Some(mvr) = para_record.missed_votes_ratio() {
                     report.add_raw_text(format!(
-                        "🎓 Finished session {} with grade <b>{}</b>",
+                        "🎓 Session {} Grade: <b>{}</b>",
                         data.meta.current_session_index,
                         grade(1.0_f64 - mvr)
                     ));
