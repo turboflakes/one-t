@@ -940,8 +940,9 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             records.get_data_from_previous_epochs(&stash, last_full_6_sessions)
         {
             v.previous_era_active = is_active;
-            if let Some((para_epochs, flagged_epochs, mvr)) = para_data {
+            if let Some((para_epochs, exceptional_epochs, flagged_epochs, mvr)) = para_data {
                 v.previous_era_para_epochs = para_epochs;
+                v.previous_era_exceptional_epochs = exceptional_epochs;
                 v.previous_era_flagged_epochs = flagged_epochs;
                 v.previous_era_missed_ratio = Some(mvr);
             }

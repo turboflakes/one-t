@@ -54,6 +54,7 @@ pub struct Validator {
     pub total_authored_blocks: u32,
     pub previous_era_active: bool,
     pub previous_era_para_epochs: u32,
+    pub previous_era_exceptional_epochs: u32,
     pub previous_era_flagged_epochs: u32,
     pub previous_era_missed_ratio: Option<f64>,
     pub pattern: Pattern,
@@ -87,6 +88,7 @@ impl Validator {
             total_authored_blocks: 0,
             previous_era_active: false,
             previous_era_para_epochs: 0,
+            previous_era_exceptional_epochs: 0,
             previous_era_flagged_epochs: 0,
             previous_era_missed_ratio: None,
             pattern: Vec::new(),
@@ -1339,6 +1341,18 @@ fn flagged_validators_report<'a>(
         .collect::<Vec<&Validator>>()
         .len();
 
+    let total_tvp_exceptional = data
+        .validators
+        .iter()
+        .filter(|v| {
+            v.subset == Subset::TVP
+                && v.previous_era_active
+                && v.previous_era_para_epochs >= 1
+                && v.previous_era_exceptional_epochs >= 1
+        })
+        .collect::<Vec<&Validator>>()
+        .len();
+
     let total_non_tvp = data
         .validators
         .iter()
@@ -1354,6 +1368,18 @@ fn flagged_validators_report<'a>(
                 && v.previous_era_active
                 && v.previous_era_para_epochs >= 1
                 && v.previous_era_flagged_epochs >= 1
+        })
+        .collect::<Vec<&Validator>>()
+        .len();
+
+    let total_non_tvp_exceptional = data
+        .validators
+        .iter()
+        .filter(|v| {
+            v.subset == Subset::NONTVP
+                && v.previous_era_active
+                && v.previous_era_para_epochs >= 1
+                && v.previous_era_exceptional_epochs >= 1
         })
         .collect::<Vec<&Validator>>()
         .len();
@@ -1377,31 +1403,60 @@ fn flagged_validators_report<'a>(
         .collect::<Vec<&Validator>>()
         .len();
 
+    let total_c100_exceptional = data
+        .validators
+        .iter()
+        .filter(|v| {
+            v.subset == Subset::C100
+                && v.previous_era_active
+                && v.previous_era_para_epochs >= 1
+                && v.previous_era_exceptional_epochs >= 1
+        })
+        .collect::<Vec<&Validator>>()
+        .len();
+
     let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
+    let total_exceptional =
+        total_c100_exceptional + total_non_tvp_exceptional + total_tvp_exceptional;
 
     if total_flagged != 0 {
-        let warning = if total_flagged as f32 / total_active as f32 > 0.25 {
+        let warning = if ((total_flagged as f32 / total_active as f32) > 0.20)
+            && ((total_exceptional as f32 / total_active as f32) < 0.20)
+        {
             "⚠️ "
         } else {
             ""
         };
 
         report.add_raw_text(format!(
-            "{}In the last {} sessions, {} ({:.2}%) validators missed more than 60% of votes when selected as para-validator for at least one session:",
+            "{}In the last {} sessions, {} ({:.2}%) validators had an exceptional performance (A+) and {} ({:.2}%) a low performance (F) when selected as para-validator for at least one session.",
             warning,
             data.records_total_full_epochs,
+            total_exceptional,
+            (total_exceptional as f32 / total_active as f32) * 100.0,
             total_flagged,
             (total_flagged as f32 / total_active as f32) * 100.0
         ));
-        report.add_raw_text(format!(
-            "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
-            total_c100_flagged,
-            (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
-            total_non_tvp_flagged,
-            (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
-            total_tvp_flagged,
-            (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
-        ));
+        if !is_short {
+            report.add_raw_text(format!(
+                "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b> → <i>A+</i>",
+                total_c100_exceptional,
+                (total_c100_exceptional as f32 / total_c100 as f32) * 100.0,
+                total_non_tvp_exceptional,
+                (total_non_tvp_exceptional as f32 / total_non_tvp as f32) * 100.0,
+                total_tvp_exceptional,
+                (total_tvp_exceptional as f32 / total_tvp as f32) * 100.0,
+            ));
+            report.add_raw_text(format!(
+                "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b> → <i>F</i>",
+                total_c100_flagged,
+                (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
+                total_non_tvp_flagged,
+                (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
+                total_tvp_flagged,
+                (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
+            ));
+        }
         // extremely low-performance
         let elp = data
             .validators
@@ -1414,7 +1469,7 @@ fn flagged_validators_report<'a>(
             })
             .collect::<Vec<&Validator>>();
         if elp.len() > 0 {
-            report.add_raw_text(format!("‣ 🚨 {} missed more than 80% of votes.", elp.len()));
+            report.add_raw_text(format!("‣ 🚨 {} had a very low performance.", elp.len()));
         }
         report.add_break();
     }
@@ -1521,13 +1576,23 @@ fn top_performers_report<'a>(
         report.add_break();
 
         for v in &validators[..max] {
-            report.add_raw_text(format!("* {} ({:.2}%)", v.name, v.score * 100.0,));
+            report.add_raw_text(format!(
+                "* {} ({:.2}%, {}, {}, {}x)",
+                v.name,
+                v.score * 100.0,
+                (v.missed_ratio.unwrap() * 10000.0).round() * 10000.0,
+                v.avg_para_points,
+                v.para_epochs,
+            ));
         }
 
         if !is_short {
             report.add_break();
-            report.add_raw_text(format!("<i>Legend: Val. identity (Score)</i>"));
-            report.add_raw_text(format!("<i>Score: Backing votes ratio (50%), average p/v points (40%) and number of active p/v sessions (10%)</i>"));
+            report.add_raw_text(format!("<i>Legend: Val. identity (Score, Missed votes ratio, Average p/v points, Number of sessions as p/v)</i>"));
+            report.add_raw_text(format!("<i>Score: Backing votes ratio (1-MVR) make up 50% of the score, average p/v points make up 40% and number of sessions as p/v the remaining 10%</i>"));
+            report.add_raw_text(format!(
+                "<i>Sorting: Validators are sorted by Score in descending order</i>"
+            ));
         }
 
         report.add_break();

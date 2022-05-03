@@ -44,6 +44,7 @@ pub type AuthoredBlocks = u32;
 pub type TotalActiveEpochs = u32;
 pub type TotalParaEpochs = u32;
 pub type TotalFlaggedEpochs = u32;
+pub type TotalExceptionalEpochs = u32;
 pub type Votes = u32;
 pub type ExplicitVotes = u32;
 pub type ImplicitVotes = u32;
@@ -290,13 +291,22 @@ impl Records {
         &self,
         address: &AccountId32,
         number_of_epochs: u32,
-    ) -> Option<(bool, Option<(TotalParaEpochs, TotalFlaggedEpochs, Ratio)>)> {
+    ) -> Option<(
+        bool,
+        Option<(
+            TotalParaEpochs,
+            TotalExceptionalEpochs,
+            TotalFlaggedEpochs,
+            Ratio,
+        )>,
+    )> {
         if self.total_full_epochs() == 0 {
             return None;
         }
         let mut is_active = false;
         let mut para_epochs: TotalParaEpochs = 0;
         let mut flagged_epochs: TotalFlaggedEpochs = 0;
+        let mut exceptional_epochs: TotalExceptionalEpochs = 0;
         let mut total_votes: Votes = 0;
         let mut missed_votes: Votes = 0;
 
@@ -317,9 +327,12 @@ impl Records {
                         let tv = para_record.total_votes();
                         let mv = para_record.total_missed_votes();
                         let mvr = mv as f64 / (tv + mv) as f64;
-                        // Flag epochs which grade is F (fail)
-                        if grade(1.0 - mvr) == "F" {
+                        // Identify failed and exceptional epochs
+                        let grade = grade(1.0 - mvr);
+                        if grade == "F" {
                             flagged_epochs += 1;
+                        } else if grade == "A+" {
+                            exceptional_epochs += 1;
                         }
                         total_votes += tv;
                         missed_votes += mv;
@@ -330,7 +343,10 @@ impl Records {
         }
         if para_epochs > 0 && total_votes + missed_votes > 0 {
             let mvr = missed_votes as f64 / (total_votes + missed_votes) as f64;
-            Some((is_active, Some((para_epochs, flagged_epochs, mvr))))
+            Some((
+                is_active,
+                Some((para_epochs, exceptional_epochs, flagged_epochs, mvr)),
+            ))
         } else {
             Some((is_active, None))
         }
