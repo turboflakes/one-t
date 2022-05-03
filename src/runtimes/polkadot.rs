@@ -930,7 +930,15 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         v.own_stake = get_own_stake(&onet, &stash).await?;
 
         // Get highlights from previous 6 sessions (last era)
-        if let Some((is_active, para_data)) = records.get_data_from_previous_epochs(&stash, 6) {
+        let last_full_6_sessions = if records.total_full_epochs() > 6 {
+            6
+        } else {
+            records.total_full_epochs()
+        };
+
+        if let Some((is_active, para_data)) =
+            records.get_data_from_previous_epochs(&stash, last_full_6_sessions)
+        {
             v.previous_era_active = is_active;
             if let Some((para_epochs, flagged_epochs, mvr)) = para_data {
                 v.previous_era_para_epochs = para_epochs;

@@ -1299,10 +1299,10 @@ fn flagged_validators_report<'a>(
     data: &'a RawData,
     is_short: bool,
 ) -> &'a Report {
-    let total_para_active = data
+    let total_active = data
         .validators
         .iter()
-        .filter(|v| v.previous_era_active && v.previous_era_para_epochs >= 1)
+        .filter(|v| v.previous_era_active)
         .collect::<Vec<&Validator>>()
         .len();
 
@@ -1366,18 +1366,18 @@ fn flagged_validators_report<'a>(
     let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
 
     if total_flagged != 0 {
-        let warning = if total_flagged as f32 / total_para_active as f32 > 0.10 {
+        let warning = if total_flagged as f32 / total_active as f32 > 0.10 {
             "⚠️ "
         } else {
             ""
         };
-        
+
         report.add_raw_text(format!(
             "{}In the last {} sessions, {} ({:.2}%) validators missed more than 60% of votes when selected as para-validator for at least one session:",
             warning,
             data.records_total_full_epochs,
             total_flagged,
-            (total_flagged as f32 / total_para_active as f32) * 100.0
+            (total_flagged as f32 / total_active as f32) * 100.0
         ));
         if !is_short {
             report.add_raw_text(format!(

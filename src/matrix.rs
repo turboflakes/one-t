@@ -1068,7 +1068,9 @@ impl Matrix {
         message.push_str("✓e: Total number of explicit votes by the validator.<br>");
         message.push_str("✗: Total number of missed votes by the validator.<br>");
         message.push_str("MVR: Missed Votes Ratio (MVR = (✗) / (✓i + ✓e + ✗)).<br>");
-        message.push_str("GRD: Grade reflects the Backing Votes Ratio (BVR = 1-MVR) by the validator:<br>");
+        message.push_str(
+            "GRD: Grade reflects the Backing Votes Ratio (BVR = 1-MVR) by the validator:<br>",
+        );
         message.push_str("‣ A+ = BVR >= 90% <br>");
         message.push_str("‣ A = BVR >= 80% <br>");
         message.push_str("‣ B+ = BVR >= 70% <br>");
@@ -1116,11 +1118,12 @@ impl Matrix {
             "<i>Note: Parachains are sorted by para-validator points in descending order.</i><br>",
         );
         message.push_str("<br>");
-        
+
         message.push_str("<i>Validators performance insights report legend:</i><br>");
         message.push_str("→: !subscribe insights<br>");
         message.push_str("Score: score = (1 - mvr) * 0.5 + ((avg_pts - min_avg_pts) / (max_avg_pts - min_avg_pts)) * 0.4 + (pv_sessions / total_sessions) * 0.1<br>");
-        message.push_str("Timeline: Graphic performance representation in the last X sessions:<br>");
+        message
+            .push_str("Timeline: Graphic performance representation in the last X sessions:<br>");
         message.push_str("‣ ❚ = BVR >= 80% <br>");
         message.push_str("‣ ❙ = BVR >= 60% <br>");
         message.push_str("‣ ❘ = BVR >= 40% <br>");
@@ -1129,7 +1132,9 @@ impl Matrix {
         message.push_str("‣ ? = No-votes<br>");
         message.push_str("‣ • = Not P/V<br>");
         message.push_str("‣ _ = Waiting<br>");
-        message.push_str("<i>Note: This report also provides all the validator info described before.</i><br>");
+        message.push_str(
+            "<i>Note: This report also provides all the validator info described before.</i><br>",
+        );
         message.push_str("<br>");
 
         return self.send_public_message(&message, Some(&message)).await;
