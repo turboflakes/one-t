@@ -1059,7 +1059,11 @@ fn own_stake_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         .map(|v| v.own_stake)
         .collect();
 
-    let avg_tvp: u128 = tvp.iter().sum::<u128>() / tvp.len() as u128;
+    let avg_tvp: u128 = if tvp.len() > 0 {
+        tvp.iter().sum::<u128>() / tvp.len() as u128
+    } else {
+        0
+    };
 
     let non_tvp: Vec<u128> = data
         .validators
@@ -1068,7 +1072,11 @@ fn own_stake_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         .map(|v| v.own_stake)
         .collect();
 
-    let avg_non_tvp: u128 = non_tvp.iter().sum::<u128>() / non_tvp.len() as u128;
+    let avg_non_tvp: u128 = if non_tvp.len() > 0 {
+        non_tvp.iter().sum::<u128>() / non_tvp.len() as u128
+    } else {
+        0
+    };
 
     let c100: Vec<u128> = data
         .validators
@@ -1077,7 +1085,11 @@ fn own_stake_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         .map(|v| v.own_stake)
         .collect();
 
-    let avg_c100: u128 = c100.iter().sum::<u128>() / c100.len() as u128;
+    let avg_c100: u128 = if c100.len() > 0 {
+        c100.iter().sum::<u128>() / c100.len() as u128
+    } else {
+        0
+    };
 
     report.add_raw_text(format!(
         "Average (Min, Max) validator self stake in {}:",
@@ -1102,12 +1114,14 @@ fn own_stake_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
     report.add_raw_text(format!(
         "Validator self stake contributions for network security:"
     ));
-    report.add_raw_text(format!(
-        "‣ {:.2}% • {:.2}% • <b>{:.2}%</b>",
-        (c100.iter().sum::<u128>() as f64 / total as f64) * 100.0,
-        (non_tvp.iter().sum::<u128>() as f64 / total as f64) * 100.0,
-        (tvp.iter().sum::<u128>() as f64 / total as f64) * 100.0,
-    ));
+    if total > 0 {
+        report.add_raw_text(format!(
+            "‣ {:.2}% • {:.2}% • <b>{:.2}%</b>",
+            (c100.iter().sum::<u128>() as f64 / total as f64) * 100.0,
+            (non_tvp.iter().sum::<u128>() as f64 / total as f64) * 100.0,
+            (tvp.iter().sum::<u128>() as f64 / total as f64) * 100.0,
+        ));
+    }
     report.add_break();
 
     report
