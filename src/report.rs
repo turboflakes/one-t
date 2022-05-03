@@ -392,30 +392,30 @@ impl From<RawDataRank> for Report {
         }
 
         report.add_break();
-        report.add_break();
-        report.add_raw_text("\tLegend:".into());
-        report.add_raw_text("\tscore = (1 - mvr) * 0.5 + ((avg_pts - min_avg_pts) / (max_avg_pts - min_avg_pts)) * 0.4 + (pv_sessions / total_sessions) * 0.1".into());
-        report.add_break();
-        report.add_raw_text("\tTimeline:".into());
-        report.add_raw_text("\t❚ = 1-MVR >= 80%".into());
-        report.add_raw_text("\t❙ = 1-MVR >= 60%".into());
-        report.add_raw_text("\t❘ = 1-MVR >= 40%".into());
-        report.add_raw_text("\t! = 1-MVR >= 20%".into());
-        report.add_raw_text("\t¿ = 1-MVR < 20%".into());
-        report.add_raw_text("\t? = No-votes".into());
-        report.add_raw_text("\t• = Not P/V".into());
-        report.add_raw_text("\t_ = Waiting".into());
-        report.add_break();
-        report.add_raw_text("\tGrade:".into());
-        report.add_raw_text("\tA+ = 1-MVR >= 90%".into());
-        report.add_raw_text("\tA = 1-MVR >= 80%".into());
-        report.add_raw_text("\tB+ = 1-MVR >= 70%".into());
-        report.add_raw_text("\tB = 1-MVR >= 60%".into());
-        report.add_raw_text("\tC+ = 1-MVR >= 55%".into());
-        report.add_raw_text("\tC = 1-MVR >= 50%".into());
-        report.add_raw_text("\tD+ = 1-MVR >= 45%".into());
-        report.add_raw_text("\tD = 1-MVR >= 40%".into());
-        report.add_raw_text("\tF = 1-MVR < 40%".into());
+        // report.add_break();
+        // report.add_raw_text("\tLegend:".into());
+        // report.add_raw_text("\tscore = (1 - mvr) * 0.5 + ((avg_pts - min_avg_pts) / (max_avg_pts - min_avg_pts)) * 0.4 + (pv_sessions / total_sessions) * 0.1".into());
+        // report.add_break();
+        // report.add_raw_text("\tTimeline:".into());
+        // report.add_raw_text("\t❚ = 1-MVR >= 80%".into());
+        // report.add_raw_text("\t❙ = 1-MVR >= 60%".into());
+        // report.add_raw_text("\t❘ = 1-MVR >= 40%".into());
+        // report.add_raw_text("\t! = 1-MVR >= 20%".into());
+        // report.add_raw_text("\t¿ = 1-MVR < 20%".into());
+        // report.add_raw_text("\t? = No-votes".into());
+        // report.add_raw_text("\t• = Not P/V".into());
+        // report.add_raw_text("\t_ = Waiting".into());
+        // report.add_break();
+        // report.add_raw_text("\tGrade:".into());
+        // report.add_raw_text("\tA+ = 1-MVR >= 90%".into());
+        // report.add_raw_text("\tA = 1-MVR >= 80%".into());
+        // report.add_raw_text("\tB+ = 1-MVR >= 70%".into());
+        // report.add_raw_text("\tB = 1-MVR >= 60%".into());
+        // report.add_raw_text("\tC+ = 1-MVR >= 55%".into());
+        // report.add_raw_text("\tC = 1-MVR >= 50%".into());
+        // report.add_raw_text("\tD+ = 1-MVR >= 45%".into());
+        // report.add_raw_text("\tD = 1-MVR >= 40%".into());
+        // report.add_raw_text("\tF = 1-MVR < 40%".into());
         report.add_break();
         report.add_break();
         report.add_raw_text("\t——".into());
@@ -1339,7 +1339,7 @@ fn flagged_validators_report<'a>(
             v.subset == Subset::NONTVP
                 && v.previous_era_active
                 && v.previous_era_para_epochs >= 1
-                && v.previous_era_flagged_epochs >= 2
+                && v.previous_era_flagged_epochs >= 1
         })
         .collect::<Vec<&Validator>>()
         .len();
@@ -1358,7 +1358,7 @@ fn flagged_validators_report<'a>(
             v.subset == Subset::C100
                 && v.previous_era_active
                 && v.previous_era_para_epochs >= 1
-                && v.previous_era_flagged_epochs >= 2
+                && v.previous_era_flagged_epochs >= 1
         })
         .collect::<Vec<&Validator>>()
         .len();
@@ -1371,17 +1371,11 @@ fn flagged_validators_report<'a>(
         } else {
             ""
         };
-        let description = if data.records_total_full_epochs >= 6 {
-            format!("{}In the previous era", warning)
-        } else {
-            format!(
-                "{}In the last {} sessions",
-                warning, data.records_total_full_epochs
-            )
-        };
+        
         report.add_raw_text(format!(
-            "{}, {} ({:.2}%) validators missed more than 60% of votes when selected as para-validator for at least one session:",
-            description,
+            "{}In the last {} sessions, {} ({:.2}%) validators missed more than 60% of votes when selected as para-validator for at least one session:",
+            warning,
+            data.records_total_full_epochs,
             total_flagged,
             (total_flagged as f32 / total_active as f32) * 100.0
         ));
@@ -1510,8 +1504,9 @@ fn top_performers_report<'a>(
         }
 
         report.add_raw_text(format!(
-            "<i>To get the full picture -> !subscribe ranking</i>"
+            "<i>To get the full picture -> !subscribe insights</i>"
         ));
+        report.add_break();
 
         for v in &validators[..max] {
             report.add_raw_text(format!("* {} ({:.2}%)", v.name, v.score * 100.0,));

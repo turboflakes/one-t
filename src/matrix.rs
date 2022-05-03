@@ -535,7 +535,7 @@ impl Matrix {
                                         }
                                     }
                                 }
-                                ReportType::Ranking => {
+                                ReportType::Insights => {
                                     // Write user in subscribers.ranking file if doesn't already exist
                                     let subscriber = format!("{who}\n");
                                     let path = format!(
@@ -687,7 +687,7 @@ impl Matrix {
                                         }
                                     }
                                 }
-                                ReportType::Ranking => {
+                                ReportType::Insights => {
                                     // Remove user from subscribers file
                                     let subscriber = format!("{who}\n");
                                     let path = format!(
@@ -953,8 +953,8 @@ impl Matrix {
                                                 message.sender.to_string(),
                                                 None,
                                             )),
-                                            "ranking" => commands.push(Commands::Subscribe(
-                                                ReportType::Ranking,
+                                            "insights" => commands.push(Commands::Subscribe(
+                                                ReportType::Insights,
                                                 message.sender.to_string(),
                                                 None,
                                             )),
@@ -965,8 +965,8 @@ impl Matrix {
                                             )),
                                         },
                                         "!unsubscribe" => match value {
-                                            "ranking" => commands.push(Commands::Unsubscribe(
-                                                ReportType::Ranking,
+                                            "insights" => commands.push(Commands::Unsubscribe(
+                                                ReportType::Insights,
                                                 message.sender.to_string(),
                                                 None,
                                             )),
@@ -1032,15 +1032,15 @@ impl Matrix {
     pub async fn reply_help(&self) -> Result<(), MatrixError> {
         let config = CONFIG.clone();
         let mut message = String::from("✨ Supported commands:<br>");
-        message.push_str("<b>!subscribe <i>STASH_ADDRESS</i></b> - Subscribe to the <i>Validator Performance Report</i> for the stash address specified. The report is sent via DM at the end of each session until unsubscribed. The report is only sent if the <i>para-validator</i> role was assigned to the validator on the previous session.<br>");
+        message.push_str("<b>!subscribe <i>STASH_ADDRESS</i></b> - Subscribe to the <i>Validator Performance Report</i> for the stash address specified. The report is only sent if the <i>para-validator</i> role was assigned to the validator in the previous session. The report is always sent via DM at the end of each session, unless the report is unsubscribed.<br>");
         message.push_str(
             "<b>!unsubscribe <i>STASH_ADDRESS</i></b> - Unsubscribe the stash address from the <i>Validator Performance Report</i> subscribers list.<br>",
         );
         message.push_str(&format!("<b>!subscribe groups</b> - Subscribe to the <i>Validator Groups Performance Report</i>. The report is sent via DM at the end of the next {} sessions.<br>", config.maximum_reports));
         message.push_str(&format!("<b>!subscribe parachains</b> - Subscribe to the <i>Parachains Performance Report</i>. The report is sent via DM at the end of the next {} sessions.<br>", config.maximum_reports));
-        message.push_str("<b>!subscribe ranking</b> - Subscribe to the <i>ONE-T Performance Ranking Report</i>. The report is a Tab-delimited gzip compressed file, sent via DM at the end of each era until unsubscribed.<br>");
+        message.push_str("<b>!subscribe insights</b> - Subscribe to the <i>Validators Performance Insights Report</i>. The report is a Tab-delimited gzip compressed file, sent via DM at the end of each era, unless the report is unsubscribed.<br>");
         message.push_str(
-            "<b>!unsubscribe ranking</b> - Unsubscribe to the <i>ONE-T Performance Ranking Report</i> subscribers list.<br>",
+            "<b>!unsubscribe insights</b> - Unsubscribe to the <i>Validators Performance Insights Report</i>.<br>",
         );
         // message.push_str("!report - Send validator \\<Stash Address\\> performance report for the current epoch.<br>");
         message.push_str("<b>!legends</b> - Print legends of all reports.<br>");
@@ -1067,15 +1067,23 @@ impl Matrix {
         message.push_str("✓i: Total number of implicit votes by the validator.<br>");
         message.push_str("✓e: Total number of explicit votes by the validator.<br>");
         message.push_str("✗: Total number of missed votes by the validator.<br>");
-        message.push_str("GRD: Grade reflects the Backing Votes Ratio (BVR = (✓i + ✓e) / (✓i + ✓e + ✗)) by the validator.<br> ");
-        message.push_str("<i>The grade system blueprint: A+ >= 90% ; A >= 80% ; B+ >= 70% ; B >= 60% ; C+ >= 55% ; C >= 50% ; D+ >= 45% ; D >= 40% ; F < 40%.</i><br>");
         message.push_str("MVR: Missed Votes Ratio (MVR = (✗) / (✓i + ✓e + ✗)).<br>");
+        message.push_str("GRD: Grade reflects the Backing Votes Ratio (BVR = 1-MVR) by the validator:<br>");
+        message.push_str("‣ A+ = BVR >= 90% <br>");
+        message.push_str("‣ A = BVR >= 80% <br>");
+        message.push_str("‣ B+ = BVR >= 70% <br>");
+        message.push_str("‣ B = BVR >= 60% <br>");
+        message.push_str("‣ C+ = BVR >= 55% <br>");
+        message.push_str("‣ C = BVR >= 50% <br>");
+        message.push_str("‣ D+ = BVR >= 45% <br>");
+        message.push_str("‣ D = BVR >= 40% <br>");
+        message.push_str("‣ F = BVR < 40% <br>");
         message.push_str("PPTS: Sum of para-validator points the validator earned.<br>");
         message.push_str(
             "TPTS: Sum of para-validator points + authored blocks points the validator earned.<br>",
         );
-        message.push_str("*: ✓ is the Total number of (implicit + explicit) votes and ✗ is the Total number of missed votes by the subscribed validator while assigned to the parachain.<br>");
-        message.push_str("A, B, C, D: Represents each validator in the same val. group as the subscribed validator, while assigned to the parachain.<br>");
+        message.push_str("*: ✓ is the Total number of (implicit + explicit) votes and ✗ is the Total number of missed votes by the subscribed validator.<br>");
+        message.push_str("A, B, C, D: Represents each validator in the same val. group as the subscribed validator.<br>");
         message.push_str("<br>");
         message.push_str("<i>Val. groups performance report legend:</i><br>");
         message.push_str("→: !subscribe groups<br>");
@@ -1084,14 +1092,14 @@ impl Matrix {
         message.push_str("✓i: Total number of implicit votes.<br>");
         message.push_str("✓e: Total number of explicit votes.<br>");
         message.push_str("✗: Total number of missed votes by the validator.<br>");
-        message.push_str("GRD: Grade reflects Total Votes Ratio.<br>");
+        message.push_str("GRD: Grade reflects the Backing Votes Ratio.<br>");
         message.push_str("MVR: Missed Votes Ratio.<br>");
         message.push_str("PPTS: Sum of para-validator points the validator earned.<br>");
         message.push_str(
             "TPTS: Sum of para-validator points + authored blocks points the validator earned.<br>",
         );
         message
-            .push_str("Note: Val. groups and validators are sorted by para-validator points in descending order.<br>");
+            .push_str("<i>Note: Val. groups and validators are sorted by para-validator points in descending order.</i><br>");
         message.push_str("<br>");
         message.push_str("<i>Parachains performance report legend:</i><br>");
         message.push_str("→: !subscribe parachains<br>");
@@ -1105,8 +1113,23 @@ impl Matrix {
             "TPTS: Sum of para-validator points + authored blocks points from all validators.<br>",
         );
         message.push_str(
-            "Note: Parachains are sorted by para-validator points in descending order.<br>",
+            "<i>Note: Parachains are sorted by para-validator points in descending order.</i><br>",
         );
+        message.push_str("<br>");
+        
+        message.push_str("<i>Validators performance insights report legend:</i><br>");
+        message.push_str("→: !subscribe insights<br>");
+        message.push_str("Score: score = (1 - mvr) * 0.5 + ((avg_pts - min_avg_pts) / (max_avg_pts - min_avg_pts)) * 0.4 + (pv_sessions / total_sessions) * 0.1<br>");
+        message.push_str("Timeline: Graphic performance representation in the last X sessions:<br>");
+        message.push_str("‣ ❚ = BVR >= 80% <br>");
+        message.push_str("‣ ❙ = BVR >= 60% <br>");
+        message.push_str("‣ ❘ = BVR >= 40% <br>");
+        message.push_str("‣ ! = BVR >= 20% <br>");
+        message.push_str("‣ ¿ = BVR < 20% <br>");
+        message.push_str("‣ ? = No-votes<br>");
+        message.push_str("‣ • = Not P/V<br>");
+        message.push_str("‣ _ = Waiting<br>");
+        message.push_str("<i>Note: This report also provides all the validator info described before.</i><br>");
         message.push_str("<br>");
 
         return self.send_public_message(&message, Some(&message)).await;

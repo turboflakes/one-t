@@ -1064,7 +1064,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             let data = RawDataRank {
                 network: network.clone(),
                 meta: metadata.clone(),
-                report_type: ReportType::Ranking,
+                report_type: ReportType::Insights,
                 validators,
                 records_total_full_epochs: records.total_full_epochs(),
             };
@@ -1087,7 +1087,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             let file_size = fs::metadata(&path_filename)?.len();
 
             if let Some(url) = onet.matrix().upload_file(&path_filename)? {
-                if let Ok(subs) = get_subscribers_by_epoch(ReportType::Ranking, None) {
+                if let Ok(subs) = get_subscribers_by_epoch(ReportType::Insights, None) {
                     for user_id in subs.iter() {
                         onet.matrix()
                             .send_private_file(
