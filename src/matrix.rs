@@ -1067,8 +1067,9 @@ impl Matrix {
         message.push_str("✓i: Total number of implicit votes by the validator.<br>");
         message.push_str("✓e: Total number of explicit votes by the validator.<br>");
         message.push_str("✗: Total number of missed votes by the validator.<br>");
-        message.push_str("GRD: Grade reflects Total Votes Ratio (TVR). TVR = (✓i + ✓e) / (✓i + ✓e + ✗)). Grade system: A+ >= 90% ; A >= 80% ; B+ >= 70% ; B >= 60% ; C+ >= 55% ; C >= 50% ; D+ >= 45% ; D >= 40% ; F < 40%).<br>");
-        message.push_str("MVR: Missed Votes Ratio.<br>");
+        message.push_str("GRD: Grade reflects the Backing Votes Ratio (BVR = (✓i + ✓e) / (✓i + ✓e + ✗)) by the validator.<br> ");
+        message.push_str("<i>The grade system blueprint: A+ >= 90% ; A >= 80% ; B+ >= 70% ; B >= 60% ; C+ >= 55% ; C >= 50% ; D+ >= 45% ; D >= 40% ; F < 40%.</i><br>");
+        message.push_str("MVR: Missed Votes Ratio (MVR = (✗) / (✓i + ✓e + ✗)).<br>");
         message.push_str("PPTS: Sum of para-validator points the validator earned.<br>");
         message.push_str(
             "TPTS: Sum of para-validator points + authored blocks points the validator earned.<br>",
