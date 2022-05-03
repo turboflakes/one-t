@@ -316,9 +316,9 @@ impl Records {
                         para_epochs += 1;
                         let tv = para_record.total_votes();
                         let mv = para_record.total_missed_votes();
-                        let mvr = tv as f64 / (tv + mv) as f64;
+                        let mvr = mv as f64 / (tv + mv) as f64;
                         // Flag epochs which grade is F (fail)
-                        if grade(1.0_f64 - mvr) == "F" {
+                        if grade(1.0 - mvr) == "F" {
                             flagged_epochs += 1;
                         }
                         total_votes += tv;
