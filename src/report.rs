@@ -1380,7 +1380,7 @@ fn flagged_validators_report<'a>(
     let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
 
     if total_flagged != 0 {
-        let warning = if total_flagged as f32 / total_active as f32 > 0.10 {
+        let warning = if total_flagged as f32 / total_active as f32 > 0.25 {
             "⚠️ "
         } else {
             ""
@@ -1393,17 +1393,15 @@ fn flagged_validators_report<'a>(
             total_flagged,
             (total_flagged as f32 / total_active as f32) * 100.0
         ));
-        if !is_short {
-            report.add_raw_text(format!(
-                "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
-                total_c100_flagged,
-                (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
-                total_non_tvp_flagged,
-                (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
-                total_tvp_flagged,
-                (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
-            ));
-        }
+        report.add_raw_text(format!(
+            "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
+            total_c100_flagged,
+            (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
+            total_non_tvp_flagged,
+            (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
+            total_tvp_flagged,
+            (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
+        ));
         // extremely low-performance
         let elp = data
             .validators
