@@ -362,7 +362,7 @@ impl From<RawDataRank> for Report {
                     grade(1.0_f64 - mvr),
                     (mvr * 10000.0).round() / 10000.0,
                     validator.avg_para_points,
-                    validator.score,
+                    (validator.score * 10000.0).round() / 10000.0,
                     validator
                         .pattern
                         .iter()
@@ -784,18 +784,23 @@ impl From<RawDataPara> for Report {
                 clode_block.push_str("\nPARACHAINS BREAKDOWN\n");
                 // Print out parachains breakdown
                 clode_block.push_str(&format!(
-                    "{:<12}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}\n",
-                    "", "*", "*", "*", "A", "A", "A", "B", "B", "B", "C", "C", "C", "D", "D", "D",
+                    "{:<12}{:>13}{:>13}{:>13}{:>13}{:>13}\n",
+                    "",
+                    "┌──── * ────┐",
+                    "┌──── A ────┐",
+                    "┌──── B ────┐",
+                    "┌──── C ────┐",
+                    "┌──── D ────┐",
                 ));
                 clode_block.push_str(&format!(
-                    "{:<6}{:>3}{:>3}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}\n",
-                    "#","❒","↻", "✓", "✗","p", "✓", "✗", "p", "✓", "✗", "p","✓", "✗", "p","✓", "✗", "p",
+                    "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}\n",
+                    "#", "❒", "↻", "✓", "✗", "p", "✓", "✗", "p", "✓", "✗", "p", "✓", "✗", "p", "✓", "✗", "p",
                 ));
                 for para_id in data.parachains.iter() {
                     // Print out votes per para id
                     if let Some(stats) = para_record.get_para_id_stats(*para_id) {
                         let mut line: String = format!(
-                            "{:<6}{:>3}{:>3}{:>4}{:>4}{:>5}",
+                            "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}",
                             para_id,
                             stats.authored_blocks(),
                             stats.core_assignments(),
