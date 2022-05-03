@@ -66,6 +66,7 @@ pub struct Validator {
     pub missed_votes: u32,
     pub core_assignments: u32,
     pub missed_ratio: Option<f64>,
+    pub score: f64,
     pub warnings: Vec<String>,
 }
 
@@ -98,6 +99,7 @@ impl Validator {
             missed_votes: 0,
             core_assignments: 0,
             missed_ratio: None,
+            score: 0.0_f64,
             warnings: Vec::new(),
         }
     }
@@ -291,35 +293,20 @@ impl From<RawDataRank> for Report {
     fn from(data: RawDataRank) -> Report {
         let mut report = Report::new();
 
-        // Filter validators that were assigned at least once as p/v
-        let mut validators_sorted = data
+        let mut validators = data
             .validators
             .iter()
             .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
             .collect::<Vec<&Validator>>();
 
-        validators_sorted.sort_by(|a, b| {
-            if a.missed_ratio.unwrap() == b.missed_ratio.unwrap() {
-                if a.avg_para_points == b.avg_para_points {
-                    // p/v times in descending order
-                    b.para_epochs.partial_cmp(&a.para_epochs).unwrap()
-                } else {
-                    // session avg. points in descending order
-                    b.avg_para_points.partial_cmp(&a.avg_para_points).unwrap()
-                }
-            } else {
-                // missed ratio in ascending order
-                a.missed_ratio
-                    .unwrap()
-                    .partial_cmp(&b.missed_ratio.unwrap())
-                    .unwrap()
-            }
-        });
+        // Sort by Score in descending
+        validators.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
 
         // Report title
         if let Some((start, end)) = data.meta.interval {
+            // ONE-T Validator Performance Insights for Kusama from 3659 // 21251 to 3662 // 21266
             report.add_raw_text(format!(
-                "\t📮 {} → {} // from era {} session {} to era {} session {}",
+                "\t📮 {} for {} from {} // {} to {} // {}",
                 data.report_type.name(),
                 data.network.name,
                 start.0,
@@ -340,7 +327,7 @@ impl From<RawDataRank> for Report {
         report.add_break();
 
         report.add_raw_text(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             "#",
             "Validator",
             "Subset",
@@ -354,13 +341,14 @@ impl From<RawDataRank> for Report {
             "Grade",
             "MVR",
             "Avg. PPTS",
+            "Score",
             "Timeline"
         ));
 
-        for (i, validator) in validators_sorted.iter().enumerate() {
+        for (i, validator) in validators.iter().enumerate() {
             if let Some(mvr) = validator.missed_ratio {
                 report.add_raw_text(format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     i + 1,
                     replace_crln(&validator.name, ""),
                     validator.subset.to_string(),
@@ -374,6 +362,7 @@ impl From<RawDataRank> for Report {
                     grade(1.0_f64 - mvr),
                     (mvr * 10000.0).round() / 10000.0,
                     validator.avg_para_points,
+                    validator.score,
                     validator
                         .pattern
                         .iter()
@@ -382,9 +371,10 @@ impl From<RawDataRank> for Report {
                 ));
             } else {
                 report.add_raw_text(format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     i + 1,
                     validator.name,
+                    "-",
                     "-",
                     "-",
                     "-",
@@ -1276,7 +1266,7 @@ fn inclusion_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
 fn flagged_validators_report<'a>(
     report: &'a mut Report,
     data: &'a RawData,
-    _is_short: bool,
+    is_short: bool,
 ) -> &'a Report {
     let total_active = data
         .validators
@@ -1285,78 +1275,67 @@ fn flagged_validators_report<'a>(
         .collect::<Vec<&Validator>>()
         .len();
 
-    // let total_tvp = data
-    //     .validators
-    //     .iter()
-    //     .filter(|v| v.subset == Subset::TVP && v.previous_era_active)
-    //     .collect::<Vec<&Validator>>()
-    //     .len();
+    let total_tvp = data
+        .validators
+        .iter()
+        .filter(|v| v.subset == Subset::TVP && v.previous_era_active)
+        .collect::<Vec<&Validator>>()
+        .len();
 
-    // let total_tvp_flagged = data
-    //     .validators
-    //     .iter()
-    //     .filter(|v| {
-    //         v.subset == Subset::TVP
-    //             && v.previous_era_active
-    //             && v.previous_era_para_epochs >= 1
-    //             && v.previous_era_flagged_epochs >= 1
-    //     })
-    //     .collect::<Vec<&Validator>>()
-    //     .len();
-
-    // let total_non_tvp = data
-    //     .validators
-    //     .iter()
-    //     .filter(|v| v.subset == Subset::NONTVP && v.previous_era_active)
-    //     .collect::<Vec<&Validator>>()
-    //     .len();
-
-    // let total_non_tvp_flagged = data
-    //     .validators
-    //     .iter()
-    //     .filter(|v| {
-    //         v.subset == Subset::NONTVP
-    //             && v.previous_era_active
-    //             && v.previous_era_para_epochs >= 1
-    //             && v.previous_era_flagged_epochs >= 2
-    //     })
-    //     .collect::<Vec<&Validator>>()
-    //     .len();
-
-    // let total_c100 = data
-    //     .validators
-    //     .iter()
-    //     .filter(|v| v.subset == Subset::C100 && v.previous_era_active)
-    //     .collect::<Vec<&Validator>>()
-    //     .len();
-
-    // let total_c100_flagged = data
-    //     .validators
-    //     .iter()
-    //     .filter(|v| {
-    //         v.subset == Subset::C100
-    //             && v.previous_era_active
-    //             && v.previous_era_para_epochs >= 1
-    //             && v.previous_era_flagged_epochs >= 2
-    //     })
-    //     .collect::<Vec<&Validator>>()
-    //     .len();
-
-    // let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
-
-    let total_flagged = data
+    let total_tvp_flagged = data
         .validators
         .iter()
         .filter(|v| {
-            v.previous_era_active
+            v.subset == Subset::TVP
+                && v.previous_era_active
                 && v.previous_era_para_epochs >= 1
                 && v.previous_era_flagged_epochs >= 1
         })
         .collect::<Vec<&Validator>>()
         .len();
 
+    let total_non_tvp = data
+        .validators
+        .iter()
+        .filter(|v| v.subset == Subset::NONTVP && v.previous_era_active)
+        .collect::<Vec<&Validator>>()
+        .len();
+
+    let total_non_tvp_flagged = data
+        .validators
+        .iter()
+        .filter(|v| {
+            v.subset == Subset::NONTVP
+                && v.previous_era_active
+                && v.previous_era_para_epochs >= 1
+                && v.previous_era_flagged_epochs >= 2
+        })
+        .collect::<Vec<&Validator>>()
+        .len();
+
+    let total_c100 = data
+        .validators
+        .iter()
+        .filter(|v| v.subset == Subset::C100 && v.previous_era_active)
+        .collect::<Vec<&Validator>>()
+        .len();
+
+    let total_c100_flagged = data
+        .validators
+        .iter()
+        .filter(|v| {
+            v.subset == Subset::C100
+                && v.previous_era_active
+                && v.previous_era_para_epochs >= 1
+                && v.previous_era_flagged_epochs >= 2
+        })
+        .collect::<Vec<&Validator>>()
+        .len();
+
+    let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
+
     if total_flagged != 0 {
-        let warning = if total_flagged as f32 / total_active as f32 > 0.25 {
+        let warning = if total_flagged as f32 / total_active as f32 > 0.50 {
             "⚠️ "
         } else {
             ""
@@ -1375,24 +1354,17 @@ fn flagged_validators_report<'a>(
             total_flagged,
             (total_flagged as f32 / total_active as f32) * 100.0
         ));
-        // if is_short {
-        //     report.add_raw_text(format!(
-        //         "‣ {} are 100% commission validators, {} are valid TVP validators and the remainder {} other validators.",
-        //         total_c100_flagged,
-        //         total_tvp_flagged,
-        //         total_non_tvp_flagged
-        //     ));
-        // } else {
-        //     report.add_raw_text(format!(
-        //         "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
-        //         total_c100_flagged,
-        //         (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
-        //         total_non_tvp_flagged,
-        //         (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
-        //         total_tvp_flagged,
-        //         (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
-        //     ));
-        // }
+        if !is_short {
+            report.add_raw_text(format!(
+                "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
+                total_c100_flagged,
+                (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
+                total_non_tvp_flagged,
+                (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
+                total_tvp_flagged,
+                (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
+            ));
+        }
         // extremely low-performance
         let elp = data
             .validators
@@ -1475,60 +1447,49 @@ fn top_performers_report<'a>(
         return top_validators_report(report, &data, is_short);
     }
 
-    // Sort TVP by missed ratio for validators that were p/v in the last X eras
-    let mut validators_sorted = data
+    // Filter TVP validators
+    let mut validators = data
         .validators
         .iter()
         .filter(|v| v.subset == Subset::TVP && v.para_epochs >= 1 && v.missed_ratio.is_some())
         .collect::<Vec<&Validator>>();
 
-    if validators_sorted.len() > 0 {
-        validators_sorted.sort_by(|a, b| {
-            if a.missed_ratio.unwrap() == b.missed_ratio.unwrap() {
-                if a.avg_para_points == b.avg_para_points {
-                    // p/v times in descending order
-                    b.para_epochs.partial_cmp(&a.para_epochs).unwrap()
-                } else {
-                    // session avg. points in descending order
-                    b.avg_para_points.partial_cmp(&a.avg_para_points).unwrap()
-                }
-            } else {
-                // missed ratio in ascending order
-                a.missed_ratio
-                    .unwrap()
-                    .partial_cmp(&b.missed_ratio.unwrap())
-                    .unwrap()
-            }
-        });
+    if validators.len() > 0 {
+        // Sort by Score in descending
+        validators.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
 
-        let max = if validators_sorted.len() > 4 && is_short {
+        let max = if validators.len() > 4 && is_short {
             4
-        } else if validators_sorted.len() > 16 && !is_short {
+        } else if validators.len() > 16 && !is_short {
             16
         } else {
-            validators_sorted.len()
+            validators.len()
         };
 
         if is_short {
             report.add_raw_text(format!(
-                "Top {} TVP Validators with lowest missed votes ratio in the last {} sessions:",
+                "Top {} Best TVP Validators performances of the last {} sessions:",
                 max, data.records_total_full_epochs
             ));
         } else {
-            report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with lowest missed votes ratio in the last {} sessions:", max, data.records_total_full_epochs));
-            report.add_raw_text(format!("<i>Sorting: Validators are sorted 1st by missed votes ratio, 2nd by average p/v points per session, 3rd by number of X sessions when selected as p/v.</i>"));
-            report.add_raw_text(format!("<i>Legend: val. identity (percentage of missed votes, avg. p/v points per session, number of sessions as p/v)</i>"));
-        }
-        report.add_break();
-
-        for v in &validators_sorted[..max] {
             report.add_raw_text(format!(
-                "* {} ({:.2}%, {}, {}x)",
-                v.name,
-                v.missed_ratio.unwrap() * 100.0,
-                v.avg_para_points,
-                v.para_epochs
+                "🏆 <b>Top {} Best TVP Validators performances</b> of the last {} sessions:",
+                max, data.records_total_full_epochs
             ));
+        }
+
+        report.add_raw_text(format!(
+            "<i>To get the full picture -> !subscribe ranking</i>"
+        ));
+
+        for v in &validators[..max] {
+            report.add_raw_text(format!("* {} ({:.2}%)", v.name, v.score * 100.0,));
+        }
+
+        if !is_short {
+            report.add_break();
+            report.add_raw_text(format!("<i>Legend: Val. identity (Score)</i>"));
+            report.add_raw_text(format!("<i>Score: Backing votes ratio (50%), average p/v points (40%) and number of active p/v sessions (10%)</i>"));
         }
 
         report.add_break();

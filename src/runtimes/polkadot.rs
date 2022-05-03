@@ -451,7 +451,7 @@ pub async fn track_records(
                             for (candidate_receipt, group_authorities) in
                                 backing_votes.backing_validators_per_candidate.iter()
                             {
-                                warn!(
+                                debug!(
                                     "para_id: {:?} group_authorities {:?}",
                                     candidate_receipt.descriptor.para_id, group_authorities
                                 );
@@ -999,6 +999,24 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         }
     }
 
+    // Calculate a score based on the formula
+    // SCORE = (1-MVR)*0.5 + ((AVG_PV_POINTS - MIN_AVG_POINTS)/(MAX_AVG_PV_POINTS-MIN_AVG_PV_POINTS))*0.4 + (PV_SESSIONS/TOTAL_SESSIONS)*0.1
+
+    // Normalize avg_para_points
+    let avg_para_points: Vec<u32> = validators.iter().map(|v| v.avg_para_points).collect();
+    let max = avg_para_points.iter().max().unwrap();
+    let min = avg_para_points.iter().min().unwrap();
+
+    validators
+        .iter_mut()
+        .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
+        .for_each(|v| {
+            (*v).score = (1.0_f64 - v.missed_ratio.unwrap()) * 0.5_f64
+                + ((v.avg_para_points as f64 - *min as f64) / (*max as f64 - *min as f64))
+                    * 0.4_f64
+                + (v.para_epochs as f64 / records.total_full_epochs() as f64) * 0.1_f64;
+        });
+
     debug!("validators {:?}", validators);
 
     // Network report data
@@ -1055,7 +1073,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
             // Save file
             let filename = format!(
-                "onet_{}_e{}s{}_e{}s{}.txt.gz",
+                "onet_{}_{}{}_{}{}.txt.gz",
                 config.chain_name.to_lowercase(),
                 start_era,
                 start_epoch,
