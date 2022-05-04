@@ -53,8 +53,8 @@ mod node_runtime {}
 use node_runtime::{
     runtime_types::{
         pallet_identity::types::Data, polkadot_parachain::primitives::Id,
-        polkadot_primitives::v0::ValidatorIndex, polkadot_primitives::v0::ValidityAttestation,
-        polkadot_primitives::v1::CoreIndex, polkadot_primitives::v1::GroupIndex,
+        polkadot_primitives::v2::CoreIndex, polkadot_primitives::v2::GroupIndex,
+        polkadot_primitives::v2::ValidatorIndex, polkadot_primitives::v2::ValidityAttestation,
         sp_arithmetic::per_things::Perbill,
     },
     session::events::NewSession,
@@ -67,11 +67,11 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     let client = onet.client().clone();
     let api = client.to_runtime_api::<Api>();
 
-    let finalized_hash = api.client.rpc().finalized_head().await?;
+    let block_hash = api.client.rpc().block_hash(None).await?;
 
-    let block_number = match api.client.rpc().block(Some(finalized_hash)).await? {
+    let block_number = match api.client.rpc().block(block_hash).await? {
         Some(signed_block) => signed_block.block.header.number,
-        None => return Err("Finalized hash not available. Check current API -> api.client.rpc().block(Some(finalized_hash))".into()),
+        None => return Err("Block hash not available. Check current API -> api.client.rpc().block(block_hash)".into()),
     };
 
     // Fetch active era index
@@ -103,7 +103,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     initialize_records(&onet, &mut records).await?;
 
     // Subscribe to any events that occur:
-    let mut sub = api.events().subscribe_finalized().await?;
+    let mut sub = api.events().subscribe().await?;
 
     while let Some(events) = sub.next().await {
         let events = events?;
@@ -112,7 +112,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
         if let Some(signed_block) = api.client.rpc().block(Some(block_hash)).await? {
             if let Some(authority_index) = decode_authority_index(&signed_block) {
                 let block_number = signed_block.block.header.number;
-                info!("Finalized block #{block_number} received");
+                info!("Block #{block_number} received");
 
                 // Update records
                 track_records(&onet, authority_index, &mut records).await?;
