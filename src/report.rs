@@ -1580,7 +1580,7 @@ fn top_performers_report<'a>(
                 "* {} ({:.2}%, {}, {}, {}x)",
                 v.name,
                 v.score * 100.0,
-                (v.missed_ratio.unwrap() * 10000.0).round() * 10000.0,
+                (v.missed_ratio.unwrap() * 10000.0).round() / 10000.0,
                 v.avg_para_points,
                 v.para_epochs,
             ));
