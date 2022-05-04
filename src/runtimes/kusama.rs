@@ -69,10 +69,14 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
     let block_hash = api.client.rpc().block_hash(None).await?;
 
-    let block_number = match api.client.rpc().block(block_hash).await? {
-        Some(signed_block) => signed_block.block.header.number,
-        None => return Err("Block hash not available. Check current API -> api.client.rpc().block(block_hash)".into()),
-    };
+    let block_number =
+        match api.client.rpc().block(block_hash).await? {
+            Some(signed_block) => signed_block.block.header.number,
+            None => return Err(
+                "Block hash not available. Check current API -> api.client.rpc().block(block_hash)"
+                    .into(),
+            ),
+        };
 
     // Fetch active era index
     let era_index = match api.storage().staking().active_era(None).await? {
@@ -928,25 +932,6 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
         // Fetch own stake
         v.own_stake = get_own_stake(&onet, &stash).await?;
-
-        // Get highlights from previous 6 sessions (last era)
-        let last_full_6_sessions = if records.total_full_epochs() > 6 {
-            6
-        } else {
-            records.total_full_epochs()
-        };
-
-        if let Some((is_active, para_data)) =
-            records.get_data_from_previous_epochs(&stash, last_full_6_sessions)
-        {
-            v.previous_era_active = is_active;
-            if let Some((para_epochs, exceptional_epochs, flagged_epochs, mvr)) = para_data {
-                v.previous_era_para_epochs = para_epochs;
-                v.previous_era_exceptional_epochs = exceptional_epochs;
-                v.previous_era_flagged_epochs = flagged_epochs;
-                v.previous_era_missed_ratio = Some(mvr);
-            }
-        }
 
         // Get performance data from all eras available
         if let Some(((active_epochs, authored_blocks, mut pattern), para_data)) =

@@ -52,11 +52,6 @@ pub struct Validator {
     pub maximum_history_total_points: u32,
     pub maximum_history_total_eras: u32,
     pub total_authored_blocks: u32,
-    pub previous_era_active: bool,
-    pub previous_era_para_epochs: u32,
-    pub previous_era_exceptional_epochs: u32,
-    pub previous_era_flagged_epochs: u32,
-    pub previous_era_missed_ratio: Option<f64>,
     pub pattern: Pattern,
     pub authored_blocks: u32,
     pub active_epochs: u32,
@@ -86,11 +81,6 @@ impl Validator {
             maximum_history_total_points: 0,
             maximum_history_total_eras: 0,
             total_authored_blocks: 0,
-            previous_era_active: false,
-            previous_era_para_epochs: 0,
-            previous_era_exceptional_epochs: 0,
-            previous_era_flagged_epochs: 0,
-            previous_era_missed_ratio: None,
             pattern: Vec::new(),
             authored_blocks: 0,
             active_epochs: 0,
@@ -903,7 +893,7 @@ impl From<RawData> for Report {
         oversubscribed_validators_report(&mut report, &data);
         inclusion_validators_report(&mut report, &data);
         avg_points_collected_report(&mut report, &data);
-        flagged_validators_report(&mut report, &data, false);
+        flagged_and_exceptional_validators_report(&mut report, &data, false);
         top_performers_report(&mut report, &data, false);
 
         // --- Specific report sections here [END] ---|
@@ -935,12 +925,12 @@ impl Callout<RawData> for Report {
 
         active_validators_report(&mut report, &data, true);
 
-        flagged_validators_report(&mut report, &data, true);
+        flagged_and_exceptional_validators_report(&mut report, &data, true);
 
         top_performers_report(&mut report, &data, true);
 
         report.add_raw_text(format!(
-            "<i>Lookout for the full report here</i> → #{} 👀",
+            "<i>Lookout and !subscribe for validator reports here</i> → #{} 👀",
             config.matrix_public_room
         ));
 
@@ -959,20 +949,17 @@ fn total_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a
         .validators
         .iter()
         .filter(|v| v.subset == Subset::TVP)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
     let total_non_tvp = data
         .validators
         .iter()
         .filter(|v| v.subset == Subset::NONTVP)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
     let total_c100 = data
         .validators
         .iter()
         .filter(|v| v.subset == Subset::C100)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
 
     report.add_raw_text(format!("{} total {} validators:", total, data.network.name,));
     report.add_raw_text(format!(
@@ -994,31 +981,23 @@ fn active_validators_report<'a>(
     data: &'a RawData,
     is_verbose: bool,
 ) -> &'a Report {
-    let total_active = data
-        .validators
-        .iter()
-        .filter(|v| v.is_active)
-        .collect::<Vec<&Validator>>()
-        .len();
+    let total_active = data.validators.iter().filter(|v| v.is_active).count();
 
     let total_tvp = data
         .validators
         .iter()
         .filter(|v| v.is_active && v.subset == Subset::TVP)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
     let total_non_tvp = data
         .validators
         .iter()
         .filter(|v| v.is_active && v.subset == Subset::NONTVP)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
     let total_c100 = data
         .validators
         .iter()
         .filter(|v| v.is_active && v.subset == Subset::C100)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
 
     if is_verbose {
         report.add_raw_text(format!(
@@ -1136,8 +1115,7 @@ fn oversubscribed_validators_report<'a>(report: &'a mut Report, data: &'a RawDat
         .validators
         .iter()
         .filter(|v| v.is_oversubscribed)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
 
     if total_over == 0 {
         return report;
@@ -1147,20 +1125,17 @@ fn oversubscribed_validators_report<'a>(report: &'a mut Report, data: &'a RawDat
         .validators
         .iter()
         .filter(|v| v.is_oversubscribed && v.subset == Subset::TVP)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
     let total_non_tvp = data
         .validators
         .iter()
         .filter(|v| v.is_oversubscribed && v.subset == Subset::NONTVP)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
     let total_c100 = data
         .validators
         .iter()
         .filter(|v| v.is_oversubscribed && v.subset == Subset::C100)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
 
     report.add_raw_text(format!(
         "Oversubscribed {} ({:.2}%):",
@@ -1257,43 +1232,37 @@ fn inclusion_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         .validators
         .iter()
         .filter(|v| v.subset == Subset::TVP)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
 
     let total_tvp_with_points = data
         .validators
         .iter()
         .filter(|v| v.subset == Subset::TVP && v.maximum_history_total_points != 0)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
 
     let total_non_tvp = data
         .validators
         .iter()
         .filter(|v| v.subset == Subset::NONTVP)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
 
     let total_non_tvp_with_points = data
         .validators
         .iter()
         .filter(|v| v.subset == Subset::NONTVP && v.maximum_history_total_points != 0)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
 
     let total_c100 = data
         .validators
         .iter()
         .filter(|v| v.subset == Subset::C100)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
 
     let total_c100_with_points = data
         .validators
         .iter()
         .filter(|v| v.subset == Subset::C100 && v.maximum_history_total_points != 0)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .count();
 
     report.add_raw_text(format!(
         "Participation in the last {} eras:",
@@ -1310,169 +1279,161 @@ fn inclusion_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
     report
 }
 
-fn flagged_validators_report<'a>(
+fn flagged_and_exceptional_validators_report<'a>(
     report: &'a mut Report,
     data: &'a RawData,
     is_short: bool,
 ) -> &'a Report {
-    let total_active = data
+    let para_validators = data
         .validators
         .iter()
-        .filter(|v| v.previous_era_active)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
+        .collect::<Vec<&Validator>>();
 
-    let total_tvp = data
-        .validators
+    let total_tvp = para_validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP && v.previous_era_active)
-        .collect::<Vec<&Validator>>()
-        .len();
+        .filter(|v| v.subset == Subset::TVP)
+        .count();
+    let total_tvp_exceptional = para_validators
+        .iter()
+        .filter(|v| v.subset == Subset::TVP && grade(1.0 - v.missed_ratio.unwrap()) == "A+")
+        .count();
+    let total_tvp_flagged = para_validators
+        .iter()
+        .filter(|v| v.subset == Subset::TVP && grade(1.0 - v.missed_ratio.unwrap()) == "F")
+        .count();
 
-    let total_tvp_flagged = data
-        .validators
+    let total_non_tvp = para_validators
         .iter()
-        .filter(|v| {
-            v.subset == Subset::TVP
-                && v.previous_era_active
-                && v.previous_era_para_epochs >= 1
-                && v.previous_era_flagged_epochs >= 1
-        })
-        .collect::<Vec<&Validator>>()
-        .len();
+        .filter(|v| v.subset == Subset::NONTVP)
+        .count();
+    let total_non_tvp_exceptional = para_validators
+        .iter()
+        .filter(|v| v.subset == Subset::NONTVP && grade(1.0 - v.missed_ratio.unwrap()) == "A+")
+        .count();
+    let total_non_tvp_flagged = para_validators
+        .iter()
+        .filter(|v| v.subset == Subset::NONTVP && grade(1.0 - v.missed_ratio.unwrap()) == "F")
+        .count();
 
-    let total_tvp_exceptional = data
-        .validators
+    let total_c100 = para_validators
         .iter()
-        .filter(|v| {
-            v.subset == Subset::TVP
-                && v.previous_era_active
-                && v.previous_era_para_epochs >= 1
-                && v.previous_era_exceptional_epochs >= 1
-        })
-        .collect::<Vec<&Validator>>()
-        .len();
-
-    let total_non_tvp = data
-        .validators
+        .filter(|v| v.subset == Subset::C100)
+        .count();
+    let total_c100_exceptional = para_validators
         .iter()
-        .filter(|v| v.subset == Subset::NONTVP && v.previous_era_active)
-        .collect::<Vec<&Validator>>()
-        .len();
-
-    let total_non_tvp_flagged = data
-        .validators
+        .filter(|v| v.subset == Subset::C100 && grade(1.0 - v.missed_ratio.unwrap()) == "A+")
+        .count();
+    let total_c100_flagged = para_validators
         .iter()
-        .filter(|v| {
-            v.subset == Subset::NONTVP
-                && v.previous_era_active
-                && v.previous_era_para_epochs >= 1
-                && v.previous_era_flagged_epochs >= 1
-        })
-        .collect::<Vec<&Validator>>()
-        .len();
-
-    let total_non_tvp_exceptional = data
-        .validators
-        .iter()
-        .filter(|v| {
-            v.subset == Subset::NONTVP
-                && v.previous_era_active
-                && v.previous_era_para_epochs >= 1
-                && v.previous_era_exceptional_epochs >= 1
-        })
-        .collect::<Vec<&Validator>>()
-        .len();
-
-    let total_c100 = data
-        .validators
-        .iter()
-        .filter(|v| v.subset == Subset::C100 && v.previous_era_active)
-        .collect::<Vec<&Validator>>()
-        .len();
-
-    let total_c100_flagged = data
-        .validators
-        .iter()
-        .filter(|v| {
-            v.subset == Subset::C100
-                && v.previous_era_active
-                && v.previous_era_para_epochs >= 1
-                && v.previous_era_flagged_epochs >= 1
-        })
-        .collect::<Vec<&Validator>>()
-        .len();
-
-    let total_c100_exceptional = data
-        .validators
-        .iter()
-        .filter(|v| {
-            v.subset == Subset::C100
-                && v.previous_era_active
-                && v.previous_era_para_epochs >= 1
-                && v.previous_era_exceptional_epochs >= 1
-        })
-        .collect::<Vec<&Validator>>()
-        .len();
+        .filter(|v| v.subset == Subset::C100 && grade(1.0 - v.missed_ratio.unwrap()) == "F")
+        .count();
 
     let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
     let total_exceptional =
         total_c100_exceptional + total_non_tvp_exceptional + total_tvp_exceptional;
 
-    if total_flagged != 0 {
-        let warning = if ((total_flagged as f32 / total_active as f32) > 0.20)
-            && ((total_exceptional as f32 / total_active as f32) < 0.20)
-        {
+    let mvr_exceptional: Vec<f64> = para_validators
+        .iter()
+        .filter(|v| grade(1.0 - v.missed_ratio.unwrap()) == "A+")
+        .map(|v| v.missed_ratio.unwrap())
+        .collect();
+
+    let mvr_flagged: Vec<f64> = para_validators
+        .iter()
+        .filter(|v| grade(1.0 - v.missed_ratio.unwrap()) == "F")
+        .map(|v| v.missed_ratio.unwrap())
+        .collect();
+
+    if para_validators.len() > 0 {
+        // set a warning flag
+        let warning = if (total_flagged as f64 / para_validators.len() as f64) > 0.20 {
             "⚠️ "
         } else {
             ""
         };
 
+        let avg_mvr_exceptional: String = if mvr_exceptional.len() > 0 {
+            format!(
+                "{}",
+                ((mvr_exceptional.iter().sum::<f64>() / mvr_exceptional.len() as f64) * 10000.0)
+                    .round()
+                    / 10000.0
+            )
+        } else {
+            "-".to_string()
+        };
+
+        let avg_mvr_flagged: String = if mvr_flagged.len() > 0 {
+            format!(
+                "{}",
+                ((mvr_flagged.iter().sum::<f64>() / mvr_flagged.len() as f64) * 10000.0).round()
+                    / 10000.0
+            )
+        } else {
+            "-".to_string()
+        };
+
         report.add_raw_text(format!(
-            "{}In the last {} sessions, {} ({:.2}%) validators had an exceptional performance (A+) and {} ({:.2}%) a low performance (F) when selected as para-validator for at least one session.",
-            warning,
-            data.records_total_full_epochs,
-            total_exceptional,
-            (total_exceptional as f32 / total_active as f32) * 100.0,
-            total_flagged,
-            (total_flagged as f32 / total_active as f32) * 100.0
+            "In the last {} sessions {} validators were selected to para-validate:",
+            para_validators.len(),
+            data.records_total_full_epochs
         ));
-        if !is_short {
+
+        if total_exceptional > 0 {
             report.add_raw_text(format!(
-                "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b> → <i>A+</i>",
-                total_c100_exceptional,
-                (total_c100_exceptional as f32 / total_c100 as f32) * 100.0,
-                total_non_tvp_exceptional,
-                (total_non_tvp_exceptional as f32 / total_non_tvp as f32) * 100.0,
-                total_tvp_exceptional,
-                (total_tvp_exceptional as f32 / total_tvp as f32) * 100.0,
-            ));
-            report.add_raw_text(format!(
-                "‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b> → <i>F</i>",
-                total_c100_flagged,
-                (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
-                total_non_tvp_flagged,
-                (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
-                total_tvp_flagged,
-                (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
-            ));
+                    "‣ {} ({:.2}%) consistently had an exceptional performance (A+) with an average missed vote ratio of {}.",
+                    total_exceptional,
+                    (total_exceptional as f64 / para_validators.len() as f64) * 100.0,
+                    avg_mvr_exceptional
+                ));
+            // Show subsets
+            if !is_short {
+                report.add_raw_text(format!(
+                    "‣‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
+                    total_c100_exceptional,
+                    (total_c100_exceptional as f64 / total_c100 as f64) * 100.0,
+                    total_non_tvp_exceptional,
+                    (total_non_tvp_exceptional as f64 / total_non_tvp as f64) * 100.0,
+                    total_tvp_exceptional,
+                    (total_tvp_exceptional as f64 / total_tvp as f64) * 100.0,
+                ));
+            }
         }
+
+        if total_flagged > 0 {
+            report.add_raw_text(format!(
+                    "‣ {}{} ({:.2}%) consistently had a low performance (F) with an average missed vote ratio of {}.",
+                    warning,
+                    total_flagged,
+                    (total_flagged as f64 / para_validators.len() as f64) * 100.0,
+                    avg_mvr_flagged
+                ));
+            if !is_short {
+                report.add_raw_text(format!(
+                    "‣‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
+                    total_c100_flagged,
+                    (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
+                    total_non_tvp_flagged,
+                    (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
+                    total_tvp_flagged,
+                    (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
+                ));
+            }
+        }
+
         // extremely low-performance
-        let elp = data
-            .validators
+        let total_elp = para_validators
             .iter()
-            .filter(|v| {
-                v.previous_era_active
-                    && v.previous_era_para_epochs >= 1
-                    && v.previous_era_flagged_epochs >= 1
-                    && v.previous_era_missed_ratio.unwrap() > 0.80_f64
-            })
-            .collect::<Vec<&Validator>>();
-        if elp.len() > 0 {
-            report.add_raw_text(format!("‣ 🚨 {} had a very low performance.", elp.len()));
+            .filter(|v| v.missed_ratio.unwrap() > 0.80_f64)
+            .count();
+        if total_elp > 0 {
+            report.add_raw_text(format!("‣ 🚨 {} had a very low performance.", total_elp));
         }
-        report.add_break();
     }
+
+    
+    report.add_break();
 
     report
 }
@@ -1570,9 +1531,6 @@ fn top_performers_report<'a>(
             ));
         }
 
-        report.add_raw_text(format!(
-            "<i>To get the full picture -> !subscribe insights</i>"
-        ));
         report.add_break();
 
         for v in &validators[..max] {
