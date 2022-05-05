@@ -1376,8 +1376,8 @@ fn flagged_and_exceptional_validators_report<'a>(
 
         report.add_raw_text(format!(
             "In the last {} sessions {} validators were selected to para-validate:",
-            para_validators.len(),
-            data.records_total_full_epochs
+            data.records_total_full_epochs,
+            para_validators.len()
         ));
 
         if total_exceptional > 0 {
