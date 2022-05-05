@@ -1432,7 +1432,6 @@ fn flagged_and_exceptional_validators_report<'a>(
         }
     }
 
-    
     report.add_break();
 
     report

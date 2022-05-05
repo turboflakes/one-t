@@ -69,7 +69,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
     let block_hash = api.client.rpc().block_hash(None).await?;
 
-    let block_number =
+    let mut block_number =
         match api.client.rpc().block(block_hash).await? {
             Some(signed_block) => signed_block.block.header.number,
             None => return Err(
@@ -115,30 +115,38 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
         if let Some(signed_block) = api.client.rpc().block(Some(block_hash)).await? {
             if let Some(authority_index) = decode_authority_index(&signed_block) {
-                let block_number = signed_block.block.header.number;
-                info!("Block #{block_number} received");
+                // Note: just a safeguard so that records are not tracked again if block was already received
+                if signed_block.block.header.number > block_number {
+                    info!("Block #{} received", signed_block.block.header.number);
+                    block_number = signed_block.block.header.number;
 
-                // Update records
-                track_records(&onet, authority_index, &mut records).await?;
+                    // Update records
+                    track_records(&onet, authority_index, &mut records).await?;
 
-                if let Some(new_session_event) = events.find_first::<NewSession>()? {
-                    info!("{:?}", new_session_event);
+                    if let Some(new_session_event) = events.find_first::<NewSession>()? {
+                        info!("{:?}", new_session_event);
 
-                    switch_new_session(
-                        &onet,
-                        block_number,
-                        new_session_event.session_index,
-                        &mut subscribers,
-                        &mut records,
-                    )
-                    .await?;
+                        switch_new_session(
+                            &onet,
+                            block_number,
+                            new_session_event.session_index,
+                            &mut subscribers,
+                            &mut records,
+                        )
+                        .await?;
 
-                    // Network public report
-                    try_run_network_report(new_session_event.session_index, &records).await?;
+                        // Network public report
+                        try_run_network_report(new_session_event.session_index, &records).await?;
+                    }
+
+                    // Update current block number
+                    records.set_current_block_number(block_number.into());
+                } else {
+                    warn!(
+                        "Block #{} already received!",
+                        signed_block.block.header.number
+                    );
                 }
-
-                // Update current block number
-                records.set_current_block_number(block_number.into());
             }
         }
     }
