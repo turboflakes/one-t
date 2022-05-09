@@ -1546,7 +1546,7 @@ fn top_performers_report<'a>(
         if !is_short {
             report.add_break();
             report.add_raw_text(format!("<i>Legend: Val. identity (Score, Missed votes ratio, Average p/v points, Number of sessions as p/v)</i>"));
-            report.add_raw_text(format!("<i>Score: Backing votes ratio (1-MVR) make up 50% of the score, average p/v points make up 40% and number of sessions as p/v the remaining 10%</i>"));
+            report.add_raw_text(format!("<i>Score: Backing votes ratio (1-MVR) make up 75% of the score, average p/v points make up 15% and number of sessions as p/v the remaining 10%</i>"));
             report.add_raw_text(format!(
                 "<i>Sorting: Validators are sorted by Score in descending order</i>"
             ));

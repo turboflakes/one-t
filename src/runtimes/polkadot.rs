@@ -1002,7 +1002,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     }
 
     // Calculate a score based on the formula
-    // SCORE = (1-MVR)*0.5 + ((AVG_PV_POINTS - MIN_AVG_POINTS)/(MAX_AVG_PV_POINTS-MIN_AVG_PV_POINTS))*0.4 + (PV_SESSIONS/TOTAL_SESSIONS)*0.1
+    // SCORE = (1-MVR)*0.75 + ((AVG_PV_POINTS - MIN_AVG_POINTS)/(MAX_AVG_PV_POINTS-MIN_AVG_PV_POINTS))*0.15 + (PV_SESSIONS/TOTAL_SESSIONS)*0.1
 
     // Normalize avg_para_points
     let avg_para_points: Vec<u32> = validators.iter().map(|v| v.avg_para_points).collect();
@@ -1013,9 +1013,9 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         .iter_mut()
         .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
         .for_each(|v| {
-            (*v).score = (1.0_f64 - v.missed_ratio.unwrap()) * 0.5_f64
+            (*v).score = (1.0_f64 - v.missed_ratio.unwrap()) * 0.75_f64
                 + ((v.avg_para_points as f64 - *min as f64) / (*max as f64 - *min as f64))
-                    * 0.4_f64
+                    * 0.15_f64
                 + (v.para_epochs as f64 / records.total_full_epochs() as f64) * 0.1_f64;
         });
 
