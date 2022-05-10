@@ -1447,10 +1447,10 @@ fn top_validators_report<'a>(
             .cmp(&(&a.maximum_history_total_points / &a.maximum_history_total_eras))
     });
 
-    let max = if tvp_sorted.len() > 4 && is_short {
-        4
-    } else if tvp_sorted.len() > 16 && !is_short {
-        16
+    let max = if tvp_sorted.len() > config.maximum_top_ranking_callout && is_short {
+        config.maximum_top_ranking_callout
+    } else if tvp_sorted.len() > config.maximum_top_ranking && !is_short {
+        config.maximum_top_ranking
     } else {
         tvp_sorted.len()
     };
@@ -1497,10 +1497,10 @@ fn top_performers_report<'a>(
         // Sort by Score in descending
         validators.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
 
-        let max = if validators.len() > 4 && is_short {
-            4
-        } else if validators.len() > 16 && !is_short {
-            16
+        let max = if validators.len() > config.maximum_top_ranking_callout && is_short {
+            config.maximum_top_ranking_callout
+        } else if validators.len() > config.maximum_top_ranking && !is_short {
+            config.maximum_top_ranking
         } else {
             validators.len()
         };

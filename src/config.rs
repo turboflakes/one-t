@@ -120,6 +120,16 @@ fn default_pool_minimum_sessions() -> u32 {
     6
 }
 
+/// provides default value for nomination_pool_nominate_rate if ONET_MAXIMUM_TOP_RANKING env var is not set
+fn default_maximum_top_ranking() -> u32 {
+    16
+}
+
+/// provides default value for nomination_pool_nominate_rate if ONET_MAXIMUM_TOP_RANKING_CALLOUT env var is not set
+fn default_maximum_top_ranking_callout() -> u32 {
+    4
+}
+
 #[derive(Clone, Deserialize, Debug)]
 pub struct Config {
     #[serde(default = "default_chain_name")]
@@ -147,6 +157,11 @@ pub struct Config {
     pub mvr_level_4: u32,
     #[serde(default)]
     pub is_debug: bool,
+    // ranking
+    #[serde(default = "default_maximum_top_ranking")]
+    pub maximum_top_ranking: u32,
+    #[serde(default = "default_maximum_top_ranking_callout")]
+    pub maximum_top_ranking_callout: u32,
     // nomination pool
     #[serde(default)]
     pub pool_disabled: bool,
