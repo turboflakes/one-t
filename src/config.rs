@@ -191,7 +191,7 @@ fn get_config() -> Config {
     .arg(
       Arg::with_name("CHAIN")
           .index(1)
-          .possible_values(&["kusama", "polkadot"])
+          .possible_values(&["westend", "kusama", "polkadot"])
           .help(
             "Sets the substrate-based chain for which 'onet' will try to connect",
           )
@@ -330,6 +330,12 @@ fn get_config() -> Config {
     }
 
     match matches.value_of("CHAIN") {
+        Some("westend") => {
+            if env::var("ONET_SUBSTRATE_WS_URL").is_err() {
+                env::set_var("ONET_SUBSTRATE_WS_URL", "wss://westend-rpc.polkadot.io:443");
+            }
+            env::set_var("ONET_CHAIN_NAME", "westend");
+        }
         Some("kusama") => {
             if env::var("ONET_SUBSTRATE_WS_URL").is_err() {
                 env::set_var("ONET_SUBSTRATE_WS_URL", "wss://kusama-rpc.polkadot.io:443");
