@@ -941,6 +941,14 @@ impl Callout<RawData> for Report {
     }
 }
 
+fn descnd(n: usize, d: usize) -> String {
+    if d > 0 {
+        format!("{} ({:.2}%)", n, (n as f64 / d as f64) * 100.0)
+    } else {
+        "-".to_string()
+    }
+}
+
 fn total_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a Report {
     report.add_break();
 
@@ -963,13 +971,10 @@ fn total_validators_report<'a>(report: &'a mut Report, data: &'a RawData) -> &'a
 
     report.add_raw_text(format!("{} total {} validators:", total, data.network.name,));
     report.add_raw_text(format!(
-        "‣ {} ({:.2}%) • {} ({:.2}%) • <b>{} ({:.2}%)</b>",
-        total_c100,
-        (total_c100 as f32 / total as f32) * 100.0,
-        total_non_tvp,
-        (total_non_tvp as f32 / total as f32) * 100.0,
-        total_tvp,
-        (total_tvp as f32 / total as f32) * 100.0,
+        "‣ {} • {} • <b>{}</b>",
+        descnd(total_c100, total),
+        descnd(total_non_tvp, total),
+        descnd(total_tvp, total),
     ));
     report.add_break();
 
@@ -1005,24 +1010,18 @@ fn active_validators_report<'a>(
             data.meta.active_era_index, total_active,
         ));
         report.add_raw_text(format!(
-            "‣ {} ({:.2}%) are 100% commission validators, {} ({:.2}%) are valid <a href=\"https://wiki.polkadot.network/docs/thousand-validators\">TVP validators</a> and the remainder {} ({:.2}%) other validators.",
-            total_c100,
-            (total_c100 as f32 / total_active as f32) * 100.0,
-            total_tvp,
-            (total_tvp as f32 / total_active as f32) * 100.0,
-            total_non_tvp,
-            (total_non_tvp as f32 / total_active as f32) * 100.0,
+            "‣ {} are 100% commission validators, {} are valid <a href=\"https://wiki.polkadot.network/docs/thousand-validators\">TVP validators</a> and the remainder {} other validators.",
+            descnd(total_c100, total_active),
+            descnd(total_tvp, total_active),
+            descnd(total_non_tvp, total_active),
         ));
     } else {
         report.add_raw_text(format!("{} active validators:", total_active));
         report.add_raw_text(format!(
-            "‣ {} ({:.2}%) • {} ({:.2}%) • <b>{} ({:.2}%)</b>",
-            total_c100,
-            (total_c100 as f32 / total_active as f32) * 100.0,
-            total_non_tvp,
-            (total_non_tvp as f32 / total_active as f32) * 100.0,
-            total_tvp,
-            (total_tvp as f32 / total_active as f32) * 100.0,
+            "‣ {} • {} • <b>{}</b>",
+            descnd(total_c100, total_active),
+            descnd(total_tvp, total_active),
+            descnd(total_non_tvp, total_active),
         ));
     }
     report.add_break();
@@ -1137,19 +1136,12 @@ fn oversubscribed_validators_report<'a>(report: &'a mut Report, data: &'a RawDat
         .filter(|v| v.is_oversubscribed && v.subset == Subset::C100)
         .count();
 
+    report.add_raw_text(format!("Oversubscribed {}:", descnd(total_over, total)));
     report.add_raw_text(format!(
-        "Oversubscribed {} ({:.2}%):",
-        total_over,
-        (total_over as f32 / total as f32) * 100.0
-    ));
-    report.add_raw_text(format!(
-        "‣ {} ({:.2}%) • {} ({:.2}%) • <b>{} ({:.2}%)</b>",
-        total_c100,
-        (total_c100 as f32 / total_over as f32) * 100.0,
-        total_non_tvp,
-        (total_non_tvp as f32 / total_over as f32) * 100.0,
-        total_tvp,
-        (total_tvp as f32 / total_over as f32) * 100.0,
+        "‣ {} • {} • <b>{}</b>",
+        descnd(total_c100, total_over),
+        descnd(total_non_tvp, total_over),
+        descnd(total_tvp, total_over),
     ));
     report.add_break();
 
@@ -1166,8 +1158,6 @@ fn avg_points_collected_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         .reduce(|a, b| (a.0 + b.0, a.1 + b.1))
         .unwrap_or_default();
 
-    let avg_total_eras_points = total_eras_points.1 / total_eras_points.0;
-
     let total_eras_points_tvp: (u32, u32) = data
         .validators
         .iter()
@@ -1175,8 +1165,6 @@ fn avg_points_collected_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         .map(|v| (v.maximum_history_total_eras, v.maximum_history_total_points))
         .reduce(|a, b| (a.0 + b.0, a.1 + b.1))
         .unwrap_or_default();
-
-    let avg_total_eras_points_tvp = total_eras_points_tvp.1 / total_eras_points_tvp.0;
 
     let total_eras_points_non_tvp: (u32, u32) = data
         .validators
@@ -1186,8 +1174,6 @@ fn avg_points_collected_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         .reduce(|a, b| (a.0 + b.0, a.1 + b.1))
         .unwrap_or_default();
 
-    let avg_total_eras_points_non_tvp = total_eras_points_non_tvp.1 / total_eras_points_non_tvp.0;
-
     let total_eras_points_c100: (u32, u32) = data
         .validators
         .iter()
@@ -1196,29 +1182,29 @@ fn avg_points_collected_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         .reduce(|a, b| (a.0 + b.0, a.1 + b.1))
         .unwrap_or_default();
 
-    let avg_total_eras_points_c100 = total_eras_points_c100.1 / total_eras_points_c100.0;
-
     report.add_raw_text(format!(
         "On average {} points per validator per era were collected in the last {} eras:",
-        avg_total_eras_points, config.maximum_history_eras,
+        total_eras_points.1 / total_eras_points.0,
+        config.maximum_history_eras,
     ));
+
+    fn desc(subset: (u32, u32), total: (u32, u32)) -> String {
+        if subset.0 > 0 && total.0 > 0 {
+            format!(
+                "{} {}",
+                trend((subset.1 / subset.0).into(), (total.1 / total.0).into()),
+                subset.1 / subset.0
+            )
+        } else {
+            "-".to_string()
+        }
+    }
+
     report.add_raw_text(format!(
-        "‣ {} {} • {} {} • <b>{} {}</b>",
-        trend(
-            avg_total_eras_points_c100.into(),
-            avg_total_eras_points.into()
-        ),
-        avg_total_eras_points_c100,
-        trend(
-            avg_total_eras_points_non_tvp.into(),
-            avg_total_eras_points.into()
-        ),
-        avg_total_eras_points_non_tvp,
-        trend(
-            avg_total_eras_points_tvp.into(),
-            avg_total_eras_points.into()
-        ),
-        avg_total_eras_points_tvp,
+        "‣ {} • {} • <b>{}</b>",
+        desc(total_eras_points_c100, total_eras_points),
+        desc(total_eras_points_non_tvp, total_eras_points),
+        desc(total_eras_points_tvp, total_eras_points),
     ));
     report.add_break();
 
@@ -1268,11 +1254,20 @@ fn inclusion_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         "Participation in the last {} eras:",
         config.maximum_history_eras,
     ));
+
+    fn desc(n: usize, d: usize) -> String {
+        if d > 0 {
+            format!("{:.2}%", (n as f64 / d as f64) * 100.0)
+        } else {
+            "-".to_string()
+        }
+    }
+
     report.add_raw_text(format!(
-        "‣ {:.2}% • {:.2}% • <b>{:.2}%</b>",
-        (total_c100_with_points as f32 / total_c100 as f32) * 100.0,
-        (total_non_tvp_with_points as f32 / total_non_tvp as f32) * 100.0,
-        (total_tvp_with_points as f32 / total_tvp as f32) * 100.0,
+        "‣ {} • {} • <b>{}</b>",
+        desc(total_c100_with_points, total_c100),
+        desc(total_non_tvp_with_points, total_non_tvp),
+        desc(total_tvp_with_points, total_tvp),
     ));
     report.add_break();
 
@@ -1382,42 +1377,34 @@ fn flagged_and_exceptional_validators_report<'a>(
 
         if total_exceptional > 0 {
             report.add_raw_text(format!(
-                    "‣ {} ({:.2}%) consistently had an exceptional performance (A+) with an average missed vote ratio of {}.",
-                    total_exceptional,
-                    (total_exceptional as f64 / para_validators.len() as f64) * 100.0,
+                    "‣ {} consistently had an exceptional performance (A+) with an average missed vote ratio of {}.",
+                    descnd(total_exceptional, para_validators.len()),
                     avg_mvr_exceptional
                 ));
             // Show subsets
             if !is_short {
                 report.add_raw_text(format!(
-                    "‣‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
-                    total_c100_exceptional,
-                    (total_c100_exceptional as f64 / total_c100 as f64) * 100.0,
-                    total_non_tvp_exceptional,
-                    (total_non_tvp_exceptional as f64 / total_non_tvp as f64) * 100.0,
-                    total_tvp_exceptional,
-                    (total_tvp_exceptional as f64 / total_tvp as f64) * 100.0,
+                    "‣‣ {} • {} • <b>{}</b>",
+                    descnd(total_c100_exceptional, total_c100),
+                    descnd(total_non_tvp_exceptional, total_non_tvp),
+                    descnd(total_tvp_exceptional, total_tvp),
                 ));
             }
         }
 
         if total_flagged > 0 {
             report.add_raw_text(format!(
-                    "‣ {}{} ({:.2}%) consistently had a low performance (F) with an average missed vote ratio of {}.",
+                    "‣ {}{} consistently had a low performance (F) with an average missed vote ratio of {}.",
                     warning,
-                    total_flagged,
-                    (total_flagged as f64 / para_validators.len() as f64) * 100.0,
+                    descnd(total_flagged, para_validators.len()),
                     avg_mvr_flagged
                 ));
             if !is_short {
                 report.add_raw_text(format!(
-                    "‣‣ {} ({:.2}%) • {} ({:.2}%) • <b> {} ({:.2}%)</b>",
-                    total_c100_flagged,
-                    (total_c100_flagged as f32 / total_c100 as f32) * 100.0,
-                    total_non_tvp_flagged,
-                    (total_non_tvp_flagged as f32 / total_non_tvp as f32) * 100.0,
-                    total_tvp_flagged,
-                    (total_tvp_flagged as f32 / total_tvp as f32) * 100.0,
+                    "‣‣ {} • {} • <b>{}</b>",
+                    descnd(total_c100_flagged, total_c100),
+                    descnd(total_non_tvp_flagged, total_c100),
+                    descnd(total_tvp_flagged, total_c100),
                 ));
             }
         }
