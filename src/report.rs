@@ -27,7 +27,11 @@ use crate::records::{
 use log::info;
 use rand::Rng;
 use regex::Regex;
-use std::{convert::TryInto, result::Result};
+use std::{
+    convert::{TryFrom, TryInto},
+    result::Result,
+};
+
 use subxt::sp_runtime::AccountId32;
 use subxt::{Client, DefaultConfig};
 
@@ -1447,10 +1451,10 @@ fn top_validators_report<'a>(
             .cmp(&(&a.maximum_history_total_points / &a.maximum_history_total_eras))
     });
 
-    let max = if tvp_sorted.len() > config.maximum_top_ranking_callout && is_short {
-        config.maximum_top_ranking_callout
-    } else if tvp_sorted.len() > config.maximum_top_ranking && !is_short {
-        config.maximum_top_ranking
+    let max: usize = if tvp_sorted.len() as u32 > config.maximum_top_ranking_callout && is_short {
+        usize::try_from(config.maximum_top_ranking_callout).unwrap()
+    } else if tvp_sorted.len() as u32 > config.maximum_top_ranking && !is_short {
+        usize::try_from(config.maximum_top_ranking).unwrap()
     } else {
         tvp_sorted.len()
     };
@@ -1486,6 +1490,8 @@ fn top_performers_report<'a>(
         return top_validators_report(report, &data, is_short);
     }
 
+    let config = CONFIG.clone();
+
     // Filter TVP validators
     let mut validators = data
         .validators
@@ -1497,10 +1503,11 @@ fn top_performers_report<'a>(
         // Sort by Score in descending
         validators.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
 
-        let max = if validators.len() > config.maximum_top_ranking_callout && is_short {
-            config.maximum_top_ranking_callout
-        } else if validators.len() > config.maximum_top_ranking && !is_short {
-            config.maximum_top_ranking
+        let max: usize = if validators.len() as u32 > config.maximum_top_ranking_callout && is_short
+        {
+            usize::try_from(config.maximum_top_ranking_callout).unwrap()
+        } else if validators.len() as u32 > config.maximum_top_ranking && !is_short {
+            usize::try_from(config.maximum_top_ranking).unwrap()
         } else {
             validators.len()
         };
