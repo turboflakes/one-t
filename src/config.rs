@@ -103,6 +103,23 @@ fn default_mvr_level_4() -> u32 {
     8000
 }
 
+/// provides default value for pool_nominate_rate if ONET_POOL_NOMINATE_RATE env var is not set
+/// example: 1 era = 6 sessions/epochs
+fn default_pool_nominate_rate() -> u32 {
+    6
+}
+
+/// provides default value for seed_path if ONET_POOL_NOMINATOR_SEED_PATH env var is not set
+fn default_pool_nominator_seed_path() -> String {
+    ".nominator.seed".into()
+}
+
+/// provides default value for nomination_pool_nominate_rate if ONET_POOL_MINIMUM_SESSIONS env var is not set
+/// example: 1 era = 6 sessions/epochs
+fn default_pool_minimum_sessions() -> u32 {
+    6
+}
+
 #[derive(Clone, Deserialize, Debug)]
 pub struct Config {
     #[serde(default = "default_chain_name")]
@@ -130,6 +147,17 @@ pub struct Config {
     pub mvr_level_4: u32,
     #[serde(default)]
     pub is_debug: bool,
+    // nomination pool
+    #[serde(default)]
+    pub pool_disabled: bool,
+    #[serde(default)]
+    pub pool_id: u32,
+    #[serde(default = "default_pool_nominator_seed_path")]
+    pub pool_nominator_seed_path: String,
+    #[serde(default = "default_pool_nominate_rate")]
+    pub pool_nominate_rate: u32,
+    #[serde(default = "default_pool_minimum_sessions")]
+    pub pool_minimum_sessions: u32,
     // matrix configuration
     #[serde(default)]
     pub matrix_public_room: String,

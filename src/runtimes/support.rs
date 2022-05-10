@@ -25,6 +25,7 @@ pub type ChainPrefix = u16;
 pub enum SupportedRuntime {
     Polkadot,
     Kusama,
+    Westend,
 }
 
 impl From<String> for SupportedRuntime {
@@ -32,6 +33,7 @@ impl From<String> for SupportedRuntime {
         match v.as_str() {
             "polkadot" => Self::Polkadot,
             "kusama" => Self::Kusama,
+            "westend" => Self::Westend,
             _ => unimplemented!("Chain prefix not supported"),
         }
     }
@@ -42,6 +44,7 @@ impl From<ChainPrefix> for SupportedRuntime {
         match v {
             0 => Self::Polkadot,
             2 => Self::Kusama,
+            42 => Self::Westend,
             _ => unimplemented!("Chain prefix not supported"),
         }
     }
@@ -52,6 +55,7 @@ impl std::fmt::Display for SupportedRuntime {
         match self {
             Self::Polkadot => write!(f, "Polkadot"),
             Self::Kusama => write!(f, "Kusama"),
+            Self::Westend => write!(f, "Westend"),
         }
     }
 }

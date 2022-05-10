@@ -25,8 +25,10 @@ use crate::records::EpochIndex;
 use crate::runtimes::{
     kusama, polkadot,
     support::{ChainPrefix, SupportedRuntime},
+    westend,
 };
 use log::{debug, error, info, warn};
+use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -40,7 +42,7 @@ use std::{
     thread, time,
 };
 use subxt::{
-    sp_core::{crypto, storage::StorageKey},
+    sp_core::{crypto, sr25519, storage::StorageKey, Pair},
     sp_runtime::AccountId32,
     Client, ClientBuilder, DefaultConfig,
 };
@@ -213,6 +215,7 @@ impl Onet {
         match self.runtime {
             SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
+            SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
         }
     }
 }
@@ -373,4 +376,13 @@ pub fn get_subscribers_by_epoch(
     }
 
     Ok(out)
+}
+
+/// Helper function to generate a crypto pair from seed
+pub fn get_from_seed(seed: &str, pass: Option<&str>) -> sr25519::Pair {
+    // Use regex to remove control characters
+    let re = Regex::new(r"[\x00-\x1F]").unwrap();
+    let clean_seed = re.replace_all(&seed.trim(), "");
+    sr25519::Pair::from_string(&clean_seed, pass)
+        .expect("constructed from known-good static value; qed")
 }
