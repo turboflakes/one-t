@@ -1050,7 +1050,14 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     let r = current_session_index as f64 % config.pool_nominate_rate as f64;
     if r == 0.0_f64 {
         if records.total_full_epochs() >= config.pool_minimum_sessions {
-            nominate_top_validators(&onet, validators.clone()).await?;
+            match nominate_top_validators(&onet, validators.clone()).await {
+                Ok(message) => {
+                    onet.matrix().send_public_message(&message, None).await?;
+                }
+                Err(e) => {
+                    warn!("{:?}", e);
+                }
+            }
         } else {
             warn!(
                 "Only {} full session recorded, at least {} are needed to trigger a nomination.",
@@ -1127,19 +1134,25 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     Ok(())
 }
 
-async fn nominate_top_validators(onet: &Onet, validators: Validators) -> Result<(), OnetError> {
+async fn nominate_top_validators(onet: &Onet, validators: Validators) -> Result<String, OnetError> {
     let config = CONFIG.clone();
     if config.pool_disabled {
-        warn!("Nomination pool disabled");
-        return Ok(());
+        return Err(OnetError::PoolError("Nomination Pool disabled".to_string()));
     }
     if config.pool_id == 0 {
-        warn!("Nomination pool id not defined");
-        return Ok(());
+        return Err(OnetError::PoolError(
+            "Nomination Pool ID not defined".to_string(),
+        ));
     }
-
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
+
+    // Fetch pool name
+    let _pool_metadata = api
+        .storage()
+        .nomination_pools()
+        .metadata(&config.pool_id, None)
+        .await?;
 
     // Load nominator seed account
     let seed = fs::read_to_string(config.pool_nominator_seed_path)
@@ -1158,7 +1171,7 @@ async fn nominate_top_validators(onet: &Onet, validators: Validators) -> Result<
         top_validators.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
         top_validators.truncate(16);
 
-        let top_validators = validators
+        let top_validator_accounts = top_validators
             .iter()
             .map(|v| v.stash.clone())
             .collect::<Vec<AccountId32>>();
@@ -1167,7 +1180,7 @@ async fn nominate_top_validators(onet: &Onet, validators: Validators) -> Result<
         let response = api
             .tx()
             .nomination_pools()
-            .nominate(config.pool_id, top_validators)
+            .nominate(config.pool_id, top_validator_accounts)
             .sign_and_submit_then_watch_default(&signer)
             .await?
             .wait_for_finalized()
@@ -1186,19 +1199,21 @@ async fn nominate_top_validators(onet: &Onet, validators: Validators) -> Result<
         let failed_event = tx_events.find_first::<ExtrinsicFailed>()?;
 
         if let Some(ev) = failed_event {
-            warn!(
+            return Err(OnetError::PoolError(format!(
                 "Nomination failed at block: {} with event: {:?}",
                 block_number, ev
-            );
+            )));
         } else {
-            info!(
-                "Nomination succeed at block: {} for pool_id: {}",
+            let message = format!(
+                "Nomination succeed at block: {} for pool ({})",
                 block_number, config.pool_id
             );
+            return Ok(message);
         }
     }
-
-    Ok(())
+    Err(OnetError::PoolError(
+        "Nomination failed since ranking could not be defined".to_string(),
+    ))
 }
 
 async fn verify_oversubscribed(

@@ -48,6 +48,8 @@ pub enum OnetError {
     SerdeError(#[from] serde_json::Error),
     #[error("IOError error: {0}")]
     IOError(#[from] std::io::Error),
+    #[error("Nomination pool error: {0}")]
+    PoolError(String),
     #[error("Other error: {0}")]
     Other(String),
 }
