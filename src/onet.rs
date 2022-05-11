@@ -216,6 +216,7 @@ impl Onet {
             SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
+            _ => unreachable!(),
         }
     }
 }

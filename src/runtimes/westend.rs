@@ -40,7 +40,8 @@ use async_recursion::async_recursion;
 use futures::StreamExt;
 use log::{debug, error, info, warn};
 use std::{
-    collections::BTreeMap, convert::TryInto, fs, iter::FromIterator, result::Result, thread, time,
+    collections::BTreeMap, convert::TryInto, fs, iter::FromIterator, result::Result, str::FromStr,
+    thread, time,
 };
 use subxt::{
     sp_core::sr25519, sp_runtime::AccountId32, DefaultConfig, PairSigner, PolkadotExtrinsicParams,
@@ -48,16 +49,16 @@ use subxt::{
 
 #[subxt::subxt(
     runtime_metadata_path = "metadata/westend_metadata.scale",
-    generated_type_derives = "PartialEq, Clone"
+    derive_for_all_types = "PartialEq, Clone"
 )]
 mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        pallet_identity::types::Data, polkadot_parachain::primitives::Id,
-        polkadot_primitives::v2::CoreIndex, polkadot_primitives::v2::GroupIndex,
-        polkadot_primitives::v2::ValidatorIndex, polkadot_primitives::v2::ValidityAttestation,
-        sp_arithmetic::per_things::Perbill,
+        frame_support::storage::bounded_vec::BoundedVec, pallet_identity::types::Data,
+        polkadot_parachain::primitives::Id, polkadot_primitives::v2::CoreIndex,
+        polkadot_primitives::v2::GroupIndex, polkadot_primitives::v2::ValidatorIndex,
+        polkadot_primitives::v2::ValidityAttestation, sp_arithmetic::per_things::Perbill,
     },
     session::events::NewSession,
     system::events::ExtrinsicFailed,
@@ -67,8 +68,8 @@ type Api = node_runtime::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<Defau
 
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    let client = onet.client().clone();
-    let api = client.to_runtime_api::<Api>();
+    let client = onet.client();
+    let api = client.clone().to_runtime_api::<Api>();
 
     let block_hash = api.client.rpc().block_hash(None).await?;
 
@@ -1047,23 +1048,23 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     }
 
     // Trigger nomination at the rate defined in config
-    let r = current_session_index as f64 % config.pool_nominate_rate as f64;
-    if r == 0.0_f64 {
-        if records.total_full_epochs() >= config.pool_minimum_sessions {
-            match nominate_top_validators(&onet, validators.clone()).await {
-                Ok(message) => {
-                    onet.matrix().send_public_message(&message, None).await?;
+    if !config.pool_disabled {
+        let r = current_session_index as f64 % config.pool_nominate_rate as f64;
+        if r == 0.0_f64 {
+            if records.total_full_epochs() >= config.pool_minimum_sessions {
+                match nominate_top_validators(&onet, validators.clone()).await {
+                    Ok(message) => {
+                        onet.matrix().send_public_message(&message, None).await?;
+                    }
+                    Err(e) => error!("{}", e),
                 }
-                Err(e) => {
-                    warn!("{:?}", e);
-                }
-            }
-        } else {
-            warn!(
+            } else {
+                warn!(
                 "Only {} full session recorded, at least {} are needed to trigger a nomination.",
                 records.total_full_epochs(),
                 config.pool_minimum_sessions
             );
+            }
         }
     }
 
@@ -1136,9 +1137,6 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
 async fn nominate_top_validators(onet: &Onet, validators: Validators) -> Result<String, OnetError> {
     let config = CONFIG.clone();
-    if config.pool_disabled {
-        return Err(OnetError::PoolError("Nomination Pool disabled".to_string()));
-    }
     if config.pool_id == 0 {
         return Err(OnetError::PoolError(
             "Nomination Pool ID not defined".to_string(),
@@ -1148,7 +1146,7 @@ async fn nominate_top_validators(onet: &Onet, validators: Validators) -> Result<
     let api = client.clone().to_runtime_api::<Api>();
 
     // Fetch pool name
-    let _pool_metadata = api
+    let BoundedVec(pool_metadata) = api
         .storage()
         .nomination_pools()
         .metadata(&config.pool_id, None)
@@ -1180,7 +1178,7 @@ async fn nominate_top_validators(onet: &Onet, validators: Validators) -> Result<
         let response = api
             .tx()
             .nomination_pools()
-            .nominate(config.pool_id, top_validator_accounts)
+            .nominate(config.pool_id, top_validator_accounts)?
             .sign_and_submit_then_watch_default(&signer)
             .await?
             .wait_for_finalized()
@@ -1200,19 +1198,25 @@ async fn nominate_top_validators(onet: &Onet, validators: Validators) -> Result<
 
         if let Some(ev) = failed_event {
             return Err(OnetError::PoolError(format!(
-                "Nomination failed at block: {} with event: {:?}",
+                "Nomination failed at block #{} with event: {:?}",
                 block_number, ev
             )));
         } else {
             let message = format!(
-                "Nomination succeed at block: {} for pool ({})",
-                block_number, config.pool_id
+                "Nomination for pool {} ({}) finalized at block #{} (<a href=\"https://{}.subscan.io/extrinsic/{:?}\">{}</a>)",
+                str(pool_metadata),
+                config.pool_id,
+                block_number,
+                config.chain_name.to_lowercase(),
+                tx_events.extrinsic_hash(),
+                tx_events.extrinsic_hash().to_string()
+                ,
             );
             return Ok(message);
         }
     }
     Err(OnetError::PoolError(
-        "Nomination failed since ranking could not be defined".to_string(),
+        "Nomination failed since are None validators in the top ranking,  ".to_string(),
     ))
 }
 
