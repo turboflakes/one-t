@@ -63,7 +63,7 @@ _Note: Parachains are sorted by para-validator points in descending order._
 
 `!subscribe insights`
 
-Score: `score = (1 - mvr) * 0.5 + ((avg_pts - min_avg_pts) / (max_avg_pts - min_avg_pts)) * 0.4 + (pv_sessions / total_sessions) * 0.1`
+Score: `score = (1 - mvr) * 0.75 + ((avg_pts - min_avg_pts) / (max_avg_pts - min_avg_pts)) * 0.15 + (pv_sessions / total_sessions) * 0.1`
 
 Timeline: Graphic performance representation in the last X sessions:  
 ‣ ❚ = BVR >= 80%  
