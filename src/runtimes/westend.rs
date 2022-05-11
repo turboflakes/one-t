@@ -1054,7 +1054,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             if records.total_full_epochs() >= config.pool_minimum_sessions {
                 match nominate_top_validators(&onet, validators.clone()).await {
                     Ok(message) => {
-                        onet.matrix().send_public_message(&message, None).await?;
+                        onet.matrix().send_public_message(&message, Some(&message)).await?;
                     }
                     Err(e) => error!("{}", e),
                 }
