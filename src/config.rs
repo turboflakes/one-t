@@ -100,7 +100,7 @@ fn default_mvr_level_3() -> u32 {
     6000
 }
 fn default_mvr_level_4() -> u32 {
-    8000
+    9000
 }
 
 /// provides default value for pool_nominate_rate if ONET_POOL_NOMINATE_RATE env var is not set

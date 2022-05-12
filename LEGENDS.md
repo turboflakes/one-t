@@ -16,15 +16,15 @@ By typing `!legends` in one of the main public channels the following message wi
 MVR: Missed Votes Ratio (MVR) `MVR = (✗) / (✓i + ✓e + ✗)`.  
 
 GRD: Grade reflects the Backing Votes Ratio (BVR) `BVR = 1 - MVR` by the validator:  
-‣ A+ = BVR >= 90%  
-‣ A = BVR >= 80%  
-‣ B+ = BVR >= 70%  
-‣ B = BVR >= 60%  
-‣ C+ = BVR >= 55%  
-‣ C = BVR >= 50%  
-‣ D+ = BVR >= 45%  
-‣ D = BVR >= 40%  
-‣ F = BVR < 40%  
+‣ A+ = BVR > 99%  
+‣ A  = BVR > 95%  
+‣ B+ = BVR > 90%  
+‣ B  = BVR > 80%  
+‣ C+ = BVR > 70%  
+‣ C  = BVR > 60%  
+‣ D+ = BVR > 50%  
+‣ D  = BVR > 40%  
+‣ F  = BVR <= 40%  
 
 PPTS: Sum of para-validator points the validator earned.  
 TPTS: Sum of para-validator points + authored blocks points the validator earned.  
@@ -66,7 +66,7 @@ _Note: Parachains are sorted by para-validator points in descending order._
 Score: `score = (1 - mvr) * 0.75 + ((avg_pts - min_avg_pts) / (max_avg_pts - min_avg_pts)) * 0.15 + (pv_sessions / total_sessions) * 0.1`
 
 Timeline: Graphic performance representation in the last X sessions:  
-‣ ❚ = BVR >= 80%  
+‣ ❚ = BVR >= 90%  
 ‣ ❙ = BVR >= 60%  
 ‣ ❘ = BVR >= 40%  
 ‣ ! = BVR >= 20%  

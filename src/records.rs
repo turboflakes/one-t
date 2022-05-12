@@ -128,16 +128,16 @@ impl std::fmt::Display for Glyph {
 }
 
 pub fn grade(ratio: f64) -> String {
-    let p = (ratio * 100.0).round() as u32;
+    let p = (ratio * 10000.0).round() as u32;
     match p {
-        90..=100 => "A+".to_string(),
-        80..=89 => "A".to_string(),
-        70..=79 => "B+".to_string(),
-        60..=69 => "B".to_string(),
-        55..=59 => "C+".to_string(),
-        50..=54 => "C".to_string(),
-        45..=49 => "D+".to_string(),
-        40..=44 => "D".to_string(),
+        9901..=10000 => "A+".to_string(),
+        9501..=9900 => "A".to_string(),
+        9001..=9500 => "B+".to_string(),
+        8001..=9000 => "B".to_string(),
+        7001..=8000 => "C+".to_string(),
+        6001..=7000 => "C".to_string(),
+        5001..=6000 => "D+".to_string(),
+        4001..=5000 => "D".to_string(),
         _ => "F".to_string(),
     }
 }

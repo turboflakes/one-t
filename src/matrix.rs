@@ -1242,15 +1242,15 @@ impl Matrix {
         message.push_str(
             "GRD: Grade reflects the Backing Votes Ratio (BVR = 1-MVR) by the validator:<br>",
         );
-        message.push_str("‣ A+ = BVR >= 90% <br>");
-        message.push_str("‣ A = BVR >= 80% <br>");
-        message.push_str("‣ B+ = BVR >= 70% <br>");
-        message.push_str("‣ B = BVR >= 60% <br>");
-        message.push_str("‣ C+ = BVR >= 55% <br>");
-        message.push_str("‣ C = BVR >= 50% <br>");
-        message.push_str("‣ D+ = BVR >= 45% <br>");
-        message.push_str("‣ D = BVR >= 40% <br>");
-        message.push_str("‣ F = BVR < 40% <br>");
+        message.push_str("‣ A+ = BVR > 99% <br>");
+        message.push_str("‣ A  = BVR > 95% <br>");
+        message.push_str("‣ B+ = BVR > 90% <br>");
+        message.push_str("‣ B  = BVR > 80% <br>");
+        message.push_str("‣ C+ = BVR > 70% <br>");
+        message.push_str("‣ C  = BVR > 60% <br>");
+        message.push_str("‣ D+ = BVR > 50% <br>");
+        message.push_str("‣ D  = BVR > 40% <br>");
+        message.push_str("‣ F  = BVR <= 40% <br>");
         message.push_str("PPTS: Sum of para-validator points the validator earned.<br>");
         message.push_str(
             "TPTS: Sum of para-validator points + authored blocks points the validator earned.<br>",
