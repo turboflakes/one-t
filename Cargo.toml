@@ -1,6 +1,6 @@
 [package]
 name = "onet"
-version = "0.8.5"
+version = "0.8.6"
 authors = ["Paulo <paulo@turboflakes.io>"]
 description = "ONE-T is a performance report bot for the Polkadot and Kusama network with a special focus on the One Thousand validator programme" 
 edition = "2018"
@@ -23,7 +23,7 @@ regex = "1.4.6"
 reqwest = { version = "0.11", features = ["json", "blocking", "multipart"] }
 url = "2.2.2"
 base64 = "0.13.0"
-rand = "0.8.5"
+rand = "0.8.6"
 flate2 = "1.0"
 # subxt dependencies
 # subxt = { version = "0.21.0", git = "https://github.com/paritytech/subxt" }
