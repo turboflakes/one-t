@@ -28,6 +28,7 @@ use base64::encode;
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     fs,
     fs::{File, OpenOptions},
     io::Write,
@@ -42,6 +43,7 @@ const MATRIX_URL: &str = "https://matrix.org/_matrix/client/r0";
 const MATRIX_MEDIA_URL: &str = "https://matrix.org/_matrix/media/r0";
 const MATRIX_BOT_NAME: &str = "ONE-T";
 const MATRIX_NEXT_BATCH_FILENAME: &str = ".next_batch";
+const MATRIX_NEXT_TOKEN_FILENAME: &str = ".next_token";
 pub const MATRIX_SUBSCRIBERS_FILENAME: &str = ".subscribers";
 
 type AccessToken = String;
@@ -80,21 +82,6 @@ struct Room {
     room_alias_name: String,
 }
 
-fn define_private_room_alias_name(
-    pkg_name: &str,
-    chain_name: &str,
-    matrix_user: &str,
-    matrix_bot_user: &str,
-) -> String {
-    encode(
-        format!(
-            "{}/{}/{}/{}",
-            pkg_name, chain_name, matrix_user, matrix_bot_user
-        )
-        .as_bytes(),
-    )
-}
-
 impl Room {
     fn new_private(chain: SupportedRuntime, user_id: &str) -> Room {
         let config = CONFIG.clone();
@@ -113,6 +100,27 @@ impl Room {
     }
 }
 
+impl std::fmt::Display for Room {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.room_alias)
+    }
+}
+
+fn define_private_room_alias_name(
+    pkg_name: &str,
+    chain_name: &str,
+    matrix_user: &str,
+    matrix_bot_user: &str,
+) -> String {
+    encode(
+        format!(
+            "{}/{}/{}/{}",
+            pkg_name, chain_name, matrix_user, matrix_bot_user
+        )
+        .as_bytes(),
+    )
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct LoginRequest {
     r#type: String,
@@ -122,7 +130,7 @@ struct LoginRequest {
 
 #[derive(Deserialize, Debug)]
 struct LoginResponse {
-    user_id: String,
+    user_id: UserID,
     access_token: AccessToken,
     home_server: String,
     device_id: String,
@@ -227,7 +235,9 @@ struct RoomEventFilter {
 #[derive(Deserialize, Debug)]
 struct RoomEventsResponse {
     chunk: Vec<ClientEvent>,
+    #[serde(default)]
     start: SyncToken,
+    #[serde(default)]
     end: SyncToken,
 }
 
@@ -247,8 +257,14 @@ struct ClientEvent {
 
 #[derive(Deserialize, Debug)]
 struct EventContent {
+    #[serde(default)]
     body: String,
+    #[serde(default)]
     msgtype: String,
+    #[serde(default)]
+    displayname: String,
+    #[serde(default)]
+    membership: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -405,7 +421,7 @@ impl Matrix {
                     }
                     self.public_room_id = public_room_id;
                     info!(
-                        "Messages will be sent to room {} (Public)",
+                        "Messages will be sent to public room {}",
                         self.chain.public_room_alias()
                     );
                 }
@@ -430,7 +446,7 @@ impl Matrix {
                         }
                         self.callout_public_room_ids.push(public_room_id);
                         info!(
-                            "Callout messages will be sent to room {} (Public)",
+                            "Callout messages will be sent to room public {}",
                             public_room
                         );
                     }
@@ -462,107 +478,103 @@ impl Matrix {
     }
 
     pub async fn lazy_load_and_process_commands(&self) -> Result<(), MatrixError> {
+        // get members for joined members for the public room
+        let members = self.get_members_from_room(&self.public_room_id).await?;
+        info!(
+            "Loading {} members from public room {}.",
+            members.len(),
+            self.chain.public_room_alias()
+        );
+        // verify that all members have their private rooms created
+        let mut private_rooms: HashSet<RoomID> = HashSet::new();
+        for member in members.iter() {
+            if let Some(private_room) = self.get_or_create_private_room(member).await? {
+                private_rooms.insert(private_room.room_id.to_string());
+                info!("Private room {} ready.", private_room);
+            }
+        }
+
+        while let Some(sync_token) = self.get_next_or_sync().await? {
+            // TODO: Remove members that eventually leave public room without the need of restarting the service
+
+            // ### Look for new members that join public room ###
+            if let Some(new_members) = self
+                .get_members_from_room_and_token(&self.public_room_id)
+                .await?
+            {
+                for member in new_members.iter() {
+                    if let Some(private_room) = self.get_or_create_private_room(member).await? {
+                        private_rooms.insert(private_room.room_id.to_string());
+                        info!(
+                            "Private room {} for new member {} ready.",
+                            private_room, member
+                        );
+                    }
+                }
+            }
+
+            // Read commands from private rooms
+            for private_room_id in private_rooms.iter() {
+                if let Some(commands) = self.get_commands_from_room(&private_room_id, None).await? {
+                    self.process_commands_into_room(commands, &private_room_id)
+                        .await?;
+                }
+            }
+
+            // Read commands from public room
+            if let Some(commands) = self
+                .get_commands_from_room(&self.public_room_id, Some(sync_token.clone()))
+                .await?
+            {
+                self.process_commands_into_room(commands, &self.public_room_id)
+                    .await?;
+            }
+            thread::sleep(time::Duration::from_secs(6));
+        }
+        Ok(())
+    }
+
+    async fn process_commands_into_room(
+        &self,
+        commands: Vec<Commands>,
+        room_id: &str,
+    ) -> Result<(), MatrixError> {
         let config = CONFIG.clone();
         let subscribers_filename = format!("{}{}", config.data_path, MATRIX_SUBSCRIBERS_FILENAME);
-        let next_batch_filename = format!("{}{}", config.data_path, MATRIX_NEXT_BATCH_FILENAME);
         let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
-        while let Some(token) = self.get_next_or_sync().await? {
-            if let Some((commands, _, next_token)) =
-                self.get_commands_from_public_room(&token).await?
-            {
-                for cmd in commands.iter() {
-                    match cmd {
-                        Commands::Help => self.reply_help().await?,
-                        Commands::Legends => self.reply_legends().await?,
-                        Commands::Subscribe(report, who, stash) => {
-                            match report {
-                                ReportType::Validator => {
-                                    if let Some(stash) = stash {
-                                        // Verify stash
-                                        if let Ok(_) = AccountId32::from_str(&stash) {
-                                            // Write stash,user in subscribers file if doesn't already exist
-                                            let subscriber = format!("{stash},{who}\n");
-                                            if Path::new(&subscribers_filename).exists() {
-                                                let subscribers =
-                                                    fs::read_to_string(&subscribers_filename)?;
-                                                let mut x = 0;
-                                                for _ in subscribers.lines() {
-                                                    x += 1;
-                                                }
-                                                if x == config.maximum_subscribers {
-                                                    let message = format!("⛔ The maximum number of subscribers have been reached → {}", config.maximum_subscribers);
-                                                    self.send_public_message(&message, None)
-                                                        .await?;
-                                                    continue;
-                                                }
-
-                                                if !subscribers.contains(&subscriber) {
-                                                    let mut file = OpenOptions::new()
-                                                        .append(true)
-                                                        .open(&subscribers_filename)?;
-                                                    file.write_all(subscriber.as_bytes())?;
-                                                    let message = format!("📥 New subscription! <i>{}</i> subscribed for {stash}", report.name());
-                                                    self.send_private_message(
-                                                        who,
-                                                        &message,
-                                                        Some(&message),
-                                                    )
-                                                    .await?;
-                                                } else {
-                                                    let message = format!("👍 It's here! {stash} is already subscribed. The report should be sent soon.");
-                                                    self.send_private_message(
-                                                        who,
-                                                        &message,
-                                                        Some(&message),
-                                                    )
-                                                    .await?;
-                                                }
-                                            } else {
-                                                fs::write(&subscribers_filename, subscriber)?;
-                                                let message = format!("📥 New subscription! <i>{}</i> subscribed for {stash}", report.name());
-                                                self.send_private_message(
-                                                    who,
-                                                    &message,
-                                                    Some(&message),
-                                                )
-                                                .await?;
-                                            }
-                                        } else {
-                                            let message = format!(
-                                                "{who} try again! {stash} is an invalid address."
-                                            );
-                                            self.send_public_message(&message, None).await?;
-                                        }
-                                    }
-                                }
-                                ReportType::Insights => {
-                                    // Write user in subscribers.ranking file if doesn't already exist
-                                    let subscriber = format!("{who}\n");
-                                    let path = format!(
-                                        "{}.{}",
-                                        subscribers_filename,
-                                        report.to_string().to_lowercase()
-                                    );
-                                    if Path::new(&path).exists() {
-                                        let subscribers = fs::read_to_string(&path)?;
+        for cmd in commands.iter() {
+            match cmd {
+                Commands::Help => self.reply_help(&room_id).await?,
+                Commands::Legends => self.reply_legends(&room_id).await?,
+                Commands::Subscribe(report, who, stash) => {
+                    match report {
+                        ReportType::Validator => {
+                            if let Some(stash) = stash {
+                                // Verify stash
+                                if let Ok(_) = AccountId32::from_str(&stash) {
+                                    // Write stash,user in subscribers file if doesn't already exist
+                                    let subscriber = format!("{stash},{who}\n");
+                                    if Path::new(&subscribers_filename).exists() {
+                                        let subscribers =
+                                            fs::read_to_string(&subscribers_filename)?;
                                         let mut x = 0;
                                         for _ in subscribers.lines() {
                                             x += 1;
                                         }
                                         if x == config.maximum_subscribers {
                                             let message = format!("⛔ The maximum number of subscribers have been reached → {}", config.maximum_subscribers);
-                                            self.send_public_message(&message, None).await?;
+                                            self.send_room_message(&room_id, &message, None)
+                                                .await?;
+
                                             continue;
                                         }
 
                                         if !subscribers.contains(&subscriber) {
-                                            let mut file =
-                                                OpenOptions::new().append(true).open(&path)?;
+                                            let mut file = OpenOptions::new()
+                                                .append(true)
+                                                .open(&subscribers_filename)?;
                                             file.write_all(subscriber.as_bytes())?;
-                                            let message = format!(
-                                                "📥 New subscription! <i>{}</i> subscribed.",
-                                                report.name()
-                                            );
+                                            let message = format!("📥 New subscription! <i>{}</i> subscribed for {stash}", report.name());
                                             self.send_private_message(
                                                 who,
                                                 &message,
@@ -570,7 +582,7 @@ impl Matrix {
                                             )
                                             .await?;
                                         } else {
-                                            let message = format!("👍 It's here! <i>{}</i> is already subscribed. The report should be sent soon.", report.name());
+                                            let message = format!("👍 It's here! {stash} is already subscribed. The report should be sent soon.");
                                             self.send_private_message(
                                                 who,
                                                 &message,
@@ -579,147 +591,171 @@ impl Matrix {
                                             .await?;
                                         }
                                     } else {
-                                        fs::write(&path, subscriber)?;
+                                        fs::write(&subscribers_filename, subscriber)?;
                                         let message = format!(
-                                            "📥 New subscription! <i>{}</i> subscribed.",
+                                            "📥 New subscription! <i>{}</i> subscribed for {stash}",
+                                            report.name()
+                                        );
+                                        self.send_private_message(who, &message, Some(&message))
+                                            .await?;
+                                    }
+                                } else {
+                                    let message =
+                                        format!("{who} try again! {stash} is an invalid address.");
+                                    self.send_room_message(&room_id, &message, None).await?;
+                                }
+                            }
+                        }
+                        ReportType::Insights => {
+                            // Write user in subscribers.ranking file if doesn't already exist
+                            let subscriber = format!("{who}\n");
+                            let path = format!(
+                                "{}.{}",
+                                subscribers_filename,
+                                report.to_string().to_lowercase()
+                            );
+                            if Path::new(&path).exists() {
+                                let subscribers = fs::read_to_string(&path)?;
+                                let mut x = 0;
+                                for _ in subscribers.lines() {
+                                    x += 1;
+                                }
+                                if x == config.maximum_subscribers {
+                                    let message = format!("⛔ The maximum number of subscribers have been reached → {}", config.maximum_subscribers);
+                                    self.send_room_message(&room_id, &message, None).await?;
+                                    continue;
+                                }
+
+                                if !subscribers.contains(&subscriber) {
+                                    let mut file = OpenOptions::new().append(true).open(&path)?;
+                                    file.write_all(subscriber.as_bytes())?;
+                                    let message = format!(
+                                        "📥 New subscription! <i>{}</i> subscribed.",
+                                        report.name()
+                                    );
+                                    self.send_private_message(who, &message, Some(&message))
+                                        .await?;
+                                } else {
+                                    let message = format!("👍 It's here! <i>{}</i> is already subscribed. The report should be sent soon.", report.name());
+                                    self.send_private_message(who, &message, Some(&message))
+                                        .await?;
+                                }
+                            } else {
+                                fs::write(&path, subscriber)?;
+                                let message = format!(
+                                    "📥 New subscription! <i>{}</i> subscribed.",
+                                    report.name()
+                                );
+                                self.send_private_message(who, &message, Some(&message))
+                                    .await?;
+                            }
+                        }
+                        _ => {
+                            // ReportType::Groups
+                            // ReportType::Parachains
+                            // Read current epoch from cached file
+                            let current_epoch = fs::read_to_string(&epoch_filename)?;
+                            let current_epoch: u32 = current_epoch.parse().unwrap_or(0);
+                            for e in 0..config.maximum_reports {
+                                let subscriber = format!("{who}\n");
+                                let epoch = current_epoch + e;
+                                let path = format!(
+                                    "{}.{}.{}",
+                                    subscribers_filename,
+                                    report.to_string().to_lowercase(),
+                                    epoch
+                                );
+                                if Path::new(&path).exists() {
+                                    let subscribers = fs::read_to_string(&path)?;
+                                    let mut x = 0;
+                                    for _ in subscribers.lines() {
+                                        x += 1;
+                                    }
+                                    if x == config.maximum_subscribers {
+                                        let message = format!("⛔ The maximum number of subscribers have been reached → {}", config.maximum_subscribers);
+                                        self.send_room_message(&room_id, &message, None).await?;
+                                        break;
+                                    }
+                                    if !subscribers.contains(&subscriber) {
+                                        let mut file =
+                                            OpenOptions::new().append(true).open(&path)?;
+                                        file.write_all(subscriber.as_bytes())?;
+                                        let message = format!(
+                                            "📥 <i>{}</i> subscribed for epoch {}.",
+                                            report.name(),
+                                            epoch
+                                        );
+                                        self.send_private_message(who, &message, Some(&message))
+                                            .await?;
+                                    } else {
+                                        let message = format!(
+                                            "👍 <i>{}</i> for epoch {} is already subscribed.",
+                                            report.name(),
+                                            epoch
+                                        );
+                                        self.send_private_message(who, &message, Some(&message))
+                                            .await?;
+                                    }
+                                } else {
+                                    fs::write(&path, subscriber)?;
+                                    let message = format!(
+                                        "📥 <i>{}</i> subscribed for epoch {}.",
+                                        report.name(),
+                                        epoch
+                                    );
+                                    self.send_private_message(who, &message, Some(&message))
+                                        .await?;
+                                }
+                            }
+                        }
+                    }
+                }
+                Commands::Unsubscribe(report, who, stash) => {
+                    match report {
+                        ReportType::Validator => {
+                            if let Some(stash) = stash {
+                                // Remove stash,user from subscribers file
+                                let subscriber = format!("{stash},{who}\n");
+                                let path =
+                                    format!("{}{}", config.data_path, MATRIX_SUBSCRIBERS_FILENAME);
+                                if Path::new(&path).exists() {
+                                    let subscribers = fs::read_to_string(&path)?;
+                                    if subscribers.contains(&subscriber) {
+                                        fs::write(&path, subscribers.replace(&subscriber, ""))?;
+                                        let message = format!(
+                                            "🗑️ <i>{}</i> unsubscribed for {stash}",
                                             report.name()
                                         );
                                         self.send_private_message(who, &message, Some(&message))
                                             .await?;
                                     }
                                 }
-                                _ => {
-                                    // ReportType::Groups
-                                    // ReportType::Parachains
-                                    // Read current epoch from cached file
-                                    let current_epoch = fs::read_to_string(&epoch_filename)?;
-                                    let current_epoch: u32 = current_epoch.parse().unwrap_or(0);
-                                    for e in 0..config.maximum_reports {
-                                        let subscriber = format!("{who}\n");
-                                        let epoch = current_epoch + e;
-                                        let path = format!(
-                                            "{}.{}.{}",
-                                            subscribers_filename,
-                                            report.to_string().to_lowercase(),
-                                            epoch
-                                        );
-                                        if Path::new(&path).exists() {
-                                            let subscribers = fs::read_to_string(&path)?;
-                                            let mut x = 0;
-                                            for _ in subscribers.lines() {
-                                                x += 1;
-                                            }
-                                            if x == config.maximum_subscribers {
-                                                let message = format!("⛔ The maximum number of subscribers have been reached → {}", config.maximum_subscribers);
-                                                self.send_public_message(&message, None).await?;
-                                                break;
-                                            }
-                                            if !subscribers.contains(&subscriber) {
-                                                let mut file =
-                                                    OpenOptions::new().append(true).open(&path)?;
-                                                file.write_all(subscriber.as_bytes())?;
-                                                let message = format!(
-                                                    "📥 <i>{}</i> subscribed for epoch {}.",
-                                                    report.name(),
-                                                    epoch
-                                                );
-                                                self.send_private_message(
-                                                    who,
-                                                    &message,
-                                                    Some(&message),
-                                                )
-                                                .await?;
-                                            } else {
-                                                let message = format!("👍 <i>{}</i> for epoch {} is already subscribed.", report.name(), epoch);
-                                                self.send_private_message(
-                                                    who,
-                                                    &message,
-                                                    Some(&message),
-                                                )
-                                                .await?;
-                                            }
-                                        } else {
-                                            fs::write(&path, subscriber)?;
-                                            let message = format!(
-                                                "📥 <i>{}</i> subscribed for epoch {}.",
-                                                report.name(),
-                                                epoch
-                                            );
-                                            self.send_private_message(
-                                                who,
-                                                &message,
-                                                Some(&message),
-                                            )
-                                            .await?;
-                                        }
-                                    }
-                                }
                             }
                         }
-                        Commands::Unsubscribe(report, who, stash) => {
-                            match report {
-                                ReportType::Validator => {
-                                    if let Some(stash) = stash {
-                                        // Remove stash,user from subscribers file
-                                        let subscriber = format!("{stash},{who}\n");
-                                        let path = format!(
-                                            "{}{}",
-                                            config.data_path, MATRIX_SUBSCRIBERS_FILENAME
-                                        );
-                                        if Path::new(&path).exists() {
-                                            let subscribers = fs::read_to_string(&path)?;
-                                            if subscribers.contains(&subscriber) {
-                                                fs::write(
-                                                    &path,
-                                                    subscribers.replace(&subscriber, ""),
-                                                )?;
-                                                let message = format!(
-                                                    "🗑️ <i>{}</i> unsubscribed for {stash}",
-                                                    report.name()
-                                                );
-                                                self.send_private_message(
-                                                    who,
-                                                    &message,
-                                                    Some(&message),
-                                                )
-                                                .await?;
-                                            }
-                                        }
-                                    }
+                        ReportType::Insights => {
+                            // Remove user from subscribers file
+                            let subscriber = format!("{who}\n");
+                            let path = format!(
+                                "{}.{}",
+                                subscribers_filename,
+                                report.to_string().to_lowercase()
+                            );
+                            if Path::new(&path).exists() {
+                                let subscribers = fs::read_to_string(&path)?;
+                                if subscribers.contains(&subscriber) {
+                                    fs::write(&path, subscribers.replace(&subscriber, ""))?;
+                                    let message =
+                                        format!("🗑️ <i>{}</i> unsubscribed.", report.name());
+                                    self.send_private_message(who, &message, Some(&message))
+                                        .await?;
                                 }
-                                ReportType::Insights => {
-                                    // Remove user from subscribers file
-                                    let subscriber = format!("{who}\n");
-                                    let path = format!(
-                                        "{}.{}",
-                                        subscribers_filename,
-                                        report.to_string().to_lowercase()
-                                    );
-                                    if Path::new(&path).exists() {
-                                        let subscribers = fs::read_to_string(&path)?;
-                                        if subscribers.contains(&subscriber) {
-                                            fs::write(&path, subscribers.replace(&subscriber, ""))?;
-                                            let message =
-                                                format!("🗑️ <i>{}</i> unsubscribed.", report.name());
-                                            self.send_private_message(
-                                                who,
-                                                &message,
-                                                Some(&message),
-                                            )
-                                            .await?;
-                                        }
-                                    }
-                                }
-                                _ => (),
                             }
                         }
                         _ => (),
                     }
                 }
-                // Cache next token
-                fs::write(&next_batch_filename, next_token)?;
+                _ => (),
             }
-            thread::sleep(time::Duration::from_secs(6));
         }
         Ok(())
     }
@@ -802,7 +838,13 @@ impl Matrix {
                         room.room_id = room_id;
                         Ok(Some(room))
                     }
-                    None => Ok(self.create_private_room(user_id).await?),
+                    None => match self.create_private_room(user_id).await? {
+                        Some(room) => {
+                            self.reply_help(&room.room_id).await?;
+                            Ok(Some(room))
+                        }
+                        None => Ok(None),
+                    },
                 }
             }
             None => Err(MatrixError::Other("access_token not defined".to_string())),
@@ -869,9 +911,12 @@ impl Matrix {
     // https://spec.matrix.org/v1.2/client-server-api/#syncing
     async fn get_next_or_sync(&self) -> Result<Option<SyncToken>, MatrixError> {
         let config = CONFIG.clone();
-        let next_batch_filename = format!("{}{}", config.data_path, MATRIX_NEXT_BATCH_FILENAME);
+        let next_token_filename = format!(
+            "{}{}.{}",
+            config.data_path, MATRIX_NEXT_TOKEN_FILENAME, self.public_room_id
+        );
         // Try to read first cached token from file
-        match fs::read_to_string(&next_batch_filename) {
+        match fs::read_to_string(&next_token_filename) {
             Ok(token) => Ok(Some(token)),
             _ => {
                 match &self.access_token {
@@ -885,8 +930,7 @@ impl Matrix {
                             reqwest::StatusCode::OK => {
                                 let response = res.json::<SyncResponse>().await?;
                                 // Persist token to file in case we need to restore commands from previously attempt
-                                fs::write(&next_batch_filename, &response.next_batch)
-                                    .expect("Unable to write .matrix.next_batch file");
+                                fs::write(&next_token_filename, &response.next_batch)?;
                                 Ok(Some(response.next_batch))
                             }
                             _ => {
@@ -903,28 +947,49 @@ impl Matrix {
 
     // Getting events for a room
     // https://spec.matrix.org/v1.2/client-server-api/#get_matrixclientv3roomsroomidmessages
-    async fn get_commands_from_public_room(
+    async fn get_commands_from_room(
         &self,
-        from_token: &str,
-    ) -> Result<Option<(Vec<Commands>, SyncToken, SyncToken)>, MatrixError> {
+        room_id: &str,
+        from_token: Option<String>,
+    ) -> Result<Option<Vec<Commands>>, MatrixError> {
         match &self.access_token {
             Some(access_token) => {
+                let config = CONFIG.clone();
+                let next_token_filename = format!(
+                    "{}{}.{}",
+                    config.data_path, MATRIX_NEXT_TOKEN_FILENAME, room_id
+                );
+
+                // If token is None try to read from cached file
+                let from_token = match from_token {
+                    Some(token) => Some(token),
+                    None => match fs::read_to_string(&next_token_filename) {
+                        Ok(token) => Some(token),
+                        _ => None,
+                    },
+                };
+
+                //
                 let client = self.client.clone();
-                let room_id_encoded: String =
-                    byte_serialize(self.public_room_id.as_bytes()).collect();
+                let room_id_encoded: String = byte_serialize(room_id.as_bytes()).collect();
                 let filter = RoomEventFilter {
                     types: vec!["m.room.message".to_string()],
-                    rooms: vec![self.public_room_id.to_string()],
+                    rooms: vec![room_id.to_string()],
                 };
                 let filter_str = serde_json::to_string(&filter)?;
                 let filter_encoded: String = byte_serialize(filter_str.as_bytes()).collect();
-                let res = client
-                    .get(format!(
+                let url = if let Some(token) = from_token {
+                    format!(
                         "{}/rooms/{}/messages?access_token={}&from={}&filter={}",
-                        MATRIX_URL, room_id_encoded, access_token, from_token, filter_encoded
-                    ))
-                    .send()
-                    .await?;
+                        MATRIX_URL, room_id_encoded, access_token, token, filter_encoded
+                    )
+                } else {
+                    format!(
+                        "{}/rooms/{}/messages?access_token={}&filter={}",
+                        MATRIX_URL, room_id_encoded, access_token, filter_encoded
+                    )
+                };
+                let res = client.get(url).send().await?;
                 match res.status() {
                     reqwest::StatusCode::OK => {
                         let events = res.json::<RoomEventsResponse>().await?;
@@ -981,7 +1046,111 @@ impl Matrix {
                                 };
                             }
                         }
-                        Ok(Some((commands, events.start, events.end)))
+                        // Cache next token
+                        fs::write(&next_token_filename, events.end)?;
+                        Ok(Some(commands))
+                    }
+                    _ => {
+                        let response = res.json::<ErrorResponse>().await?;
+                        Err(MatrixError::Other(response.error))
+                    }
+                }
+            }
+            None => Err(MatrixError::Other("access_token not defined".to_string())),
+        }
+    }
+
+    // Getting events for a room
+    // https://spec.matrix.org/v1.2/client-server-api/#get_matrixclientv3roomsroomidmessages
+    async fn get_members_from_room_and_token(
+        &self,
+        room_id: &str,
+    ) -> Result<Option<Vec<UserID>>, MatrixError> {
+        match &self.access_token {
+            Some(access_token) => {
+                let config = CONFIG.clone();
+                let next_token_filename = format!(
+                    "{}{}.members.{}",
+                    config.data_path, MATRIX_NEXT_TOKEN_FILENAME, room_id
+                );
+                let client = self.client.clone();
+                let room_id_encoded: String = byte_serialize(room_id.as_bytes()).collect();
+                let filter = RoomEventFilter {
+                    types: vec!["m.room.member".to_string()],
+                    rooms: vec![room_id.to_string()],
+                };
+                let filter_str = serde_json::to_string(&filter)?;
+                let filter_encoded: String = byte_serialize(filter_str.as_bytes()).collect();
+
+                // Try to read first cached next token from file
+                let url = match fs::read_to_string(&next_token_filename) {
+                    Ok(next_token) => format!(
+                        "{}/rooms/{}/messages?access_token={}&from={}&filter={}",
+                        MATRIX_URL, room_id_encoded, access_token, next_token, filter_encoded
+                    ),
+                    _ => format!(
+                        "{}/rooms/{}/messages?access_token={}&filter={}",
+                        MATRIX_URL, room_id_encoded, access_token, filter_encoded
+                    ),
+                };
+
+                let res = client.get(url).send().await?;
+                match res.status() {
+                    reqwest::StatusCode::OK => {
+                        let events = res.json::<RoomEventsResponse>().await?;
+                        let mut members: Vec<UserID> = Vec::new();
+                        // Parse message to commands
+                        for message in events.chunk.iter() {
+                            // skip bot user
+                            if message.content.membership == "join"
+                                && message.user_id != config.matrix_bot_user
+                            {
+                                members.push(message.user_id.to_string());
+                            }
+                        }
+                        // Cache next token
+                        fs::write(&next_token_filename, events.end)?;
+                        Ok(Some(members))
+                    }
+                    _ => {
+                        let response = res.json::<ErrorResponse>().await?;
+                        Err(MatrixError::Other(response.error))
+                    }
+                }
+            }
+            None => Err(MatrixError::Other("access_token not defined".to_string())),
+        }
+    }
+
+    // Getting members for a room
+    // https://spec.matrix.org/v1.2/client-server-api/#get_matrixclientv3roomsroomidmembers
+    async fn get_members_from_room(&self, room_id: &str) -> Result<HashSet<UserID>, MatrixError> {
+        match &self.access_token {
+            Some(access_token) => {
+                let config = CONFIG.clone();
+                let client = self.client.clone();
+                let room_id_encoded: String = byte_serialize(room_id.as_bytes()).collect();
+                let res = client
+                    .get(format!(
+                        "{}/rooms/{}/members?access_token={}&membership=join",
+                        MATRIX_URL, room_id_encoded, access_token
+                    ))
+                    .send()
+                    .await?;
+                match res.status() {
+                    reqwest::StatusCode::OK => {
+                        let events = res.json::<RoomEventsResponse>().await?;
+                        let mut members: HashSet<UserID> = HashSet::new();
+                        // Parse message to members
+                        for message in events.chunk.iter() {
+                            // skip bot user
+                            if message.content.membership == "join"
+                                && message.user_id != config.matrix_bot_user
+                            {
+                                members.insert(message.user_id.to_string());
+                            }
+                        }
+                        Ok(members)
                     }
                     _ => {
                         let response = res.json::<ErrorResponse>().await?;
@@ -1029,7 +1198,7 @@ impl Matrix {
         }
     }
 
-    pub async fn reply_help(&self) -> Result<(), MatrixError> {
+    pub async fn reply_help(&self, room_id: &str) -> Result<(), MatrixError> {
         let config = CONFIG.clone();
         let mut message = String::from("✨ Supported commands:<br>");
         message.push_str("<b>!subscribe <i>STASH_ADDRESS</i></b> - Subscribe to the <i>Validator Performance Report</i> for the stash address specified. The report is only sent if the <i>para-validator</i> role was assigned to the validator in the previous session. The report is always sent via DM at the end of each session, unless the report is unsubscribed.<br>");
@@ -1052,10 +1221,12 @@ impl Matrix {
             env!("CARGO_PKG_VERSION")
         ));
 
-        return self.send_public_message(&message, Some(&message)).await;
+        return self
+            .send_room_message(&room_id, &message, Some(&message))
+            .await;
     }
 
-    pub async fn reply_legends(&self) -> Result<(), MatrixError> {
+    pub async fn reply_legends(&self, room_id: &str) -> Result<(), MatrixError> {
         let mut message = String::from(
             "💡 Stats are collected between the interval of blocks specified in each report.<br>",
         );
@@ -1137,7 +1308,23 @@ impl Matrix {
         );
         message.push_str("<br>");
 
-        return self.send_public_message(&message, Some(&message)).await;
+        return self
+            .send_room_message(&room_id, &message, Some(&message))
+            .await;
+    }
+
+    async fn send_room_message(
+        &self,
+        room_id: &str,
+        message: &str,
+        formatted_message: Option<&str>,
+    ) -> Result<(), MatrixError> {
+        if self.disabled {
+            return Ok(());
+        }
+        let req = SendRoomMessageRequest::with_message(&message, formatted_message);
+        self.dispatch_message(&room_id, &req).await?;
+        Ok(())
     }
 
     pub async fn send_private_message(
