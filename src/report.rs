@@ -50,6 +50,7 @@ pub struct Validator {
     pub name: String,
     pub is_active: bool,
     pub is_oversubscribed: bool,
+    pub commission: f64,
     pub own_stake: u128,
     pub total_points: u32,
     pub total_eras: u32,
@@ -79,6 +80,7 @@ impl Validator {
             name: "".to_string(),
             is_active: false,
             is_oversubscribed: false,
+            commission: 0.0_f64,
             own_stake: 0,
             total_points: 0,
             total_eras: 0,
@@ -323,10 +325,11 @@ impl From<RawDataRank> for Report {
         report.add_break();
 
         report.add_raw_text(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             "#",
             "Validator",
             "Subset",
+            "Commission",
             "Active Sessions",
             "P/V Sessions",
             "❒",
@@ -344,10 +347,11 @@ impl From<RawDataRank> for Report {
         for (i, validator) in validators.iter().enumerate() {
             if let Some(mvr) = validator.missed_ratio {
                 report.add_raw_text(format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     i + 1,
                     replace_crln(&validator.name, ""),
                     validator.subset.to_string(),
+                    (validator.commission * 10000.0).round() / 100.0,
                     validator.active_epochs,
                     validator.para_epochs,
                     validator.authored_blocks,
@@ -367,9 +371,10 @@ impl From<RawDataRank> for Report {
                 ));
             } else {
                 report.add_raw_text(format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     i + 1,
                     validator.name,
+                    "-",
                     "-",
                     "-",
                     "-",

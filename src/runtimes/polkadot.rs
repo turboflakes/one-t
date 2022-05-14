@@ -939,6 +939,9 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         } else {
             v.subset = Subset::C100;
         }
+        // Commisssion
+        let Perbill(commission) = validator_prefs.commission;
+        v.commission = commission as f64 / 1_000_000_000.0_f64;
         // Check if validator is in active set
         v.is_active = active_validators.contains(&stash);
 
@@ -1007,7 +1010,6 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
     // Calculate a score based on the formula
     // SCORE = (1-MVR)*0.75 + ((AVG_PV_POINTS - MIN_AVG_POINTS)/(MAX_AVG_PV_POINTS-MIN_AVG_PV_POINTS))*0.15 + (PV_SESSIONS/TOTAL_SESSIONS)*0.1
-
     // Normalize avg_para_points
     let avg_para_points: Vec<u32> = validators.iter().map(|v| v.avg_para_points).collect();
     let max = avg_para_points.iter().max().unwrap();

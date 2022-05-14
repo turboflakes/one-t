@@ -939,6 +939,9 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         } else {
             v.subset = Subset::C100;
         }
+        // Commisssion
+        let Perbill(commission) = validator_prefs.commission;
+        v.commission = commission as f64 / 1_000_000_000.0_f64;
         // Check if validator is in active set
         v.is_active = active_validators.contains(&stash);
 
