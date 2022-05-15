@@ -296,7 +296,7 @@ impl From<RawDataRank> for Report {
         let mut validators = data
             .validators
             .iter()
-            .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
+            .filter(|v| v.para_epochs >= 2 && v.missed_ratio.is_some())
             .collect::<Vec<&Validator>>();
 
         // Sort by Score in descending
@@ -1266,7 +1266,7 @@ fn flagged_and_exceptional_validators_report<'a>(
     let para_validators = data
         .validators
         .iter()
-        .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
+        .filter(|v| v.para_epochs >= 2 && v.missed_ratio.is_some())
         .collect::<Vec<&Validator>>();
 
     let total_tvp = para_validators
@@ -1476,7 +1476,7 @@ fn top_performers_report<'a>(
     let mut validators = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP && v.para_epochs >= 1 && v.missed_ratio.is_some())
+        .filter(|v| v.subset == Subset::TVP && v.para_epochs >= 2 && v.missed_ratio.is_some())
         .collect::<Vec<&Validator>>();
 
     if validators.len() > 0 {
@@ -1520,7 +1520,7 @@ fn top_performers_report<'a>(
         if !is_short {
             report.add_break();
             report.add_raw_text(format!("<i>Legend: Val. identity (Score, Missed votes ratio, Average p/v points, Number of sessions as p/v)</i>"));
-            report.add_raw_text(format!("<i>Score: Backing votes ratio (1-MVR) make up 75% of the score, average p/v points make up 15% and number of sessions as p/v the remaining 10%</i>"));
+            report.add_raw_text(format!("<i>Score: Backing votes ratio (1-MVR) make up 75% of the score, average p/v points make up 18% and number of sessions as p/v the remaining 7%</i>"));
             report.add_raw_text(format!(
                 "<i>Sorting: Validators are sorted by Score in descending order</i>"
             ));

@@ -216,7 +216,7 @@ impl Onet {
             SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
-            _ => unreachable!(),
+            // _ => unreachable!(),
         }
     }
 }
@@ -297,21 +297,29 @@ pub async fn try_fetch_stashes_from_remote_url() -> Result<Vec<AccountId32>, One
         config.chain_name.to_lowercase()
     );
 
-    let validators: Vec<Validator> = if let Ok(request) = reqwest::get(url).await {
-        if let Ok(validators) = request.json::<Vec<Validator>>().await {
-            debug!("validators {:?}", validators);
-            // Serialize and cache
-            let serialized = serde_json::to_string(&validators)?;
-            fs::write(&tvp_validators_filename, serialized)?;
-            validators
-        } else {
+    let validators: Vec<Validator> = match reqwest::get(url.to_string()).await {
+        Ok(request) => {
+            match request.json::<Vec<Validator>>().await {
+                Ok(validators) => {
+                    debug!("validators {:?}", validators);
+                    // Serialize and cache
+                    let serialized = serde_json::to_string(&validators)?;
+                    fs::write(&tvp_validators_filename, serialized)?;
+                    validators
+                }
+                Err(e) => {
+                    warn!("Parsing json from url {} failed with error: {:?}", url, e);
+                    // Try to read from cached file
+                    read_tvp_cached_filename(&tvp_validators_filename)?
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Fetching url {} failed with error: {:?}", url, e);
             // Try to read from cached file
             read_tvp_cached_filename(&tvp_validators_filename)?
         }
-    } else {
-        read_tvp_cached_filename(&tvp_validators_filename)?
     };
-
     // Parse stashes
     let v: Vec<AccountId32> = validators
         .iter()

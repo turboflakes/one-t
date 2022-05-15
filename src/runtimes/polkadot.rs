@@ -24,7 +24,7 @@ use crate::errors::OnetError;
 use crate::matrix::FileInfo;
 use crate::onet::ReportType;
 use crate::onet::{
-    get_account_id_from_storage_key, get_from_seed, get_subscribers, get_subscribers_by_epoch,
+    get_account_id_from_storage_key, get_subscribers, get_subscribers_by_epoch,
     try_fetch_stashes_from_remote_url, Onet, EPOCH_FILENAME,
 };
 use crate::records::{
@@ -40,12 +40,9 @@ use async_recursion::async_recursion;
 use futures::StreamExt;
 use log::{debug, error, info, warn};
 use std::{
-    collections::BTreeMap, convert::TryInto, fs, iter::FromIterator, result::Result,
-    thread, time,
+    collections::BTreeMap, convert::TryInto, fs, iter::FromIterator, result::Result, thread, time,
 };
-use subxt::{
-    sp_core::sr25519, sp_runtime::AccountId32, DefaultConfig, PairSigner, PolkadotExtrinsicParams,
-};
+use subxt::{sp_runtime::AccountId32, DefaultConfig, PolkadotExtrinsicParams};
 
 #[subxt::subxt(
     runtime_metadata_path = "metadata/polkadot_metadata.scale",
@@ -55,13 +52,12 @@ mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        frame_support::storage::bounded_vec::BoundedVec, pallet_identity::types::Data,
-        polkadot_parachain::primitives::Id, polkadot_primitives::v2::CoreIndex,
-        polkadot_primitives::v2::GroupIndex, polkadot_primitives::v2::ValidatorIndex,
-        polkadot_primitives::v2::ValidityAttestation, sp_arithmetic::per_things::Perbill,
+        pallet_identity::types::Data, polkadot_parachain::primitives::Id,
+        polkadot_primitives::v2::CoreIndex, polkadot_primitives::v2::GroupIndex,
+        polkadot_primitives::v2::ValidatorIndex, polkadot_primitives::v2::ValidityAttestation,
+        sp_arithmetic::per_things::Perbill,
     },
     session::events::NewSession,
-    system::events::ExtrinsicFailed,
 };
 
 type Api = node_runtime::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>;
@@ -1009,7 +1005,9 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     }
 
     // Calculate a score based on the formula
-    // SCORE = (1-MVR)*0.75 + ((AVG_PV_POINTS - MIN_AVG_POINTS)/(MAX_AVG_PV_POINTS-MIN_AVG_PV_POINTS))*0.15 + (PV_SESSIONS/TOTAL_SESSIONS)*0.1
+    // SCORE_1 = (1-MVR)*0.75 + ((AVG_PV_POINTS - MIN_AVG_POINTS)/(MAX_AVG_PV_POINTS-MIN_AVG_PV_POINTS))*0.18 + (PV_SESSIONS/TOTAL_SESSIONS)*0.07
+    // SCORE_2 = SCORE*0.25 + (1-COMMISSION)*0.75
+
     // Normalize avg_para_points
     let avg_para_points: Vec<u32> = validators.iter().map(|v| v.avg_para_points).collect();
     let max = avg_para_points.iter().max().unwrap();
@@ -1017,12 +1015,14 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
     validators
         .iter_mut()
-        .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
+        .filter(|v| v.para_epochs >= 2 && v.missed_ratio.is_some())
         .for_each(|v| {
-            (*v).score = (1.0_f64 - v.missed_ratio.unwrap()) * 0.75_f64
+            let score = (1.0_f64 - v.missed_ratio.unwrap()) * 0.75_f64
                 + ((v.avg_para_points as f64 - *min as f64) / (*max as f64 - *min as f64))
-                    * 0.15_f64
-                + (v.para_epochs as f64 / records.total_full_epochs() as f64) * 0.1_f64;
+                    * 0.18_f64
+                + (v.para_epochs as f64 / records.total_full_epochs() as f64) * 0.07_f64;
+            (*v).score = score;
+            (*v).commission_score = score * 0.25 + (1.0 - v.commission) * 0.75;
         });
 
     debug!("validators {:?}", validators);

@@ -1292,7 +1292,8 @@ impl Matrix {
 
         message.push_str("<i>Validators performance insights report legend:</i><br>");
         message.push_str("→: !subscribe insights<br>");
-        message.push_str("Score: score = (1 - mvr) * 0.75 + ((avg_pts - min_avg_pts) / (max_avg_pts - min_avg_pts)) * 0.15 + (pv_sessions / total_sessions) * 0.1<br>");
+        message.push_str("Score: (1 - mvr) * 0.75 + ((avg_pts - min_avg_pts) / (max_avg_pts - min_avg_pts)) * 0.18 + (pv_sessions / total_sessions) * 0.07<br>");
+        message.push_str("Commission Score: score * 0.25 + (1 - commission) * 0.75");
         message
             .push_str("Timeline: Graphic performance representation in the last X sessions:<br>");
         message.push_str("‣ ❚ = BVR >= 80% <br>");
