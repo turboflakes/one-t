@@ -120,6 +120,12 @@ fn default_pool_minimum_sessions() -> u32 {
     6
 }
 
+/// provides default value for pool_maximum_nominations if ONET_POOL_MAXIMUM_NOMINATIONS env var is not set
+/// example: 16 for Polkadot and 24 for Kusama
+fn default_pool_maximum_nominations() -> u32 {
+    16
+}
+
 /// provides default value for nomination_pool_nominate_rate if ONET_MAXIMUM_TOP_RANKING env var is not set
 fn default_maximum_top_ranking() -> u32 {
     16
@@ -162,17 +168,21 @@ pub struct Config {
     pub maximum_top_ranking: u32,
     #[serde(default = "default_maximum_top_ranking_callout")]
     pub maximum_top_ranking_callout: u32,
-    // nomination pool
+    // nomination pools
     #[serde(default)]
-    pub pool_disabled: bool,
+    pub pools_enabled: bool,
     #[serde(default)]
-    pub pool_id: u32,
+    pub pool_id_1: u32,
+    #[serde(default)]
+    pub pool_id_2: u32,
     #[serde(default = "default_pool_nominator_seed_path")]
     pub pool_nominator_seed_path: String,
     #[serde(default = "default_pool_nominate_rate")]
     pub pool_nominate_rate: u32,
     #[serde(default = "default_pool_minimum_sessions")]
     pub pool_minimum_sessions: u32,
+    #[serde(default = "default_pool_maximum_nominations")]
+    pub pool_maximum_nominations: u32,
     // matrix configuration
     #[serde(default)]
     pub matrix_public_room: String,

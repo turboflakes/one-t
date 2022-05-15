@@ -40,7 +40,12 @@ use async_recursion::async_recursion;
 use futures::StreamExt;
 use log::{debug, error, info, warn};
 use std::{
-    collections::BTreeMap, convert::TryInto, fs, iter::FromIterator, result::Result, thread, time,
+    collections::BTreeMap,
+    convert::{TryFrom, TryInto},
+    fs,
+    iter::FromIterator,
+    result::Result,
+    thread, time,
 };
 use subxt::{
     sp_core::sr25519, sp_runtime::AccountId32, DefaultConfig, PairSigner, PolkadotExtrinsicParams,
@@ -1008,8 +1013,8 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     }
 
     // Calculate a score based on the formula
-    // SCORE = (1-MVR)*0.75 + ((AVG_PV_POINTS - MIN_AVG_POINTS)/(MAX_AVG_PV_POINTS-MIN_AVG_PV_POINTS))*0.15 + (PV_SESSIONS/TOTAL_SESSIONS)*0.1
-    // SCORE_C1 = SCORE*0.5 + (1-COMMISSION)*0.5
+    // SCORE_1 = (1-MVR)*0.75 + ((AVG_PV_POINTS - MIN_AVG_POINTS)/(MAX_AVG_PV_POINTS-MIN_AVG_PV_POINTS))*0.15 + (PV_SESSIONS/TOTAL_SESSIONS)*0.1
+    // SCORE_2 = SCORE*0.25 + (1-COMMISSION)*0.75
 
     // Normalize avg_para_points
     let avg_para_points: Vec<u32> = validators.iter().map(|v| v.avg_para_points).collect();
@@ -1020,10 +1025,12 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         .iter_mut()
         .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
         .for_each(|v| {
-            (*v).score = (1.0_f64 - v.missed_ratio.unwrap()) * 0.75_f64
+            let score = (1.0_f64 - v.missed_ratio.unwrap()) * 0.75_f64
                 + ((v.avg_para_points as f64 - *min as f64) / (*max as f64 - *min as f64))
                     * 0.15_f64
                 + (v.para_epochs as f64 / records.total_full_epochs() as f64) * 0.1_f64;
+            (*v).score = score;
+            (*v).commission_score = score * 0.25 + (1.0 - v.commission) * 0.75;
         });
 
     debug!("validators {:?}", validators);
@@ -1050,29 +1057,6 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             .await?;
     }
 
-    // Trigger nomination at the rate defined in config
-    if !config.pool_disabled {
-        let r = current_session_index as f64 % config.pool_nominate_rate as f64;
-        if r == 0.0_f64 {
-            if records.total_full_epochs() >= config.pool_minimum_sessions {
-                match nominate_top_validators(&onet, validators.clone()).await {
-                    Ok(message) => {
-                        onet.matrix()
-                            .send_public_message(&message, Some(&message))
-                            .await?;
-                    }
-                    Err(e) => error!("{}", e),
-                }
-            } else {
-                warn!(
-                "Only {} full session recorded, at least {} are needed to trigger a nomination.",
-                records.total_full_epochs(),
-                config.pool_minimum_sessions
-            );
-            }
-        }
-    }
-
     // ---- Validators Performance Ranking Report data ----
 
     // Set era/session details
@@ -1097,7 +1081,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                 network: network.clone(),
                 meta: metadata.clone(),
                 report_type: ReportType::Insights,
-                validators,
+                validators: validators.clone(),
                 records_total_full_epochs: records.total_full_epochs(),
             };
 
@@ -1137,15 +1121,80 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         }
     }
 
+    // Trigger nomination at the rate defined in config
+    if config.pools_enabled {
+        let r = current_session_index as f64 % config.pool_nominate_rate as f64;
+        if r == 0.0_f64 {
+            if records.total_full_epochs() >= config.pool_minimum_sessions {
+                // Nomination Pool 1
+                match nominate_top_validators(&onet, validators.clone(), ScoreType::Global).await {
+                    Ok(message) => {
+                        onet.matrix()
+                            .send_public_message(&message, Some(&message))
+                            .await?;
+                    }
+                    Err(e) => error!("{}", e),
+                }
+                // Nomination Pool 2
+                match nominate_top_validators(&onet, validators.clone(), ScoreType::LowerCommission)
+                    .await
+                {
+                    Ok(message) => {
+                        onet.matrix()
+                            .send_public_message(&message, Some(&message))
+                            .await?;
+                    }
+                    Err(e) => error!("{}", e),
+                }
+            } else {
+                warn!(
+                "Only {} full session recorded, at least {} are needed to trigger a nomination.",
+                records.total_full_epochs(),
+                config.pool_minimum_sessions
+            );
+            }
+        }
+    }
+
     Ok(())
 }
 
-async fn nominate_top_validators(onet: &Onet, validators: Validators) -> Result<String, OnetError> {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScoreType {
+    Global,
+    LowerCommission,
+}
+
+impl ScoreType {
+    pub fn pool(&self) -> u32 {
+        let config = CONFIG.clone();
+        match self {
+            Self::Global => config.pool_id_1,
+            Self::LowerCommission => config.pool_id_2,
+        }
+    }
+}
+
+impl std::fmt::Display for ScoreType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Global => write!(f, "Global Score"),
+            Self::LowerCommission => write!(f, "Lower Commision Score"),
+        }
+    }
+}
+
+async fn nominate_top_validators(
+    onet: &Onet,
+    validators: Validators,
+    score_type: ScoreType,
+) -> Result<String, OnetError> {
     let config = CONFIG.clone();
-    if config.pool_id == 0 {
-        return Err(OnetError::PoolError(
-            "Nomination Pool ID not defined".to_string(),
-        ));
+    if score_type.pool() == 0 {
+        return Err(OnetError::PoolError(format!(
+            "Nomination Pool ID not defined for {}",
+            score_type
+        )));
     }
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
@@ -1154,7 +1203,7 @@ async fn nominate_top_validators(onet: &Onet, validators: Validators) -> Result<
     let BoundedVec(pool_metadata) = api
         .storage()
         .nomination_pools()
-        .metadata(&config.pool_id, None)
+        .metadata(&score_type.pool(), None)
         .await?;
 
     // Load nominator seed account
@@ -1171,8 +1220,21 @@ async fn nominate_top_validators(onet: &Onet, validators: Validators) -> Result<
 
     if top_validators.len() > 0 {
         // Sort by score in descending
-        top_validators.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        top_validators.truncate(16);
+        match score_type {
+            ScoreType::Global => {
+                top_validators.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap())
+            }
+            ScoreType::LowerCommission => top_validators
+                .sort_by(|a, b| b.commission_score.partial_cmp(&a.commission_score).unwrap()),
+        }
+
+        let max: usize = if top_validators.len() as u32 > config.pool_maximum_nominations {
+            usize::try_from(config.pool_maximum_nominations).unwrap()
+        } else {
+            top_validators.len()
+        };
+
+        top_validators.truncate(max);
 
         let top_validator_accounts = top_validators
             .iter()
@@ -1183,7 +1245,7 @@ async fn nominate_top_validators(onet: &Onet, validators: Validators) -> Result<
         let response = api
             .tx()
             .nomination_pools()
-            .nominate(config.pool_id, top_validator_accounts)?
+            .nominate(score_type.pool(), top_validator_accounts)?
             .sign_and_submit_then_watch_default(&signer)
             .await?
             .wait_for_finalized()
@@ -1210,12 +1272,11 @@ async fn nominate_top_validators(onet: &Onet, validators: Validators) -> Result<
             let message = format!(
                 "Nomination for pool {} ({}) finalized at block #{} (<a href=\"https://{}.subscan.io/extrinsic/{:?}\">{}</a>)",
                 str(pool_metadata),
-                config.pool_id,
+                score_type.pool(),
                 block_number,
                 config.chain_name.to_lowercase(),
                 tx_events.extrinsic_hash(),
                 tx_events.extrinsic_hash().to_string()
-                ,
             );
             return Ok(message);
         }

@@ -68,6 +68,7 @@ pub struct Validator {
     pub core_assignments: u32,
     pub missed_ratio: Option<f64>,
     pub score: f64,
+    pub commission_score: f64,
     pub warnings: Vec<String>,
 }
 
@@ -98,6 +99,7 @@ impl Validator {
             core_assignments: 0,
             missed_ratio: None,
             score: 0.0_f64,
+            commission_score: 0.0_f64,
             warnings: Vec::new(),
         }
     }
@@ -325,11 +327,10 @@ impl From<RawDataRank> for Report {
         report.add_break();
 
         report.add_raw_text(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             "#",
             "Validator",
             "Subset",
-            "Commission",
             "Active Sessions",
             "P/V Sessions",
             "❒",
@@ -341,17 +342,18 @@ impl From<RawDataRank> for Report {
             "MVR",
             "Avg. PPTS",
             "Score",
+            "Commission (%)",
+            "Commission Score",
             "Timeline"
         ));
 
         for (i, validator) in validators.iter().enumerate() {
             if let Some(mvr) = validator.missed_ratio {
                 report.add_raw_text(format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     i + 1,
                     replace_crln(&validator.name, ""),
                     validator.subset.to_string(),
-                    (validator.commission * 10000.0).round() / 100.0,
                     validator.active_epochs,
                     validator.para_epochs,
                     validator.authored_blocks,
@@ -363,6 +365,8 @@ impl From<RawDataRank> for Report {
                     (mvr * 10000.0).round() / 10000.0,
                     validator.avg_para_points,
                     (validator.score * 10000.0).round() / 10000.0,
+                    (validator.commission * 10000.0).round() / 100.0,
+                    (validator.commission_score * 10000.0).round() / 10000.0,
                     validator
                         .pattern
                         .iter()
@@ -371,9 +375,10 @@ impl From<RawDataRank> for Report {
                 ));
             } else {
                 report.add_raw_text(format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     i + 1,
                     validator.name,
+                    "-",
                     "-",
                     "-",
                     "-",
