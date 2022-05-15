@@ -1024,24 +1024,12 @@ fn own_stake_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         .map(|v| v.own_stake)
         .collect();
 
-    let avg_tvp: u128 = if tvp.len() > 0 {
-        tvp.iter().sum::<u128>() / tvp.len() as u128
-    } else {
-        0
-    };
-
     let non_tvp: Vec<u128> = data
         .validators
         .iter()
         .filter(|v| v.subset == Subset::NONTVP)
         .map(|v| v.own_stake)
         .collect();
-
-    let avg_non_tvp: u128 = if non_tvp.len() > 0 {
-        non_tvp.iter().sum::<u128>() / non_tvp.len() as u128
-    } else {
-        0
-    };
 
     let c100: Vec<u128> = data
         .validators
@@ -1050,29 +1038,35 @@ fn own_stake_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         .map(|v| v.own_stake)
         .collect();
 
-    let avg_c100: u128 = if c100.len() > 0 {
-        c100.iter().sum::<u128>() / c100.len() as u128
-    } else {
-        0
-    };
+    fn desc(v: Vec<u128>, decimals: u128) -> String {
+        if v.len() > 0 {
+            let avg = v.iter().sum::<u128>() / v.len() as u128;
+            let min = *v.iter().min().unwrap_or_else(|| &0);
+            let max = *v.iter().max().unwrap_or_else(|| &0);
+
+            format!(
+                "{} ({:.2}, {:.0})",
+                avg / decimals,
+                min as f64 / decimals as f64,
+                max as f64 / decimals as f64
+            )
+        } else {
+            "-".to_string()
+        }
+    }
 
     report.add_raw_text(format!(
         "Average (Min, Max) validator self stake in {}:",
         data.network.token_symbol,
     ));
     report.add_raw_text(format!(
-        "‣ {} ({:.2}, {:.0}) • {} ({:.2}, {:.0}) • <b>{} ({:.2}, {:.0})</b>",
-        avg_c100 / 10u128.pow(data.network.token_decimals as u32),
-        *c100.iter().min().unwrap() as f64 / 10u128.pow(data.network.token_decimals as u32) as f64,
-        *c100.iter().max().unwrap() as f64 / 10u128.pow(data.network.token_decimals as u32) as f64,
-        avg_non_tvp / 10u128.pow(data.network.token_decimals as u32),
-        *non_tvp.iter().min().unwrap() as f64
-            / 10u128.pow(data.network.token_decimals as u32) as f64,
-        *non_tvp.iter().max().unwrap() as f64
-            / 10u128.pow(data.network.token_decimals as u32) as f64,
-        avg_tvp / 10u128.pow(data.network.token_decimals as u32),
-        *tvp.iter().min().unwrap() as f64 / 10u128.pow(data.network.token_decimals as u32) as f64,
-        *tvp.iter().max().unwrap() as f64 / 10u128.pow(data.network.token_decimals as u32) as f64,
+        "‣ {} • {} • <b>{}</b>",
+        desc(c100.clone(), 10u128.pow(data.network.token_decimals as u32)),
+        desc(
+            non_tvp.clone(),
+            10u128.pow(data.network.token_decimals as u32)
+        ),
+        desc(tvp.clone(), 10u128.pow(data.network.token_decimals as u32)),
     ));
     report.add_break();
 
