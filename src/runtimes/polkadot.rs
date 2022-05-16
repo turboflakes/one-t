@@ -1015,7 +1015,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
     validators
         .iter_mut()
-        .filter(|v| v.para_epochs >= 2 && v.missed_ratio.is_some())
+        .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
         .for_each(|v| {
             let score = (1.0_f64 - v.missed_ratio.unwrap()) * 0.75_f64
                 + ((v.avg_para_points as f64 - *min as f64) / (*max as f64 - *min as f64))
