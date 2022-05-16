@@ -1189,7 +1189,7 @@ fn define_pool_1_call(pool_id: u32, validators: Validators) -> Result<Call, Onet
         return Ok(call);
     }
     Err(OnetError::PoolError(format!(
-        "Call for nomination pool {} could not be defined since there NO validators to select",
+        "Call for nomination pool {} could not be defined since there are No validators to select",
         pool_id
     )))
 }
@@ -1234,7 +1234,7 @@ fn define_pool_2_call(pool_id: u32, validators: Validators) -> Result<Call, Onet
         return Ok(call);
     }
     Err(OnetError::PoolError(format!(
-        "Call for nomination pool {} could not be defined since there NO validators to select",
+        "Call for nomination pool {} could not be defined since there are No validators to select",
         pool_id
     )))
 }
@@ -1302,7 +1302,7 @@ async fn try_run_nomination_pools(
         }
     }
     Err(OnetError::PoolError(
-        "Nomination failed since there are no calls for the batch call nomination.".to_string(),
+        "Nomination failed since there are No calls for the batch call nomination.".to_string(),
     ))
 }
 
