@@ -1432,7 +1432,7 @@ impl Matrix {
                         let response = res.json::<SendRoomMessageResponse>().await?;
                         info!(
                             "messsage dispatched to room_id: {} (event_id: {})",
-                            response.event_id, room_id
+                            room_id, response.event_id
                         );
                         Ok(Some(response.event_id))
                     }
