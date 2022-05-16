@@ -59,16 +59,18 @@ mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        frame_support::storage::bounded_vec::BoundedVec, pallet_identity::types::Data,
-        polkadot_parachain::primitives::Id, polkadot_primitives::v2::CoreIndex,
-        polkadot_primitives::v2::GroupIndex, polkadot_primitives::v2::ValidatorIndex,
-        polkadot_primitives::v2::ValidityAttestation, sp_arithmetic::per_things::Perbill,
+        pallet_identity::types::Data, polkadot_parachain::primitives::Id,
+        polkadot_primitives::v2::CoreIndex, polkadot_primitives::v2::GroupIndex,
+        polkadot_primitives::v2::ValidatorIndex, polkadot_primitives::v2::ValidityAttestation,
+        sp_arithmetic::per_things::Perbill,
     },
     session::events::NewSession,
     system::events::ExtrinsicFailed,
 };
 
 type Api = node_runtime::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>;
+type Call = node_runtime::runtime_types::westend_runtime::Call;
+type NominationPoolsCall = node_runtime::runtime_types::pallet_nomination_pools::pallet::Call;
 
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
     let config = CONFIG.clone();
@@ -1126,19 +1128,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         let r = current_session_index as f64 % config.pool_nominate_rate as f64;
         if r == 0.0_f64 {
             if records.total_full_epochs() >= config.pool_minimum_sessions {
-                // Nomination Pool 1
-                match nominate_top_validators(&onet, validators.clone(), ScoreType::Global).await {
-                    Ok(message) => {
-                        onet.matrix()
-                            .send_public_message(&message, Some(&message))
-                            .await?;
-                    }
-                    Err(e) => error!("{}", e),
-                }
-                // Nomination Pool 2
-                match nominate_top_validators(&onet, validators.clone(), ScoreType::LowerCommission)
-                    .await
-                {
+                match try_run_nomination_pools(&onet, validators).await {
                     Ok(message) => {
                         onet.matrix()
                             .send_public_message(&message, Some(&message))
@@ -1159,74 +1149,24 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ScoreType {
-    Global,
-    LowerCommission,
-}
-
-impl ScoreType {
-    pub fn pool(&self) -> u32 {
-        let config = CONFIG.clone();
-        match self {
-            Self::Global => config.pool_id_1,
-            Self::LowerCommission => config.pool_id_2,
-        }
-    }
-}
-
-impl std::fmt::Display for ScoreType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Global => write!(f, "Global Score"),
-            Self::LowerCommission => write!(f, "Lower Commision Score"),
-        }
-    }
-}
-
-async fn nominate_top_validators(
-    onet: &Onet,
-    validators: Validators,
-    score_type: ScoreType,
-) -> Result<String, OnetError> {
+// Pool 1 should include top TVP validators in the last X sessions
+// Note: maximum validators are 24 in Kusama / 16 Polkadot
+fn define_pool_1_call(pool_id: u32, validators: Validators) -> Result<Call, OnetError> {
     let config = CONFIG.clone();
-    if score_type.pool() == 0 {
+    if pool_id == 0 {
         return Err(OnetError::PoolError(format!(
-            "Nomination Pool ID not defined for {}",
-            score_type
+            "Nomination Pool ID 1 not defined.",
         )));
     }
-    let client = onet.client();
-    let api = client.clone().to_runtime_api::<Api>();
 
-    // Fetch pool name
-    let BoundedVec(pool_metadata) = api
-        .storage()
-        .nomination_pools()
-        .metadata(&score_type.pool(), None)
-        .await?;
-
-    // Load nominator seed account
-    let seed = fs::read_to_string(config.pool_nominator_seed_path)
-        .expect("Something went wrong reading the pool nominator seed file");
-    let seed_account: sr25519::Pair = get_from_seed(&seed, None);
-    let signer = PairSigner::<DefaultConfig, sr25519::Pair>::new(seed_account);
-
-    //
     let mut top_validators = validators
         .iter()
         .filter(|v| v.subset == Subset::TVP && v.para_epochs >= 2 && v.missed_ratio.is_some())
         .collect::<Vec<&Validator>>();
 
     if top_validators.len() > 0 {
-        // Sort by score in descending
-        match score_type {
-            ScoreType::Global => {
-                top_validators.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap())
-            }
-            ScoreType::LowerCommission => top_validators
-                .sort_by(|a, b| b.commission_score.partial_cmp(&a.commission_score).unwrap()),
-        }
+        // Sort validators by score for Pool 1
+        top_validators.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
 
         let max: usize = if top_validators.len() as u32 > config.pool_maximum_nominations {
             usize::try_from(config.pool_maximum_nominations).unwrap()
@@ -1236,16 +1176,98 @@ async fn nominate_top_validators(
 
         top_validators.truncate(max);
 
-        let top_validator_accounts = top_validators
+        let accounts = top_validators
             .iter()
             .map(|v| v.stash.clone())
             .collect::<Vec<AccountId32>>();
 
-        // Submit nomination
+        // Define call
+        let call = Call::NominationPools(NominationPoolsCall::nominate {
+            pool_id: pool_id,
+            validators: accounts,
+        });
+        return Ok(call);
+    }
+    Err(OnetError::PoolError(format!(
+        "Call for nomination pool {} could not be defined since there NO validators to select",
+        pool_id
+    )))
+}
+
+// Pool 2 should include top TVP validators with the lowest commission in the last X sessions
+// Note: maximum validators are 12 in Kusama / 8 Polkadot
+fn define_pool_2_call(pool_id: u32, validators: Validators) -> Result<Call, OnetError> {
+    let config = CONFIG.clone();
+    if pool_id == 0 {
+        return Err(OnetError::PoolError(format!(
+            "Nomination Pool ID 2 not defined.",
+        )));
+    }
+
+    let mut top_validators = validators
+        .iter()
+        .filter(|v| v.subset == Subset::TVP && v.para_epochs >= 2 && v.missed_ratio.is_some())
+        .collect::<Vec<&Validator>>();
+
+    if top_validators.len() > 0 {
+        // Sort validators by score for Pool 1
+        top_validators.sort_by(|a, b| b.commission_score.partial_cmp(&a.commission_score).unwrap());
+
+        let max: usize = if top_validators.len() as u32 > config.pool_maximum_nominations {
+            usize::try_from(config.pool_maximum_nominations).unwrap()
+        } else {
+            top_validators.len()
+        };
+
+        top_validators.truncate(max / 2);
+
+        let accounts = top_validators
+            .iter()
+            .map(|v| v.stash.clone())
+            .collect::<Vec<AccountId32>>();
+
+        // Define call
+        let call = Call::NominationPools(NominationPoolsCall::nominate {
+            pool_id: pool_id,
+            validators: accounts,
+        });
+        return Ok(call);
+    }
+    Err(OnetError::PoolError(format!(
+        "Call for nomination pool {} could not be defined since there NO validators to select",
+        pool_id
+    )))
+}
+
+async fn try_run_nomination_pools(
+    onet: &Onet,
+    validators: Validators,
+) -> Result<String, OnetError> {
+    let config = CONFIG.clone();
+    let client = onet.client();
+    let api = client.clone().to_runtime_api::<Api>();
+
+    // Load nominator seed account
+    let seed = fs::read_to_string(config.pool_nominator_seed_path)
+        .expect("Something went wrong reading the pool nominator seed file");
+    let seed_account: sr25519::Pair = get_from_seed(&seed, None);
+    let signer = PairSigner::<DefaultConfig, sr25519::Pair>::new(seed_account);
+
+    // create a batch call to nominate both pools
+    let mut calls: Vec<Call> = vec![];
+
+    // Define calls to be included in the batch
+    let call = define_pool_1_call(config.pool_id_1, validators.clone())?;
+    calls.push(call);
+    let call = define_pool_2_call(config.pool_id_2, validators.clone())?;
+    calls.push(call);
+
+    if calls.len() > 0 {
+        // Submit batch call with nominations
         let response = api
             .tx()
-            .nomination_pools()
-            .nominate(score_type.pool(), top_validator_accounts)?
+            .utility()
+            .batch(calls)?
             .sign_and_submit_then_watch_default(&signer)
             .await?
             .wait_for_finalized()
@@ -1270,9 +1292,7 @@ async fn nominate_top_validators(
             )));
         } else {
             let message = format!(
-                "Nomination for pool {} ({}) finalized at block #{} (<a href=\"https://{}.subscan.io/extrinsic/{:?}\">{}</a>)",
-                str(pool_metadata),
-                score_type.pool(),
+                "Nomination finalized at block #{} (<a href=\"https://{}.subscan.io/extrinsic/{:?}\">{}</a>)",
                 block_number,
                 config.chain_name.to_lowercase(),
                 tx_events.extrinsic_hash(),
@@ -1282,7 +1302,7 @@ async fn nominate_top_validators(
         }
     }
     Err(OnetError::PoolError(
-        "Nomination failed since are None validators in the top ranking,  ".to_string(),
+        "Nomination failed since there are no calls for the batch call nomination.".to_string(),
     ))
 }
 
