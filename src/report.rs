@@ -296,7 +296,7 @@ impl From<RawDataRank> for Report {
         let mut validators = data
             .validators
             .iter()
-            .filter(|v| v.para_epochs >= 2 && v.missed_ratio.is_some())
+            .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
             .collect::<Vec<&Validator>>();
 
         // Sort by Score in descending
