@@ -1019,18 +1019,34 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     // SCORE_2 = SCORE*0.25 + (1-COMMISSION)*0.75
 
     // Normalize avg_para_points
-    let avg_para_points: Vec<u32> = validators.iter().map(|v| v.avg_para_points).collect();
-    let max = avg_para_points.iter().max().unwrap();
-    let min = avg_para_points.iter().min().unwrap();
+    let avg_para_points: Vec<u32> = validators
+        .iter()
+        .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
+        .map(|v| v.avg_para_points)
+        .collect();
+    let max = avg_para_points.iter().max().unwrap_or_else(|| &0);
+    let min = avg_para_points.iter().min().unwrap_or_else(|| &0);
+
+    // Log maximum and minimum as it's useful to debug the repart score if nedeed
+    info!(
+        "Avg. para_points max: {} min: {} for the last {} sessions.",
+        max,
+        min,
+        records.total_full_epochs()
+    );
 
     validators
         .iter_mut()
         .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
         .for_each(|v| {
-            let score = (1.0_f64 - v.missed_ratio.unwrap()) * 0.75_f64
-                + ((v.avg_para_points as f64 - *min as f64) / (*max as f64 - *min as f64))
-                    * 0.18_f64
-                + (v.para_epochs as f64 / records.total_full_epochs() as f64) * 0.07_f64;
+            let score = if max - min > 0 {
+                (1.0_f64 - v.missed_ratio.unwrap()) * 0.75_f64
+                    + ((v.avg_para_points as f64 - *min as f64) / (*max as f64 - *min as f64))
+                        * 0.18_f64
+                    + (v.para_epochs as f64 / records.total_full_epochs() as f64) * 0.07_f64
+            } else {
+                0.0_f64
+            };
             (*v).score = score;
             (*v).commission_score = score * 0.25 + (1.0 - v.commission) * 0.75;
         });
