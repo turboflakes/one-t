@@ -1010,8 +1010,8 @@ fn active_validators_report<'a>(
         report.add_raw_text(format!(
             "‣ {} • {} • <b>{}</b>",
             descnd(total_c100, total_active),
-            descnd(total_tvp, total_active),
             descnd(total_non_tvp, total_active),
+            descnd(total_tvp, total_active),
         ));
     }
     report.add_break();
