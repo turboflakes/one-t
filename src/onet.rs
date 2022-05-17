@@ -218,7 +218,6 @@ impl Onet {
             SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
             // _ => unreachable!(),
         }
-        Ok(())
     }
 }
 

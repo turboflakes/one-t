@@ -1148,9 +1148,9 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
         // Trigger nomination at the rate defined in config
         if config.pools_enabled {
-            let r = current_session_index as f64 % config.pool_nominate_rate as f64;
+            let r = current_session_index as f64 % config.pools_nominate_rate as f64;
             if r == 0.0_f64 {
-                if records.total_full_epochs() >= config.pool_minimum_sessions {
+                if records.total_full_epochs() >= config.pools_minimum_sessions {
                     match try_run_nomination_pools(&onet, validators).await {
                         Ok(message) => {
                             onet.matrix()
@@ -1163,7 +1163,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                     warn!(
                 "Only {} full sessions recorded, at least {} are needed to trigger a nomination.",
                 records.total_full_epochs(),
-                config.pool_minimum_sessions
+                config.pools_minimum_sessions
             );
                 }
             }
@@ -1184,7 +1184,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
 // Pool 1 should include top TVP validators in the last X sessions
 // Note: maximum validators are 24 in Kusama / 16 Polkadot
-fn define_pool_1_call(pool_id: u32, validators: Validators) -> Result<Call, OnetError> {
+fn define_first_pool_call(pool_id: u32, validators: Validators) -> Result<Call, OnetError> {
     let config = CONFIG.clone();
     if pool_id == 0 {
         return Err(OnetError::PoolError(format!(
@@ -1201,8 +1201,8 @@ fn define_pool_1_call(pool_id: u32, validators: Validators) -> Result<Call, Onet
         // Sort validators by score for Pool 1
         top_validators.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
 
-        let max: usize = if top_validators.len() as u32 > config.pool_maximum_nominations {
-            usize::try_from(config.pool_maximum_nominations).unwrap()
+        let max: usize = if top_validators.len() as u32 > config.pools_maximum_nominations {
+            usize::try_from(config.pools_maximum_nominations).unwrap()
         } else {
             top_validators.len()
         };
@@ -1229,7 +1229,7 @@ fn define_pool_1_call(pool_id: u32, validators: Validators) -> Result<Call, Onet
 
 // Pool 2 should include top TVP validators with the lowest commission in the last X sessions
 // Note: maximum validators are 12 in Kusama / 8 Polkadot
-fn define_pool_2_call(pool_id: u32, validators: Validators) -> Result<Call, OnetError> {
+fn define_second_pool_call(pool_id: u32, validators: Validators) -> Result<Call, OnetError> {
     let config = CONFIG.clone();
     if pool_id == 0 {
         return Err(OnetError::PoolError(format!(
@@ -1246,8 +1246,8 @@ fn define_pool_2_call(pool_id: u32, validators: Validators) -> Result<Call, Onet
         // Sort validators by score for Pool 1
         top_validators.sort_by(|a, b| b.commission_score.partial_cmp(&a.commission_score).unwrap());
 
-        let max: usize = if top_validators.len() as u32 > config.pool_maximum_nominations {
-            usize::try_from(config.pool_maximum_nominations).unwrap()
+        let max: usize = if top_validators.len() as u32 > config.pools_maximum_nominations {
+            usize::try_from(config.pools_maximum_nominations).unwrap()
         } else {
             top_validators.len()
         };
@@ -1281,7 +1281,7 @@ async fn try_run_nomination_pools(
     let api = client.clone().to_runtime_api::<Api>();
 
     // Load nominator seed account
-    let seed = fs::read_to_string(config.pool_nominator_seed_path)
+    let seed = fs::read_to_string(config.pools_nominator_seed_path)
         .expect("Something went wrong reading the pool nominator seed file");
     let seed_account: sr25519::Pair = get_from_seed(&seed, None);
     let signer = PairSigner::<DefaultConfig, sr25519::Pair>::new(seed_account);
@@ -1290,9 +1290,9 @@ async fn try_run_nomination_pools(
     let mut calls: Vec<Call> = vec![];
 
     // Define calls to be included in the batch
-    let call = define_pool_1_call(config.pool_id_1, validators.clone())?;
+    let call = define_first_pool_call(config.first_pool_id, validators.clone())?;
     calls.push(call);
-    let call = define_pool_2_call(config.pool_id_2, validators.clone())?;
+    let call = define_second_pool_call(config.second_pool_id, validators.clone())?;
     calls.push(call);
 
     if calls.len() > 0 {
@@ -1325,9 +1325,9 @@ async fn try_run_nomination_pools(
             )));
         } else {
             let message = format!(
-                "Nomination Pools ({}, {}) finalized at block #{} (<a href=\"https://{}.subscan.io/extrinsic/{:?}\">{}</a>)",
-                config.pool_id_1,
-                config.pool_id_2,
+                "Nomination Pools <i>{}</i> and <i>{}</i> finalized at block #{} (<a href=\"https://{}.subscan.io/extrinsic/{:?}\">{}</a>)",
+                config.first_pool_id,
+                config.second_pool_id,
                 block_number,
                 config.chain_name.to_lowercase(),
                 tx_events.extrinsic_hash(),
