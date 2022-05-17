@@ -1534,10 +1534,7 @@ fn top_performers_report<'a>(
             report.add_raw_text(format!(
                 "<i>Sorting: Validators are sorted by Score in descending order</i>"
             ));
-            report.add_raw_text(format!(
-                "<i>Minimum p/v sessions: {}</i>",
-                min_para_epochs
-            ));
+            report.add_raw_text(format!("<i>Inclusion: To be considered for the ranking, validators must have been p/v for at least {} times in the last {} sessions.</i>", min_para_epochs, data.records_total_full_epochs));
         }
 
         report.add_break();

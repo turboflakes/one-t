@@ -983,7 +983,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                         / (explicit_votes + implicit_votes + missed_votes) as f64;
                     v.missed_ratio = Some(mvr);
                 }
-                if para_epochs > 0 {
+                if para_epochs >= 1 {
                     v.avg_para_points = para_points / para_epochs;
                 }
             }
@@ -1049,117 +1049,136 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             };
             (*v).score = score;
             (*v).commission_score = score * 0.25 + (1.0 - v.commission) * 0.75;
+            //
+            info!("Validator: {:?}", v);
         });
 
     debug!("validators {:?}", validators);
 
-    // Network report data
-    let data = RawData {
-        network: network.clone(),
-        meta: metadata.clone(),
-        validators: validators.clone(),
-        records_total_full_epochs: records.total_full_epochs(),
-    };
+    // Count TVP validators
+    let tvp_validators_total = validators
+        .iter()
+        .filter(|v| v.subset == Subset::TVP && v.para_epochs >= 1 && v.missed_ratio.is_some())
+        .count();
 
-    let report = Report::from(data.clone());
-    onet.matrix()
-        .send_public_message(&report.message(), Some(&report.formatted_message()))
-        .await?;
+    if tvp_validators_total > 0 {
+        // Network report data
+        let data = RawData {
+            network: network.clone(),
+            meta: metadata.clone(),
+            validators: validators.clone(),
+            records_total_full_epochs: records.total_full_epochs(),
+        };
 
-    // Trigger callout message to public rooms at the rate defined in config
-    let r = current_session_index as f64 % config.matrix_callout_epoch_rate as f64;
-    if r == 0.0_f64 {
-        let callout = Report::callout(data);
+        let report = Report::from(data.clone());
         onet.matrix()
-            .send_callout_message(&callout.message(), Some(&callout.formatted_message()))
+            .send_public_message(&report.message(), Some(&report.formatted_message()))
             .await?;
-    }
 
-    // ---- Validators Performance Ranking Report data ----
+        // Trigger callout message to public rooms at the rate defined in config
+        let r = current_session_index as f64 % config.matrix_callout_epoch_rate as f64;
+        if r == 0.0_f64 {
+            let callout = Report::callout(data);
+            onet.matrix()
+                .send_callout_message(&callout.message(), Some(&callout.formatted_message()))
+                .await?;
+        }
 
-    // Set era/session details
-    let start_epoch = current_session_index - records.total_full_epochs();
-    if let Some(start_era) = records.get_era_index(Some(start_epoch)) {
-        let start_block = records
-            .start_block(EpochKey(*start_era, start_epoch))
-            .unwrap_or(&0);
+        // ---- Validators Performance Ranking Report data ----
 
-        let end_epoch = current_session_index - 1;
-        if let Some(end_era) = records.get_era_index(Some(end_epoch)) {
-            let end_block = records
-                .end_block(EpochKey(*end_era, current_session_index - 1))
+        // Set era/session details
+        let start_epoch = current_session_index - records.total_full_epochs();
+        if let Some(start_era) = records.get_era_index(Some(start_epoch)) {
+            let start_block = records
+                .start_block(EpochKey(*start_era, start_epoch))
                 .unwrap_or(&0);
-            let metadata = Metadata {
-                interval: Some(((*start_era, start_epoch), (*end_era, end_epoch))),
-                blocks_interval: Some((*start_block, *end_block)),
-                ..Default::default()
-            };
 
-            let data = RawDataRank {
-                network: network.clone(),
-                meta: metadata.clone(),
-                report_type: ReportType::Insights,
-                validators: validators.clone(),
-                records_total_full_epochs: records.total_full_epochs(),
-            };
+            let end_epoch = current_session_index - 1;
+            if let Some(end_era) = records.get_era_index(Some(end_epoch)) {
+                let end_block = records
+                    .end_block(EpochKey(*end_era, current_session_index - 1))
+                    .unwrap_or(&0);
+                let metadata = Metadata {
+                    interval: Some(((*start_era, start_epoch), (*end_era, end_epoch))),
+                    blocks_interval: Some((*start_block, *end_block)),
+                    ..Default::default()
+                };
 
-            let report = Report::from(data);
+                let data = RawDataRank {
+                    network: network.clone(),
+                    meta: metadata.clone(),
+                    report_type: ReportType::Insights,
+                    validators: validators.clone(),
+                    records_total_full_epochs: records.total_full_epochs(),
+                };
 
-            // Save file
-            let filename = format!(
-                "onet_{}_{}{}_{}{}.txt.gz",
-                config.chain_name.to_lowercase(),
-                start_era,
-                start_epoch,
-                end_era,
-                end_epoch
-            );
-            report.save(&filename)?;
+                let report = Report::from(data);
 
-            // Get upload file and send message DM
-            let path_filename = format!("{}{}", config.data_path, filename);
-            let file_size = fs::metadata(&path_filename)?.len();
+                // Save file
+                let filename = format!(
+                    "onet_{}_{}{}_{}{}.txt.gz",
+                    config.chain_name.to_lowercase(),
+                    start_era,
+                    start_epoch,
+                    end_era,
+                    end_epoch
+                );
+                report.save(&filename)?;
 
-            if let Some(url) = onet.matrix().upload_file(&path_filename)? {
-                if let Ok(subs) = get_subscribers_by_epoch(ReportType::Insights, None) {
-                    for user_id in subs.iter() {
-                        onet.matrix()
-                            .send_private_file(
-                                user_id,
-                                &filename,
-                                &url,
-                                Some(FileInfo::with_size(file_size)),
-                            )
-                            .await?;
-                        // NOTE: To not overflow matrix with messages just send maximum 2 per second
-                        thread::sleep(time::Duration::from_millis(500));
+                // Get upload file and send message DM
+                let path_filename = format!("{}{}", config.data_path, filename);
+                let file_size = fs::metadata(&path_filename)?.len();
+
+                if let Some(url) = onet.matrix().upload_file(&path_filename)? {
+                    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Insights, None) {
+                        for user_id in subs.iter() {
+                            onet.matrix()
+                                .send_private_file(
+                                    user_id,
+                                    &filename,
+                                    &url,
+                                    Some(FileInfo::with_size(file_size)),
+                                )
+                                .await?;
+                            // NOTE: To not overflow matrix with messages just send maximum 2 per second
+                            thread::sleep(time::Duration::from_millis(500));
+                        }
                     }
                 }
             }
         }
-    }
 
-    // Trigger nomination at the rate defined in config
-    if config.pools_enabled {
-        let r = current_session_index as f64 % config.pool_nominate_rate as f64;
-        if r == 0.0_f64 {
-            if records.total_full_epochs() >= config.pool_minimum_sessions {
-                match try_run_nomination_pools(&onet, validators).await {
-                    Ok(message) => {
-                        onet.matrix()
-                            .send_public_message(&message, Some(&message))
-                            .await?;
+        // Trigger nomination at the rate defined in config
+        if config.pools_enabled {
+            let r = current_session_index as f64 % config.pool_nominate_rate as f64;
+            if r == 0.0_f64 {
+                if records.total_full_epochs() >= config.pool_minimum_sessions {
+                    match try_run_nomination_pools(&onet, validators).await {
+                        Ok(message) => {
+                            onet.matrix()
+                                .send_public_message(&message, Some(&message))
+                                .await?;
+                        }
+                        Err(e) => error!("{}", e),
                     }
-                    Err(e) => error!("{}", e),
-                }
-            } else {
-                warn!(
-                "Only {} full session recorded, at least {} are needed to trigger a nomination.",
+                } else {
+                    warn!(
+                "Only {} full sessions recorded, at least {} are needed to trigger a nomination.",
                 records.total_full_epochs(),
                 config.pool_minimum_sessions
             );
+                }
             }
         }
+    } else {
+        let message = format!(
+            "💤 Skipping Network Report for {} // {} due to the status of the TVP validators not being successfully obtained.",
+                network.name,
+                metadata.active_era_index,
+        );
+        onet.matrix()
+            .send_public_message(&message, Some(&message))
+            .await?;
     }
 
     Ok(())
@@ -1303,12 +1322,14 @@ async fn try_run_nomination_pools(
 
         if let Some(ev) = failed_event {
             return Err(OnetError::PoolError(format!(
-                "Nomination failed at block #{} with event: {:?}",
+                "Nomination pools failed at block #{} with event: {:?}",
                 block_number, ev
             )));
         } else {
             let message = format!(
-                "Nomination finalized at block #{} (<a href=\"https://{}.subscan.io/extrinsic/{:?}\">{}</a>)",
+                "Nomination Pools ({}, {}) finalized at block #{} (<a href=\"https://{}.subscan.io/extrinsic/{:?}\">{}</a>)",
+                config.pool_id_1,
+                config.pool_id_2,
                 block_number,
                 config.chain_name.to_lowercase(),
                 tx_events.extrinsic_hash(),
@@ -1318,7 +1339,7 @@ async fn try_run_nomination_pools(
         }
     }
     Err(OnetError::PoolError(
-        "Nomination failed since there are No calls for the batch call nomination.".to_string(),
+        "Nomination pools failed since there are No calls for the batch call nomination.".to_string(),
     ))
 }
 
