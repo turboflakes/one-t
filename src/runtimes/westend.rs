@@ -1049,8 +1049,6 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             };
             (*v).score = score;
             (*v).commission_score = score * 0.25 + (1.0 - v.commission) * 0.75;
-            //
-            info!("Validator: {:?}", v);
         });
 
     debug!("validators {:?}", validators);

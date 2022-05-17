@@ -218,6 +218,7 @@ impl Onet {
             SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
             // _ => unreachable!(),
         }
+        Ok(())
     }
 }
 
@@ -267,7 +268,15 @@ struct Validator {
     #[serde(default)]
     stash: String,
     #[serde(default)]
+    validity: Vec<Validity>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Validity {
+    #[serde(default)]
     valid: bool,
+    #[serde(default)]
+    r#type: String,
 }
 
 fn read_tvp_cached_filename(filename: &str) -> Result<Vec<Validator>, OnetError> {
@@ -323,9 +332,10 @@ pub async fn try_fetch_stashes_from_remote_url() -> Result<Vec<AccountId32>, One
     // Parse stashes
     let v: Vec<AccountId32> = validators
         .iter()
-        .filter(|v| v.valid)
+        .filter(|v| v.validity.iter().all(|x| x.valid))
         .map(|x| AccountId32::from_str(&x.stash).unwrap())
         .collect();
+
     Ok(v)
 }
 
