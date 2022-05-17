@@ -1472,11 +1472,21 @@ fn top_performers_report<'a>(
 
     let config = CONFIG.clone();
 
+    // Min para epochs to be considered in the rank:
+    // min_para_epochs = 1 if total_full_epochs < 12;
+    // min_para_epochs = 2 if total_full_epochs < 24;
+    // min_para_epochs = 3 if total_full_epochs < 36;
+    // min_para_epochs = 4 if total_full_epochs < 48;
+    // min_para_epochs = 5 if total_full_epochs = 48;
+    let min_para_epochs = (data.records_total_full_epochs / 12) + 1;
+
     // Filter TVP validators
     let mut validators = data
         .validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP && v.para_epochs >= 2 && v.missed_ratio.is_some())
+        .filter(|v| {
+            v.subset == Subset::TVP && v.para_epochs >= min_para_epochs && v.missed_ratio.is_some()
+        })
         .collect::<Vec<&Validator>>();
 
     if validators.len() > 0 {
@@ -1523,6 +1533,10 @@ fn top_performers_report<'a>(
             report.add_raw_text(format!("<i>Score: Backing votes ratio (1-MVR) make up 75% of the score, average p/v points make up 18% and number of sessions as p/v the remaining 7%</i>"));
             report.add_raw_text(format!(
                 "<i>Sorting: Validators are sorted by Score in descending order</i>"
+            ));
+            report.add_raw_text(format!(
+                "<i>Minimum p/v sessions: {}</i>",
+                min_para_epochs
             ));
         }
 
