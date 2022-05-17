@@ -1290,9 +1290,9 @@ async fn try_run_nomination_pools(
     let mut calls: Vec<Call> = vec![];
 
     // Define calls to be included in the batch
-    let call = define_first_pool_call(config.first_pool_id, validators.clone())?;
+    let call = define_first_pool_call(config.pool_id_1, validators.clone())?;
     calls.push(call);
-    let call = define_second_pool_call(config.second_pool_id, validators.clone())?;
+    let call = define_second_pool_call(config.pool_id_2, validators.clone())?;
     calls.push(call);
 
     if calls.len() > 0 {
@@ -1320,14 +1320,14 @@ async fn try_run_nomination_pools(
 
         if let Some(ev) = failed_event {
             return Err(OnetError::PoolError(format!(
-                "Nomination pools failed at block #{} with event: {:?}",
-                block_number, ev
+                "Nomination for pools <i>{}</i> and <i>{}</i> failed at block #{} with event: {:?}",
+                config.pool_id_1, config.pool_id_2, block_number, ev
             )));
         } else {
             let message = format!(
-                "Nomination Pools <i>{}</i> and <i>{}</i> finalized at block #{} (<a href=\"https://{}.subscan.io/extrinsic/{:?}\">{}</a>)",
-                config.first_pool_id,
-                config.second_pool_id,
+                "🗳️ Nomination for pools <i>{}</i> and <i>{}</i> finalized at block #{} (<a href=\"https://{}.subscan.io/extrinsic/{:?}\">{}</a>)",
+                config.pool_id_1,
+                config.pool_id_2,
                 block_number,
                 config.chain_name.to_lowercase(),
                 tx_events.extrinsic_hash(),
@@ -1337,7 +1337,8 @@ async fn try_run_nomination_pools(
         }
     }
     Err(OnetError::PoolError(
-        "Nomination pools failed since there are No calls for the batch call nomination.".to_string(),
+        format!("Nomination for pools <i>{}</i> and <i>{}</i> failed since there are No calls for the batch call nomination.", config.pool_id_1,
+        config.pool_id_2,),
     ))
 }
 
