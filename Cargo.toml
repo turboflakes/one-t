@@ -25,6 +25,10 @@ url = "2.2.2"
 base64 = "0.13.0"
 rand = "0.8.5"
 flate2 = "1.0"
+# api
+actix-web = "3"
+actix-cors = "0.5.4"
+
 # subxt dependencies
 # subxt = { version = "0.21.0", git = "https://github.com/paritytech/subxt" }
 subxt = { rev = "6d731725", git = "https://github.com/paritytech/subxt" }

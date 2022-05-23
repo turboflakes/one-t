@@ -25,7 +25,8 @@ use crate::matrix::FileInfo;
 use crate::onet::ReportType;
 use crate::onet::{
     get_account_id_from_storage_key, get_from_seed, get_subscribers, get_subscribers_by_epoch,
-    try_fetch_stashes_from_remote_url, Onet, EPOCH_FILENAME,
+    try_fetch_stashes_from_remote_url, LastNomination, Nominee, Onet, Pool, PoolNominees,
+    EPOCH_FILENAME, POOL_FILENAME,
 };
 use crate::records::{
     decode_authority_index, AuthorityIndex, AuthorityRecord, EpochIndex, EpochKey, EraIndex,
@@ -45,7 +46,9 @@ use std::{
     fs,
     iter::FromIterator,
     result::Result,
+    str::FromStr,
     thread, time,
+    time::SystemTime,
 };
 use subxt::{
     sp_core::sr25519, sp_runtime::AccountId32, DefaultConfig, PairSigner, PolkadotExtrinsicParams,
@@ -59,10 +62,10 @@ mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        pallet_identity::types::Data, polkadot_parachain::primitives::Id,
-        polkadot_primitives::v2::CoreIndex, polkadot_primitives::v2::GroupIndex,
-        polkadot_primitives::v2::ValidatorIndex, polkadot_primitives::v2::ValidityAttestation,
-        sp_arithmetic::per_things::Perbill,
+        frame_support::storage::bounded_vec::BoundedVec, pallet_identity::types::Data,
+        polkadot_parachain::primitives::Id, polkadot_primitives::v2::CoreIndex,
+        polkadot_primitives::v2::GroupIndex, polkadot_primitives::v2::ValidatorIndex,
+        polkadot_primitives::v2::ValidityAttestation, sp_arithmetic::per_things::Perbill,
     },
     session::events::NewSession,
     system::events::ExtrinsicFailed,
@@ -151,6 +154,12 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
                     // Update current block number
                     records.set_current_block_number(block_number.into());
+
+                    // Cache pools every minute
+                    if (block_number as f64 % 10.0_f64) == 0.0_f64 {
+                        cache_pool_data(&onet, config.pool_id_1).await?;
+                        cache_pool_data(&onet, config.pool_id_2).await?;
+                    }
                 } else {
                     warn!(
                         "Block #{} already received!",
@@ -1272,6 +1281,206 @@ fn define_second_pool_call(pool_id: u32, validators: Validators) -> Result<Call,
     )))
 }
 
+pub async fn cache_pool_data(onet: &Onet, pool_id: u32) -> Result<(), OnetError> {
+    let client = onet.client();
+    let api = client.clone().to_runtime_api::<Api>();
+    let config = CONFIG.clone();
+    let network = Network::load(client).await?;
+
+    // Pool cache filename
+    let filename = format!(
+        "{}{}_{}_{}",
+        config.data_path,
+        POOL_FILENAME,
+        pool_id,
+        config.chain_name.to_lowercase()
+    );
+
+    // Load chain data
+    let BoundedVec(metadata) = api
+        .storage()
+        .nomination_pools()
+        .metadata(&pool_id, None)
+        .await?;
+
+    if let Some(bounded) = api
+        .storage()
+        .nomination_pools()
+        .bonded_pools(&pool_id, None)
+        .await?
+    {
+        let pool = Pool {
+            id: pool_id,
+            metadata: str(metadata),
+            member_counter: bounded.member_counter,
+            bonded: format!(
+                "{} {}",
+                bounded.points / 10u128.pow(network.token_decimals as u32),
+                network.token_symbol
+            ),
+            state: format!("{:?}", bounded.state),
+        };
+        // Serialize and cache
+        let serialized = serde_json::to_string(&pool)?;
+        fs::write(&filename, serialized)?;
+    }
+
+    Ok(())
+}
+
+// * APR is the annualized average of all targets from the last X eras.
+pub async fn calculate_apr(onet: &Onet, targets: Vec<AccountId32>) -> Result<f64, OnetError> {
+    let client = onet.client();
+    let api = client.clone().to_runtime_api::<Api>();
+    let config = CONFIG.clone();
+
+    // Fetch active era index
+    let current_era_index = match api.storage().staking().active_era(None).await? {
+        Some(active_era_info) => active_era_info.index,
+        None => return Err("Active era not available. Check current API -> api.storage().staking().active_era(None)".into()),
+    };
+
+    let mut total_eras: u128 = 0;
+    let mut total_points: u128 = 0;
+    let mut total_reward: u128 = 0;
+    let mut nominees_total_eras: u128 = 0;
+    let mut nominees_total_points: u128 = 0;
+    let mut nominees_total_stake: u128 = 0;
+    let mut nominees_total_commission: u128 = 0;
+
+    // Collect nominees commission
+    for nominee in targets.iter() {
+        let validator = api.storage().staking().validators(&nominee, None).await?;
+        let Perbill(commission) = validator.commission;
+        nominees_total_commission += commission as u128;
+    }
+
+    // Collect chain data for maximum_history_eras
+    let start_era_index = current_era_index - config.maximum_history_eras;
+    for era_index in start_era_index..current_era_index {
+        let era_reward_points = api
+            .storage()
+            .staking()
+            .eras_reward_points(&era_index, None)
+            .await?;
+        for (stash, points) in era_reward_points.individual.iter() {
+            if targets.contains(stash) {
+                nominees_total_eras += 1;
+                nominees_total_points += *points as u128;
+                let eras_stakers = api
+                    .storage()
+                    .staking()
+                    .eras_stakers(&era_index, &stash, None)
+                    .await?;
+                nominees_total_stake += eras_stakers.total;
+            }
+        }
+        total_points += era_reward_points.total as u128;
+        total_eras += 1;
+
+        if let Some(eras_validator_reward) = api
+            .storage()
+            .staking()
+            .eras_validator_reward(&era_index, None)
+            .await?
+        {
+            total_reward += eras_validator_reward;
+        }
+    }
+
+    debug!(
+        "nominees_total_eras: {} nominees_total_points: {} nominees_total_stake: {}",
+        nominees_total_eras, nominees_total_points, nominees_total_stake
+    );
+    debug!(
+        "total_eras: {} total_points: {} total_reward: {}",
+        total_eras, total_points, total_reward
+    );
+
+    let avg_points_per_nominee_per_era = nominees_total_points / nominees_total_eras;
+    info!(
+        "avg_points_per_nominee_per_era: {}",
+        avg_points_per_nominee_per_era
+    );
+    let avg_stake_per_nominee_per_era = nominees_total_stake / nominees_total_eras;
+    info!(
+        "avg_stake_per_nominee_per_era: {}",
+        avg_stake_per_nominee_per_era
+    );
+    let avg_reward_per_era = total_reward / total_eras;
+    info!("avg_reward_per_era: {}", avg_reward_per_era);
+    let avg_points_per_era = total_points / total_eras;
+    info!("avg_points_per_era: {}", avg_points_per_era);
+
+    let avg_reward_per_nominee_per_era =
+        (avg_points_per_nominee_per_era * avg_reward_per_era) / avg_points_per_era;
+    info!(
+        "avg_reward_per_nominee_per_era: {}",
+        avg_reward_per_nominee_per_era
+    );
+
+    let avg_commission_per_nominee = nominees_total_commission / targets.len() as u128;
+    info!("avg_commission_per_nominee: {}", avg_commission_per_nominee);
+
+    let commission = avg_commission_per_nominee as f64 / 1_000_000_000.0_f64;
+    let apr: f64 = (avg_reward_per_nominee_per_era as f64 * (1.0 - commission))
+        * (1.0 / avg_stake_per_nominee_per_era as f64)
+        * config.eras_per_day as f64
+        * 365.0;
+    info!("apr: {}", apr);
+    Ok(apr)
+}
+
+pub async fn cache_pool_data_nominees(
+    onet: &Onet,
+    pool_id: u32,
+    pool_stash: &str,
+    last_nomination: Option<LastNomination>,
+) -> Result<(), OnetError> {
+    let client = onet.client();
+    let api = client.clone().to_runtime_api::<Api>();
+    let config = CONFIG.clone();
+
+    // Convert pool stash to account
+    let acc = AccountId32::from_str(&pool_stash)?;
+
+    // Pool cache filename
+    let filename = format!(
+        "{}{}_{}_nominees_{}",
+        config.data_path,
+        POOL_FILENAME,
+        pool_id,
+        config.chain_name.to_lowercase()
+    );
+
+    // Load chain data
+    let mut nominees: Vec<Nominee> = Vec::new();
+    if let Some(nominations) = api.storage().staking().nominators(&acc, None).await? {
+        let BoundedVec(targets) = nominations.targets;
+        let apr = calculate_apr(&onet, targets.clone()).await?;
+        for nominee in targets.iter() {
+            // get nominee identity
+            let nominee = Nominee {
+                stash: nominee.to_string(),
+                identity: get_display_name(&onet, &nominee, None).await?,
+            };
+            nominees.push(nominee);
+        }
+
+        let pool_nominees = PoolNominees {
+            id: pool_id,
+            nominees,
+            apr,
+            last_nomination,
+        };
+        // Serialize and cache
+        let serialized = serde_json::to_string(&pool_nominees)?;
+        fs::write(&filename, serialized)?;
+    }
+
+    Ok(())
+}
+
 async fn try_run_nomination_pools(
     onet: &Onet,
     validators: Validators,
@@ -1324,15 +1533,42 @@ async fn try_run_nomination_pools(
                 config.pool_id_1, config.pool_id_2, block_number, ev
             )));
         } else {
+            let explorer_url = format!(
+                "https://{}.subscan.io/extrinsic/{:?}",
+                config.chain_name.to_lowercase(),
+                tx_events.extrinsic_hash()
+            );
             let message = format!(
-                "🗳️ Nomination for pools <i>{}</i> and <i>{}</i> finalized at block #{} (<a href=\"https://{}.subscan.io/extrinsic/{:?}\">{}</a>)",
+                "🗳️ Nomination for pools <i>{}</i> and <i>{}</i> finalized at block #{} (<a href=\"{}\">{}</a>)",
                 config.pool_id_1,
                 config.pool_id_2,
                 block_number,
-                config.chain_name.to_lowercase(),
-                tx_events.extrinsic_hash(),
+                explorer_url,
                 tx_events.extrinsic_hash().to_string()
             );
+            // Cache nominees
+            let unix_now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap();
+            let last_nomination = LastNomination {
+                block_number,
+                explorer_url,
+                ts: unix_now.as_secs(),
+            };
+            cache_pool_data_nominees(
+                &onet,
+                config.pool_id_1,
+                &config.pool_stash_1,
+                Some(last_nomination.clone()),
+            )
+            .await?;
+            cache_pool_data_nominees(
+                &onet,
+                config.pool_id_2,
+                &config.pool_stash_2,
+                Some(last_nomination),
+            )
+            .await?;
             return Ok(message);
         }
     }

@@ -49,6 +49,7 @@ use subxt::{
 
 const TVP_VALIDATORS_FILENAME: &str = ".tvp";
 pub const EPOCH_FILENAME: &str = ".epoch";
+pub const POOL_FILENAME: &str = ".pool";
 
 type Message = Vec<String>;
 
@@ -201,9 +202,8 @@ impl Onet {
 
     /// Spawn and restart on error
     pub fn spawn() {
-        let config = CONFIG.clone();
         // Authenticate matrix and spawn lazy load commands
-        spawn_and_restart_matrix_lazy_load_on_error(config.chain_name.into());
+        spawn_and_restart_matrix_lazy_load_on_error();
         // Subscribe on-chain events
         spawn_and_restart_on_error();
     }
@@ -221,12 +221,12 @@ impl Onet {
     }
 }
 
-fn spawn_and_restart_matrix_lazy_load_on_error(chain: SupportedRuntime) {
-    async_std::task::spawn(async move {
+fn spawn_and_restart_matrix_lazy_load_on_error() {
+    async_std::task::spawn(async {
         let config = CONFIG.clone();
         loop {
             let mut m = Matrix::new();
-            if let Err(e) = m.authenticate(chain).await {
+            if let Err(e) = m.authenticate(config.chain_name.clone().into()).await {
                 error!("authenticate error: {}", e);
                 thread::sleep(time::Duration::from_secs(config.error_interval));
                 continue;
@@ -241,7 +241,7 @@ fn spawn_and_restart_matrix_lazy_load_on_error(chain: SupportedRuntime) {
 }
 
 fn spawn_and_restart_on_error() {
-    let t = async_std::task::spawn(async {
+    async_std::task::spawn(async {
         let config = CONFIG.clone();
         loop {
             // Initialize a new instance
@@ -259,7 +259,6 @@ fn spawn_and_restart_on_error() {
             };
         }
     });
-    async_std::task::block_on(t);
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -276,6 +275,50 @@ struct Validity {
     valid: bool,
     #[serde(default)]
     r#type: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Pool {
+    #[serde(default)]
+    pub id: u32,
+    #[serde(default)]
+    pub metadata: String,
+    #[serde(default)]
+    pub bonded: String,
+    #[serde(default)]
+    pub member_counter: u32,
+    #[serde(default)]
+    pub state: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Nominee {
+    #[serde(default)]
+    pub stash: String,
+    #[serde(default)]
+    pub identity: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LastNomination {
+    #[serde(default)]
+    pub block_number: u32,
+    #[serde(default)]
+    pub explorer_url: String,
+    #[serde(default)]
+    pub ts: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PoolNominees {
+    #[serde(default)]
+    pub id: u32,
+    #[serde(default)]
+    pub nominees: Vec<Nominee>,
+    #[serde(default)]
+    pub apr: f64,
+    #[serde(default)]
+    pub last_nomination: Option<LastNomination>,
 }
 
 fn read_tvp_cached_filename(filename: &str) -> Result<Vec<Validator>, OnetError> {

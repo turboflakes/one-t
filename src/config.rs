@@ -44,12 +44,17 @@ lazy_static! {
 
 /// provides default value for subscribers_path if ONET_SUBSCRIBERS_PATH env var is not set
 fn default_chain_name() -> String {
-    "kusama".into()
+    "polkadot".into()
 }
 
 /// provides default value for interval if ONET_INTERVAL env var is not set
 fn default_interval() -> u64 {
     21600
+}
+
+/// provides default value for eras_per_day if ONET_ERAS_PER_DAY var is not set
+fn default_eras_per_day() -> u32 {
+    1
 }
 
 /// provides default value in seconds for error interval if ONET_ERROR_INTERVAL env var is not set
@@ -136,12 +141,37 @@ fn default_maximum_top_ranking_callout() -> u32 {
     4
 }
 
+/// provides default value for api_host if ONET_API_HOST env var is not set
+fn default_api_host() -> String {
+    "127.0.0.1".into()
+}
+
+/// provides default value for api_port if ONET_API_PORT env var is not set
+fn default_api_port() -> u16 {
+    5010
+}
+
+/// provides default value for api_port if ONET_API_PORT env var is not set
+fn default_api_cors_allow_origin() -> String {
+    "*".into()
+}
+
 #[derive(Clone, Deserialize, Debug)]
 pub struct Config {
+    // api
+    #[serde(default = "default_api_host")]
+    pub api_host: String,
+    #[serde(default = "default_api_port")]
+    pub api_port: u16,
+    #[serde(default = "default_api_cors_allow_origin")]
+    pub api_cors_allow_origin: String,
+    // general
     #[serde(default = "default_chain_name")]
     pub chain_name: String,
     #[serde(default = "default_interval")]
     pub interval: u64,
+    #[serde(default = "default_eras_per_day")]
+    pub eras_per_day: u32,
     #[serde(default = "default_error_interval")]
     pub error_interval: u64,
     pub substrate_ws_url: String,
@@ -174,7 +204,11 @@ pub struct Config {
     #[serde(default)]
     pub pool_id_1: u32,
     #[serde(default)]
+    pub pool_stash_1: String,
+    #[serde(default)]
     pub pool_id_2: u32,
+    #[serde(default)]
+    pub pool_stash_2: String,
     #[serde(default = "default_pools_nominator_seed_path")]
     pub pools_nominator_seed_path: String,
     #[serde(default = "default_pools_nominate_rate")]

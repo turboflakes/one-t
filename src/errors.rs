@@ -19,8 +19,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use actix_web::{error::ResponseError, HttpResponse};
 use codec;
+use derive_more::Display;
 use reqwest;
+use serde::{Deserialize, Serialize};
 use std::{str::Utf8Error, string::String};
 use subxt;
 use thiserror::Error;
@@ -61,6 +64,13 @@ impl From<&str> for OnetError {
     }
 }
 
+/// Convert OnetError to String
+impl From<OnetError> for String {
+    fn from(error: OnetError) -> Self {
+        format!("{}", error).to_string()
+    }
+}
+
 /// Onet specific error messages
 #[derive(Error, Debug)]
 pub enum MatrixError {
@@ -87,5 +97,58 @@ impl From<MatrixError> for String {
 impl From<MatrixError> for OnetError {
     fn from(error: MatrixError) -> Self {
         OnetError::MatrixError(error.into())
+    }
+}
+
+#[derive(Error, Debug, Display, PartialEq)]
+pub enum ApiError {
+    #[allow(dead_code)]
+    BadRequest(String),
+    NotFound(String),
+    InternalServerError(String),
+}
+
+/// Automatically convert ApiErrors to external Response Errors
+impl ResponseError for ApiError {
+    fn error_response(&self) -> HttpResponse {
+        match self {
+            ApiError::BadRequest(error) => {
+                HttpResponse::BadRequest().json::<ErrorResponse>(error.into())
+            }
+            ApiError::NotFound(message) => {
+                HttpResponse::NotFound().json::<ErrorResponse>(message.into())
+            }
+            ApiError::InternalServerError(error) => {
+                HttpResponse::InternalServerError().json::<ErrorResponse>(error.into())
+            }
+        }
+    }
+}
+
+impl From<&str> for ApiError {
+    fn from(error: &str) -> Self {
+        ApiError::InternalServerError(error.into())
+    }
+}
+
+/// User-friendly error messages
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ErrorResponse {
+    errors: Vec<String>,
+}
+
+/// Utility to make transforming a string reference into an ErrorResponse
+impl From<&String> for ErrorResponse {
+    fn from(error: &String) -> Self {
+        ErrorResponse {
+            errors: vec![error.into()],
+        }
+    }
+}
+
+/// Convert io::Error to ApiError
+impl From<std::io::Error> for ApiError {
+    fn from(error: std::io::Error) -> Self {
+        ApiError::InternalServerError(format!("{:?}", error))
     }
 }

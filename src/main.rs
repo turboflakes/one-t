@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+mod api;
 mod config;
 mod errors;
 mod matrix;
@@ -28,13 +29,19 @@ mod report;
 mod runtimes;
 mod stats;
 
+use crate::api::routes::routes;
 use crate::config::CONFIG;
 use crate::onet::Onet;
+use actix_cors::Cors;
+use actix_web::{http, middleware, App, HttpServer};
 use log::info;
 use std::env;
 
-fn main() {
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    // Load configuration
     let config = CONFIG.clone();
+
     if config.is_debug {
         env::set_var("RUST_LOG", "onet=debug,subxt=debug");
     } else {
@@ -49,5 +56,26 @@ fn main() {
         env!("CARGO_PKG_DESCRIPTION")
     );
 
-    Onet::spawn()
+    Onet::spawn();
+
+    // Start http server
+    let addr = format!("{}:{}", config.api_host, config.api_port);
+    HttpServer::new(move || {
+        let cors = Cors::default()
+            .allowed_origin_fn(|origin, _req_head| {
+                let allowed_origin = env::var("API_CORS_ALLOW_ORIGIN").unwrap_or("*".to_string());
+                origin.as_bytes().ends_with(allowed_origin.as_bytes())
+            })
+            .allowed_methods(vec!["GET", "OPTIONS"])
+            .allowed_headers(vec![http::header::CONTENT_TYPE])
+            .supports_credentials()
+            .max_age(3600);
+        App::new()
+            .wrap(middleware::Logger::default())
+            .wrap(cors)
+            .configure(routes)
+    })
+    .bind(addr)?
+    .run()
+    .await
 }
