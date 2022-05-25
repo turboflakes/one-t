@@ -1309,6 +1309,9 @@ pub async fn cache_pool_data(onet: &Onet, pool_id: u32) -> Result<(), OnetError>
         .bonded_pools(&pool_id, None)
         .await?
     {
+        let unix_now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap();
         let pool = Pool {
             id: pool_id,
             metadata: str(metadata),
@@ -1319,6 +1322,7 @@ pub async fn cache_pool_data(onet: &Onet, pool_id: u32) -> Result<(), OnetError>
                 network.token_symbol
             ),
             state: format!("{:?}", bounded.state),
+            ts: unix_now.as_secs(),
         };
         // Serialize and cache
         let serialized = serde_json::to_string(&pool)?;
@@ -1467,11 +1471,16 @@ pub async fn cache_pool_data_nominees(
             nominees.push(nominee);
         }
 
+        let unix_now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap();
+
         let pool_nominees = PoolNominees {
             id: pool_id,
             nominees,
             apr,
             last_nomination,
+            ts: unix_now.as_secs(),
         };
         // Serialize and cache
         let serialized = serde_json::to_string(&pool_nominees)?;
@@ -1552,7 +1561,7 @@ async fn try_run_nomination_pools(
                 .unwrap();
             let last_nomination = LastNomination {
                 block_number,
-                explorer_url,
+                extrinsic_hash: tx_events.extrinsic_hash(),
                 ts: unix_now.as_secs(),
             };
             cache_pool_data_nominees(

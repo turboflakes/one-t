@@ -42,7 +42,7 @@ use std::{
     thread, time,
 };
 use subxt::{
-    sp_core::{crypto, sr25519, storage::StorageKey, Pair},
+    sp_core::{crypto, sr25519, storage::StorageKey, Pair, H256},
     sp_runtime::AccountId32,
     Client, ClientBuilder, DefaultConfig,
 };
@@ -289,6 +289,8 @@ pub struct Pool {
     pub member_counter: u32,
     #[serde(default)]
     pub state: String,
+    #[serde(default)]
+    pub ts: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -304,7 +306,7 @@ pub struct LastNomination {
     #[serde(default)]
     pub block_number: u32,
     #[serde(default)]
-    pub explorer_url: String,
+    pub extrinsic_hash: H256,
     #[serde(default)]
     pub ts: u64,
 }
@@ -319,6 +321,8 @@ pub struct PoolNominees {
     pub apr: f64,
     #[serde(default)]
     pub last_nomination: Option<LastNomination>,
+    #[serde(default)]
+    pub ts: u64,
 }
 
 fn read_tvp_cached_filename(filename: &str) -> Result<Vec<Validator>, OnetError> {

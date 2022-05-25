@@ -19,30 +19,28 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::api::handlers::{
-    health::get_health,
-    info::get_info,
-    pool::{get_pool, get_pool_nominees},
-};
-use actix_web::web;
+use crate::api::helpers::respond_json;
+use crate::config::CONFIG;
+use crate::errors::ApiError;
+use actix_web::web::Json;
+use serde::{Deserialize, Serialize};
+use std::env;
 
-/// All routes are placed here
-pub fn routes(cfg: &mut web::ServiceConfig) {
-    cfg
-        // Index
-        .route("/", web::get().to(get_info))
-        // Healthcheck
-        .route("/health", web::get().to(get_health))
-        // /api/v1 routes
-        .service(
-            web::scope("/api/v1")
-                // API info
-                .route("", web::get().to(get_info))
-                // POOL routes
-                .service(
-                    web::scope("/pool")
-                        .route("/{id}", web::get().to(get_pool))
-                        .route("/{id}/nominees", web::get().to(get_pool_nominees)),
-                ),
-        );
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+pub struct InfoResponse {
+    pub pkg_name: String,
+    pub pkg_version: String,
+    pub api_path: String,
+    pub chain_name: String,
+}
+
+/// Handler to get information about the service
+pub async fn get_info() -> Result<Json<InfoResponse>, ApiError> {
+    let config = CONFIG.clone();
+    respond_json(InfoResponse {
+        pkg_name: env!("CARGO_PKG_NAME").into(),
+        pkg_version: env!("CARGO_PKG_VERSION").into(),
+        api_path: "/api/v1".into(),
+        chain_name: config.chain_name.into(),
+    })
 }
