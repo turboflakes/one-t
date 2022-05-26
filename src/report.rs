@@ -1439,22 +1439,24 @@ fn top_validators_report<'a>(
         tvp_sorted.len()
     };
 
-    if is_short {
-        report.add_raw_text(format!("Top {} TVP Validators with most average points earned in the last {} eras (minimum inclusion {} eras).",
-            max,
-            config.maximum_history_eras,
-            config.maximum_history_eras / 2));
-    } else {
-        report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with most average points earned in the last {} eras (minimum inclusion {} eras)", max, config.maximum_history_eras, config.maximum_history_eras / 2));
-        report.add_raw_text(format!("<i>Legend: validator (avg. points)</i>"));
-    }
-    report.add_break();
-    for v in &tvp_sorted[..max] {
-        report.add_raw_text(format!(
-            "* {} ({})",
-            v.name,
-            v.maximum_history_total_points / v.maximum_history_total_eras
-        ));
+    if max > 0 {
+        if is_short {
+            report.add_raw_text(format!("Top {} TVP Validators with most average points earned in the last {} eras (minimum inclusion {} eras).",
+                max,
+                config.maximum_history_eras,
+                config.maximum_history_eras / 2));
+        } else {
+            report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with most average points earned in the last {} eras (minimum inclusion {} eras)", max, config.maximum_history_eras, config.maximum_history_eras / 2));
+            report.add_raw_text(format!("<i>Legend: validator (avg. points)</i>"));
+        }
+        report.add_break();
+        for v in &tvp_sorted[..max] {
+            report.add_raw_text(format!(
+                "* {} ({})",
+                v.name,
+                v.maximum_history_total_points / v.maximum_history_total_eras
+            ));
+        }
     }
     report.add_break();
     report
@@ -1502,39 +1504,41 @@ fn top_performers_report<'a>(
             validators.len()
         };
 
-        if is_short {
-            report.add_raw_text(format!(
-                "Top {} Best TVP Validators performances of the last {} sessions:",
-                max, data.records_total_full_epochs
-            ));
-        } else {
-            report.add_raw_text(format!(
-                "🏆 <b>Top {} Best TVP Validators performances</b> of the last {} sessions:",
-                max, data.records_total_full_epochs
-            ));
-        }
+        if max > 0 {
+            if is_short {
+                report.add_raw_text(format!(
+                    "Top {} Best TVP Validators performances of the last {} sessions:",
+                    max, data.records_total_full_epochs
+                ));
+            } else {
+                report.add_raw_text(format!(
+                    "🏆 <b>Top {} Best TVP Validators performances</b> of the last {} sessions:",
+                    max, data.records_total_full_epochs
+                ));
+            }
 
-        report.add_break();
-
-        for v in &validators[..max] {
-            report.add_raw_text(format!(
-                "* {} ({:.2}%, {}, {}, {}x)",
-                v.name,
-                v.score * 100.0,
-                (v.missed_ratio.unwrap() * 10000.0).round() / 10000.0,
-                v.avg_para_points,
-                v.para_epochs,
-            ));
-        }
-
-        if !is_short {
             report.add_break();
-            report.add_raw_text(format!("<i>Legend: Val. identity (Score, Missed votes ratio, Average p/v points, Number of sessions as p/v)</i>"));
-            report.add_raw_text(format!("<i>Score: Backing votes ratio (1-MVR) make up 75% of the score, average p/v points make up 18% and number of sessions as p/v the remaining 7%</i>"));
-            report.add_raw_text(format!(
-                "<i>Sorting: Validators are sorted by Score in descending order</i>"
-            ));
-            report.add_raw_text(format!("<i>Inclusion: To be considered for the ranking, validators must have been p/v for at least {} times in the last {} sessions.</i>", min_para_epochs, data.records_total_full_epochs));
+
+            for v in &validators[..max] {
+                report.add_raw_text(format!(
+                    "* {} ({:.2}%, {}, {}, {}x)",
+                    v.name,
+                    v.score * 100.0,
+                    (v.missed_ratio.unwrap() * 10000.0).round() / 10000.0,
+                    v.avg_para_points,
+                    v.para_epochs,
+                ));
+            }
+
+            if !is_short {
+                report.add_break();
+                report.add_raw_text(format!("<i>Legend: Val. identity (Score, Missed votes ratio, Average p/v points, Number of sessions as p/v)</i>"));
+                report.add_raw_text(format!("<i>Score: Backing votes ratio (1-MVR) make up 75% of the score, average p/v points make up 18% and number of sessions as p/v the remaining 7%</i>"));
+                report.add_raw_text(format!(
+                    "<i>Sorting: Validators are sorted by Score in descending order</i>"
+                ));
+                report.add_raw_text(format!("<i>Inclusion: To be considered for the ranking, validators must have been p/v for at least {} times in the last {} sessions.</i>", min_para_epochs, data.records_total_full_epochs));
+            }
         }
 
         report.add_break();
