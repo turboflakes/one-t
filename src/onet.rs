@@ -308,6 +308,8 @@ pub struct LastNomination {
     #[serde(default)]
     pub extrinsic_hash: H256,
     #[serde(default)]
+    pub sessions_counter: u32,
+    #[serde(default)]
     pub ts: u64,
 }
 

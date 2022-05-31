@@ -1160,7 +1160,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             let r = current_session_index as f64 % config.pools_nominate_rate as f64;
             if r == 0.0_f64 {
                 if records.total_full_epochs() >= config.pools_minimum_sessions {
-                    match try_run_nomination_pools(&onet, validators).await {
+                    match try_run_nomination_pools(&onet, &records, validators).await {
                         Ok(message) => {
                             onet.matrix()
                                 .send_public_message(&message, Some(&message))
@@ -1492,6 +1492,7 @@ pub async fn cache_pool_data_nominees(
 
 async fn try_run_nomination_pools(
     onet: &Onet,
+    records: &Records,
     validators: Validators,
 ) -> Result<String, OnetError> {
     let config = CONFIG.clone();
@@ -1562,6 +1563,7 @@ async fn try_run_nomination_pools(
             let last_nomination = LastNomination {
                 block_number,
                 extrinsic_hash: tx_events.extrinsic_hash(),
+                sessions_counter: records.total_full_epochs(),
                 ts: unix_now.as_secs(),
             };
             cache_pool_data_nominees(
