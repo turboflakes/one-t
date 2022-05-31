@@ -24,8 +24,9 @@ use crate::errors::OnetError;
 use crate::matrix::FileInfo;
 use crate::onet::ReportType;
 use crate::onet::{
-    get_account_id_from_storage_key, get_subscribers, get_subscribers_by_epoch,
-    try_fetch_stashes_from_remote_url, Onet, EPOCH_FILENAME,
+    get_account_id_from_storage_key, get_from_seed, get_subscribers, get_subscribers_by_epoch,
+    try_fetch_stashes_from_remote_url, LastNomination, Nominee, Onet, Pool, PoolNominees,
+    EPOCH_FILENAME, POOL_FILENAME,
 };
 use crate::records::{
     decode_authority_index, AuthorityIndex, AuthorityRecord, EpochIndex, EpochKey, EraIndex,
@@ -40,9 +41,18 @@ use async_recursion::async_recursion;
 use futures::StreamExt;
 use log::{debug, error, info, warn};
 use std::{
-    collections::BTreeMap, convert::TryInto, fs, iter::FromIterator, result::Result, thread, time,
+    collections::BTreeMap,
+    convert::{TryFrom, TryInto},
+    fs,
+    iter::FromIterator,
+    result::Result,
+    str::FromStr,
+    thread, time,
+    time::SystemTime,
 };
-use subxt::{sp_runtime::AccountId32, DefaultConfig, PolkadotExtrinsicParams};
+use subxt::{
+    sp_core::sr25519, sp_runtime::AccountId32, DefaultConfig, PairSigner, PolkadotExtrinsicParams,
+};
 
 #[subxt::subxt(
     runtime_metadata_path = "metadata/kusama_metadata.scale",
@@ -52,15 +62,18 @@ mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        pallet_identity::types::Data, polkadot_parachain::primitives::Id,
-        polkadot_primitives::v2::CoreIndex, polkadot_primitives::v2::GroupIndex,
-        polkadot_primitives::v2::ValidatorIndex, polkadot_primitives::v2::ValidityAttestation,
-        sp_arithmetic::per_things::Perbill,
+        frame_support::storage::bounded_vec::BoundedVec, pallet_identity::types::Data,
+        polkadot_parachain::primitives::Id, polkadot_primitives::v2::CoreIndex,
+        polkadot_primitives::v2::GroupIndex, polkadot_primitives::v2::ValidatorIndex,
+        polkadot_primitives::v2::ValidityAttestation, sp_arithmetic::per_things::Perbill,
     },
     session::events::NewSession,
+    system::events::ExtrinsicFailed,
 };
 
 type Api = node_runtime::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>;
+type Call = node_runtime::runtime_types::kusama_runtime::Call;
+type NominationPoolsCall = node_runtime::runtime_types::pallet_nomination_pools::pallet::Call;
 
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
     let config = CONFIG.clone();
@@ -141,6 +154,12 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
                     // Update current block number
                     records.set_current_block_number(block_number.into());
+
+                    // Cache pools every minute
+                    if (block_number as f64 % 10.0_f64) == 0.0_f64 {
+                        cache_pool_data(&onet, config.pool_id_1).await?;
+                        cache_pool_data(&onet, config.pool_id_2).await?;
+                    }
                 } else {
                     warn!(
                         "Block #{} already received!",
@@ -973,7 +992,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                         / (explicit_votes + implicit_votes + missed_votes) as f64;
                     v.missed_ratio = Some(mvr);
                 }
-                if para_epochs > 0 {
+                if para_epochs >= 1 {
                     v.avg_para_points = para_points / para_epochs;
                 }
             }
@@ -1096,7 +1115,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                     network: network.clone(),
                     meta: metadata.clone(),
                     report_type: ReportType::Insights,
-                    validators,
+                    validators: validators.clone(),
                     records_total_full_epochs: records.total_full_epochs(),
                 };
 
@@ -1135,6 +1154,29 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                 }
             }
         }
+
+        // Trigger nomination at the rate defined in config
+        if config.pools_enabled {
+            let r = current_session_index as f64 % config.pools_nominate_rate as f64;
+            if r == 0.0_f64 {
+                if records.total_full_epochs() >= config.pools_minimum_sessions {
+                    match try_run_nomination_pools(&onet, validators).await {
+                        Ok(message) => {
+                            onet.matrix()
+                                .send_public_message(&message, Some(&message))
+                                .await?;
+                        }
+                        Err(e) => error!("{}", e),
+                    }
+                } else {
+                    warn!(
+                "Only {} full sessions recorded, at least {} are needed to trigger a nomination.",
+                records.total_full_epochs(),
+                config.pools_minimum_sessions
+            );
+                }
+            }
+        }
     } else {
         let message = format!(
             "💤 Skipping Network Report for {} // {} due to the status of the TVP validators not being successfully obtained.",
@@ -1147,6 +1189,402 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     }
 
     Ok(())
+}
+
+// Pool 1 should include top TVP validators in the last X sessions
+// Note: maximum validators are 24 in Kusama / 16 Polkadot
+fn define_first_pool_call(pool_id: u32, validators: Validators) -> Result<Call, OnetError> {
+    let config = CONFIG.clone();
+    if pool_id == 0 {
+        return Err(OnetError::PoolError(format!(
+            "Nomination Pool ID 1 not defined.",
+        )));
+    }
+
+    let mut top_validators = validators
+        .iter()
+        .filter(|v| v.subset == Subset::TVP && v.para_epochs >= 2 && v.missed_ratio.is_some())
+        .collect::<Vec<&Validator>>();
+
+    if top_validators.len() > 0 {
+        // Sort validators by score for Pool 1
+        top_validators.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+
+        let max: usize = if top_validators.len() as u32 > config.pools_maximum_nominations {
+            usize::try_from(config.pools_maximum_nominations).unwrap()
+        } else {
+            top_validators.len()
+        };
+
+        top_validators.truncate(max);
+
+        let accounts = top_validators
+            .iter()
+            .map(|v| v.stash.clone())
+            .collect::<Vec<AccountId32>>();
+
+        // Define call
+        let call = Call::NominationPools(NominationPoolsCall::nominate {
+            pool_id: pool_id,
+            validators: accounts,
+        });
+        return Ok(call);
+    }
+    Err(OnetError::PoolError(format!(
+        "Call for nomination pool {} could not be defined since there are No validators to select",
+        pool_id
+    )))
+}
+
+// Pool 2 should include top TVP validators with the lowest commission in the last X sessions
+// Note: maximum validators are 12 in Kusama / 8 Polkadot
+fn define_second_pool_call(pool_id: u32, validators: Validators) -> Result<Call, OnetError> {
+    let config = CONFIG.clone();
+    if pool_id == 0 {
+        return Err(OnetError::PoolError(format!(
+            "Nomination Pool ID 2 not defined.",
+        )));
+    }
+
+    let mut top_validators = validators
+        .iter()
+        .filter(|v| v.subset == Subset::TVP && v.para_epochs >= 2 && v.missed_ratio.is_some())
+        .collect::<Vec<&Validator>>();
+
+    if top_validators.len() > 0 {
+        // Sort validators by score for Pool 1
+        top_validators.sort_by(|a, b| b.commission_score.partial_cmp(&a.commission_score).unwrap());
+
+        let max: usize = if top_validators.len() as u32 > config.pools_maximum_nominations {
+            usize::try_from(config.pools_maximum_nominations).unwrap()
+        } else {
+            top_validators.len()
+        };
+
+        top_validators.truncate(max / 2);
+
+        let accounts = top_validators
+            .iter()
+            .map(|v| v.stash.clone())
+            .collect::<Vec<AccountId32>>();
+
+        // Define call
+        let call = Call::NominationPools(NominationPoolsCall::nominate {
+            pool_id: pool_id,
+            validators: accounts,
+        });
+        return Ok(call);
+    }
+    Err(OnetError::PoolError(format!(
+        "Call for nomination pool {} could not be defined since there are No validators to select",
+        pool_id
+    )))
+}
+
+pub async fn cache_pool_data(onet: &Onet, pool_id: u32) -> Result<(), OnetError> {
+    let client = onet.client();
+    let api = client.clone().to_runtime_api::<Api>();
+    let config = CONFIG.clone();
+    let network = Network::load(client).await?;
+
+    // Pool cache filename
+    let filename = format!(
+        "{}{}_{}_{}",
+        config.data_path,
+        POOL_FILENAME,
+        pool_id,
+        config.chain_name.to_lowercase()
+    );
+
+    // Load chain data
+    let BoundedVec(metadata) = api
+        .storage()
+        .nomination_pools()
+        .metadata(&pool_id, None)
+        .await?;
+
+    if let Some(bounded) = api
+        .storage()
+        .nomination_pools()
+        .bonded_pools(&pool_id, None)
+        .await?
+    {
+        let unix_now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap();
+        let pool = Pool {
+            id: pool_id,
+            metadata: str(metadata),
+            member_counter: bounded.member_counter,
+            bonded: format!(
+                "{} {}",
+                bounded.points / 10u128.pow(network.token_decimals as u32),
+                network.token_symbol
+            ),
+            state: format!("{:?}", bounded.state),
+            ts: unix_now.as_secs(),
+        };
+        // Serialize and cache
+        let serialized = serde_json::to_string(&pool)?;
+        fs::write(&filename, serialized)?;
+    }
+
+    Ok(())
+}
+
+// * APR is the annualized average of all targets from the last X eras.
+pub async fn calculate_apr(onet: &Onet, targets: Vec<AccountId32>) -> Result<f64, OnetError> {
+    let client = onet.client();
+    let api = client.clone().to_runtime_api::<Api>();
+    let config = CONFIG.clone();
+
+    // Fetch active era index
+    let current_era_index = match api.storage().staking().active_era(None).await? {
+        Some(active_era_info) => active_era_info.index,
+        None => return Err("Active era not available. Check current API -> api.storage().staking().active_era(None)".into()),
+    };
+
+    let mut total_eras: u128 = 0;
+    let mut total_points: u128 = 0;
+    let mut total_reward: u128 = 0;
+    let mut nominees_total_eras: u128 = 0;
+    let mut nominees_total_points: u128 = 0;
+    let mut nominees_total_stake: u128 = 0;
+    let mut nominees_total_commission: u128 = 0;
+
+    // Collect nominees commission
+    for nominee in targets.iter() {
+        let validator = api.storage().staking().validators(&nominee, None).await?;
+        let Perbill(commission) = validator.commission;
+        nominees_total_commission += commission as u128;
+    }
+
+    // Collect chain data for maximum_history_eras
+    let start_era_index = current_era_index - config.maximum_history_eras;
+    for era_index in start_era_index..current_era_index {
+        let era_reward_points = api
+            .storage()
+            .staking()
+            .eras_reward_points(&era_index, None)
+            .await?;
+        for (stash, points) in era_reward_points.individual.iter() {
+            if targets.contains(stash) {
+                nominees_total_eras += 1;
+                nominees_total_points += *points as u128;
+                let eras_stakers = api
+                    .storage()
+                    .staking()
+                    .eras_stakers(&era_index, &stash, None)
+                    .await?;
+                nominees_total_stake += eras_stakers.total;
+            }
+        }
+        total_points += era_reward_points.total as u128;
+        total_eras += 1;
+
+        if let Some(eras_validator_reward) = api
+            .storage()
+            .staking()
+            .eras_validator_reward(&era_index, None)
+            .await?
+        {
+            total_reward += eras_validator_reward;
+        }
+    }
+
+    debug!(
+        "nominees_total_eras: {} nominees_total_points: {} nominees_total_stake: {}",
+        nominees_total_eras, nominees_total_points, nominees_total_stake
+    );
+    debug!(
+        "total_eras: {} total_points: {} total_reward: {}",
+        total_eras, total_points, total_reward
+    );
+
+    let avg_points_per_nominee_per_era = nominees_total_points / nominees_total_eras;
+    info!(
+        "avg_points_per_nominee_per_era: {}",
+        avg_points_per_nominee_per_era
+    );
+    let avg_stake_per_nominee_per_era = nominees_total_stake / nominees_total_eras;
+    info!(
+        "avg_stake_per_nominee_per_era: {}",
+        avg_stake_per_nominee_per_era
+    );
+    let avg_reward_per_era = total_reward / total_eras;
+    info!("avg_reward_per_era: {}", avg_reward_per_era);
+    let avg_points_per_era = total_points / total_eras;
+    info!("avg_points_per_era: {}", avg_points_per_era);
+
+    let avg_reward_per_nominee_per_era =
+        (avg_points_per_nominee_per_era * avg_reward_per_era) / avg_points_per_era;
+    info!(
+        "avg_reward_per_nominee_per_era: {}",
+        avg_reward_per_nominee_per_era
+    );
+
+    let avg_commission_per_nominee = nominees_total_commission / targets.len() as u128;
+    info!("avg_commission_per_nominee: {}", avg_commission_per_nominee);
+
+    let commission = avg_commission_per_nominee as f64 / 1_000_000_000.0_f64;
+    let apr: f64 = (avg_reward_per_nominee_per_era as f64 * (1.0 - commission))
+        * (1.0 / avg_stake_per_nominee_per_era as f64)
+        * config.eras_per_day as f64
+        * 365.0;
+    info!("apr: {}", apr);
+    Ok(apr)
+}
+
+pub async fn cache_pool_data_nominees(
+    onet: &Onet,
+    pool_id: u32,
+    pool_stash: &str,
+    last_nomination: Option<LastNomination>,
+) -> Result<(), OnetError> {
+    let client = onet.client();
+    let api = client.clone().to_runtime_api::<Api>();
+    let config = CONFIG.clone();
+
+    // Convert pool stash to account
+    let acc = AccountId32::from_str(&pool_stash)?;
+
+    // Pool cache filename
+    let filename = format!(
+        "{}{}_{}_nominees_{}",
+        config.data_path,
+        POOL_FILENAME,
+        pool_id,
+        config.chain_name.to_lowercase()
+    );
+
+    // Load chain data
+    let mut nominees: Vec<Nominee> = Vec::new();
+    if let Some(nominations) = api.storage().staking().nominators(&acc, None).await? {
+        let BoundedVec(targets) = nominations.targets;
+        let apr = calculate_apr(&onet, targets.clone()).await?;
+        for nominee in targets.iter() {
+            // get nominee identity
+            let nominee = Nominee {
+                stash: nominee.to_string(),
+                identity: get_display_name(&onet, &nominee, None).await?,
+            };
+            nominees.push(nominee);
+        }
+
+        let unix_now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap();
+
+        let pool_nominees = PoolNominees {
+            id: pool_id,
+            nominees,
+            apr,
+            last_nomination,
+            ts: unix_now.as_secs(),
+        };
+        // Serialize and cache
+        let serialized = serde_json::to_string(&pool_nominees)?;
+        fs::write(&filename, serialized)?;
+    }
+
+    Ok(())
+}
+
+async fn try_run_nomination_pools(
+    onet: &Onet,
+    validators: Validators,
+) -> Result<String, OnetError> {
+    let config = CONFIG.clone();
+    let client = onet.client();
+    let api = client.clone().to_runtime_api::<Api>();
+
+    // Load nominator seed account
+    let seed = fs::read_to_string(config.pools_nominator_seed_path)
+        .expect("Something went wrong reading the pool nominator seed file");
+    let seed_account: sr25519::Pair = get_from_seed(&seed, None);
+    let signer = PairSigner::<DefaultConfig, sr25519::Pair>::new(seed_account);
+
+    // create a batch call to nominate both pools
+    let mut calls: Vec<Call> = vec![];
+
+    // Define calls to be included in the batch
+    let call = define_first_pool_call(config.pool_id_1, validators.clone())?;
+    calls.push(call);
+    let call = define_second_pool_call(config.pool_id_2, validators.clone())?;
+    calls.push(call);
+
+    if calls.len() > 0 {
+        // Submit batch call with nominations
+        let response = api
+            .tx()
+            .utility()
+            .batch(calls)?
+            .sign_and_submit_then_watch_default(&signer)
+            .await?
+            .wait_for_finalized()
+            .await?;
+
+        let tx_events = response.fetch_events().await?;
+
+        // Get block number
+        let block_number =
+            if let Some(header) = client.rpc().header(Some(tx_events.block_hash())).await? {
+                header.number
+            } else {
+                0
+            };
+
+        let failed_event = tx_events.find_first::<ExtrinsicFailed>()?;
+
+        if let Some(ev) = failed_event {
+            return Err(OnetError::PoolError(format!(
+                "Nomination for pools <i>{}</i> and <i>{}</i> failed at block #{} with event: {:?}",
+                config.pool_id_1, config.pool_id_2, block_number, ev
+            )));
+        } else {
+            let explorer_url = format!(
+                "https://{}.subscan.io/extrinsic/{:?}",
+                config.chain_name.to_lowercase(),
+                tx_events.extrinsic_hash()
+            );
+            let message = format!(
+                "🗳️ Nomination for pools <i>{}</i> and <i>{}</i> finalized at block #{} (<a href=\"{}\">{}</a>)",
+                config.pool_id_1,
+                config.pool_id_2,
+                block_number,
+                explorer_url,
+                tx_events.extrinsic_hash().to_string()
+            );
+            // Cache nominees
+            let unix_now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap();
+            let last_nomination = LastNomination {
+                block_number,
+                extrinsic_hash: tx_events.extrinsic_hash(),
+                ts: unix_now.as_secs(),
+            };
+            cache_pool_data_nominees(
+                &onet,
+                config.pool_id_1,
+                &config.pool_stash_1,
+                Some(last_nomination.clone()),
+            )
+            .await?;
+            cache_pool_data_nominees(
+                &onet,
+                config.pool_id_2,
+                &config.pool_stash_2,
+                Some(last_nomination),
+            )
+            .await?;
+            return Ok(message);
+        }
+    }
+    Err(OnetError::PoolError(
+        format!("Nomination for pools <i>{}</i> and <i>{}</i> failed since there are No calls for the batch call nomination.", config.pool_id_1,
+        config.pool_id_2,),
+    ))
 }
 
 async fn verify_oversubscribed(
