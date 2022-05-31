@@ -1437,6 +1437,7 @@ pub async fn calculate_apr(onet: &Onet, targets: Vec<AccountId32>) -> Result<f64
 
 pub async fn cache_pool_data_nominees(
     onet: &Onet,
+    records: &Records,
     pool_id: u32,
     pool_stash: &str,
     last_nomination: Option<LastNomination>,
@@ -1479,6 +1480,7 @@ pub async fn cache_pool_data_nominees(
             id: pool_id,
             nominees,
             apr,
+            sessions_counter: records.total_full_epochs(),
             last_nomination,
             ts: unix_now.as_secs(),
         };
@@ -1563,11 +1565,11 @@ async fn try_run_nomination_pools(
             let last_nomination = LastNomination {
                 block_number,
                 extrinsic_hash: tx_events.extrinsic_hash(),
-                sessions_counter: records.total_full_epochs(),
                 ts: unix_now.as_secs(),
             };
             cache_pool_data_nominees(
                 &onet,
+                &records,
                 config.pool_id_1,
                 &config.pool_stash_1,
                 Some(last_nomination.clone()),
@@ -1575,6 +1577,7 @@ async fn try_run_nomination_pools(
             .await?;
             cache_pool_data_nominees(
                 &onet,
+                &records,
                 config.pool_id_2,
                 &config.pool_stash_2,
                 Some(last_nomination),

@@ -308,8 +308,6 @@ pub struct LastNomination {
     #[serde(default)]
     pub extrinsic_hash: H256,
     #[serde(default)]
-    pub sessions_counter: u32,
-    #[serde(default)]
     pub ts: u64,
 }
 
@@ -321,6 +319,8 @@ pub struct PoolNominees {
     pub nominees: Vec<Nominee>,
     #[serde(default)]
     pub apr: f64,
+    #[serde(default)]
+    pub sessions_counter: u32,
     #[serde(default)]
     pub last_nomination: Option<LastNomination>,
     #[serde(default)]
