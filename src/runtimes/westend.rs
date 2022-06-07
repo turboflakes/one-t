@@ -1699,5 +1699,5 @@ fn parse_identity_data(data: Data) -> String {
 }
 
 fn str(bytes: Vec<u8>) -> String {
-    format!("{}", String::from_utf8(bytes).expect("Identity not utf-8"))
+    format!("{}", String::from_utf8_lossy(&bytes))
 }
