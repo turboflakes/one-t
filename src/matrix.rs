@@ -42,7 +42,6 @@ use url::form_urlencoded::byte_serialize;
 const MATRIX_URL: &str = "https://matrix.org/_matrix/client/r0";
 const MATRIX_MEDIA_URL: &str = "https://matrix.org/_matrix/media/r0";
 const MATRIX_BOT_NAME: &str = "ONE-T";
-const MATRIX_NEXT_BATCH_FILENAME: &str = ".next_batch";
 const MATRIX_NEXT_TOKEN_FILENAME: &str = ".next_token";
 pub const MATRIX_SUBSCRIBERS_FILENAME: &str = ".subscribers";
 
@@ -1047,7 +1046,12 @@ impl Matrix {
                             }
                         }
                         // Cache next token
-                        fs::write(&next_token_filename, events.end)?;
+                        let next_token = if events.end == "" {
+                            events.start
+                        } else {
+                            events.end
+                        };
+                        fs::write(&next_token_filename, next_token)?;
                         Ok(Some(commands))
                     }
                     _ => {
@@ -1109,7 +1113,12 @@ impl Matrix {
                             }
                         }
                         // Cache next token
-                        fs::write(&next_token_filename, events.end)?;
+                        let next_token = if events.end == "" {
+                            events.start
+                        } else {
+                            events.end
+                        };
+                        fs::write(&next_token_filename, next_token)?;
                         Ok(Some(members))
                     }
                     _ => {
