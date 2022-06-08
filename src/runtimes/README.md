@@ -19,5 +19,6 @@ Generate runtime API client code from metadata.
 
 ```bash
 subxt codegen -f polkadot_metadata.scale | rustfmt --edition=2018 --emit=stdout > polkadot_runtime.rs
+subxt codegen -f kusama_metadata.scale | rustfmt --edition=2018 --emit=stdout > kusama_runtime.rs
 subxt codegen -f westend_metadata.scale | rustfmt --edition=2018 --emit=stdout > westend_runtime.rs
 ```

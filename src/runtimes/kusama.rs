@@ -25,9 +25,9 @@ use crate::matrix::FileInfo;
 use crate::onet::ReportType;
 use crate::onet::{
     get_account_id_from_storage_key, get_from_seed, get_subscribers, get_subscribers_by_epoch,
-    try_fetch_stashes_from_remote_url, LastNomination, Nominee, Onet, Pool, PoolNominees,
-    EPOCH_FILENAME, POOL_FILENAME,
+    try_fetch_stashes_from_remote_url, Onet, EPOCH_FILENAME,
 };
+use crate::pools::{LastNomination, Nominee, Pool, PoolNominees, PoolsEra};
 use crate::records::{
     decode_authority_index, AuthorityIndex, AuthorityRecord, EpochIndex, EpochKey, EraIndex,
     ParaId, ParaRecord, ParaStats, Points, Records, Subscribers, Votes,
@@ -1281,20 +1281,10 @@ fn define_second_pool_call(pool_id: u32, validators: Validators) -> Result<Call,
     )))
 }
 
-pub async fn cache_pool_data(onet: &Onet, pool_id: u32) -> Result<(), OnetError> {
+pub async fn fetch_pool_data(onet: &Onet, pool_id: u32) -> Result<Option<Pool>, OnetError> {
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
-    let config = CONFIG.clone();
     let network = Network::load(client).await?;
-
-    // Pool cache filename
-    let filename = format!(
-        "{}{}_{}_{}",
-        config.data_path,
-        POOL_FILENAME,
-        pool_id,
-        config.chain_name.to_lowercase()
-    );
 
     // Load chain data
     let BoundedVec(metadata) = api
@@ -1322,11 +1312,18 @@ pub async fn cache_pool_data(onet: &Onet, pool_id: u32) -> Result<(), OnetError>
                 network.token_symbol
             ),
             state: format!("{:?}", bounded.state),
+            nominees: None,
             ts: unix_now.as_secs(),
         };
-        // Serialize and cache
-        let serialized = serde_json::to_string(&pool)?;
-        fs::write(&filename, serialized)?;
+        return Ok(Some(pool));
+    }
+
+    Ok(None)
+}
+
+pub async fn cache_pool_data(onet: &Onet, pool_id: u32) -> Result<(), OnetError> {
+    if let Some(pool) = fetch_pool_data(&onet, pool_id).await? {
+        pool.cache()?;
     }
 
     Ok(())
@@ -1401,93 +1398,114 @@ pub async fn calculate_apr(onet: &Onet, targets: Vec<AccountId32>) -> Result<f64
         total_eras, total_points, total_reward
     );
 
-    let avg_points_per_nominee_per_era = nominees_total_points / nominees_total_eras;
-    info!(
-        "avg_points_per_nominee_per_era: {}",
-        avg_points_per_nominee_per_era
-    );
-    let avg_stake_per_nominee_per_era = nominees_total_stake / nominees_total_eras;
-    info!(
-        "avg_stake_per_nominee_per_era: {}",
-        avg_stake_per_nominee_per_era
-    );
-    let avg_reward_per_era = total_reward / total_eras;
-    info!("avg_reward_per_era: {}", avg_reward_per_era);
-    let avg_points_per_era = total_points / total_eras;
-    info!("avg_points_per_era: {}", avg_points_per_era);
+    if nominees_total_eras > 0 {
+        let avg_points_per_nominee_per_era = nominees_total_points / nominees_total_eras;
+        info!(
+            "avg_points_per_nominee_per_era: {}",
+            avg_points_per_nominee_per_era
+        );
+        let avg_stake_per_nominee_per_era = nominees_total_stake / nominees_total_eras;
+        info!(
+            "avg_stake_per_nominee_per_era: {}",
+            avg_stake_per_nominee_per_era
+        );
+        let avg_reward_per_era = total_reward / total_eras;
+        info!("avg_reward_per_era: {}", avg_reward_per_era);
+        let avg_points_per_era = total_points / total_eras;
+        info!("avg_points_per_era: {}", avg_points_per_era);
 
-    let avg_reward_per_nominee_per_era =
-        (avg_points_per_nominee_per_era * avg_reward_per_era) / avg_points_per_era;
-    info!(
-        "avg_reward_per_nominee_per_era: {}",
-        avg_reward_per_nominee_per_era
-    );
+        let avg_reward_per_nominee_per_era =
+            (avg_points_per_nominee_per_era * avg_reward_per_era) / avg_points_per_era;
+        info!(
+            "avg_reward_per_nominee_per_era: {}",
+            avg_reward_per_nominee_per_era
+        );
 
-    let avg_commission_per_nominee = nominees_total_commission / targets.len() as u128;
-    info!("avg_commission_per_nominee: {}", avg_commission_per_nominee);
+        let avg_commission_per_nominee = nominees_total_commission / targets.len() as u128;
+        info!("avg_commission_per_nominee: {}", avg_commission_per_nominee);
 
-    let commission = avg_commission_per_nominee as f64 / 1_000_000_000.0_f64;
-    let apr: f64 = (avg_reward_per_nominee_per_era as f64 * (1.0 - commission))
-        * (1.0 / avg_stake_per_nominee_per_era as f64)
-        * config.eras_per_day as f64
-        * 365.0;
-    info!("apr: {}", apr);
-    Ok(apr)
+        let commission = avg_commission_per_nominee as f64 / 1_000_000_000.0_f64;
+        let apr: f64 = (avg_reward_per_nominee_per_era as f64 * (1.0 - commission))
+            * (1.0 / avg_stake_per_nominee_per_era as f64)
+            * config.eras_per_day as f64
+            * 365.0;
+        info!("apr: {}", apr);
+        Ok(apr)
+    } else {
+        Ok(0.0_f64)
+    }
 }
 
-pub async fn cache_pool_data_nominees(
+pub async fn cache_pools_era(
     onet: &Onet,
     records: &Records,
-    pool_id: u32,
-    pool_stash: &str,
     last_nomination: Option<LastNomination>,
 ) -> Result<(), OnetError> {
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
     let config = CONFIG.clone();
 
-    // Convert pool stash to account
-    let acc = AccountId32::from_str(&pool_stash)?;
+    // Pools Eras
+    let mut pools_era = PoolsEra::with_era(records.current_era() - 1);
 
-    // Pool cache filename
-    let filename = format!(
-        "{}{}_{}_nominees_{}",
-        config.data_path,
-        POOL_FILENAME,
-        pool_id,
-        config.chain_name.to_lowercase()
-    );
+    // Load pools stash accounts
+    let mut pools = api
+        .storage()
+        .nomination_pools()
+        .reverse_pool_id_lookup_iter(None)
+        .await?;
 
-    // Load chain data
-    let mut nominees: Vec<Nominee> = Vec::new();
-    if let Some(nominations) = api.storage().staking().nominators(&acc, None).await? {
-        let BoundedVec(targets) = nominations.targets;
-        let apr = calculate_apr(&onet, targets.clone()).await?;
-        for nominee in targets.iter() {
-            // get nominee identity
-            let nominee = Nominee {
-                stash: nominee.to_string(),
-                identity: get_display_name(&onet, &nominee, None).await?,
-            };
-            nominees.push(nominee);
+    while let Some((key, pool_id)) = pools.next().await? {
+        let pool_stash = get_account_id_from_storage_key(key);
+
+        // Load chain data
+        // if let Some(nominations) = api.storage().staking().nominators(&acc, None).await? {
+        if let Some(nominations) = api
+            .storage()
+            .staking()
+            .nominators(&pool_stash, None)
+            .await?
+        {
+            // Fetch pool data
+            if let Some(pool) = fetch_pool_data(&onet, pool_id).await? {
+                let mut pool = pool.clone();
+                let mut nominees: Vec<Nominee> = Vec::new();
+                let BoundedVec(targets) = nominations.targets;
+                info!("Calculate APR for pool id: {}", pool_id);
+                let apr = calculate_apr(&onet, targets.clone()).await?;
+
+                for nominee in targets.iter() {
+                    // get nominee identity
+                    let nominee = Nominee {
+                        stash: nominee.to_string(),
+                        identity: get_display_name(&onet, &nominee, None).await?,
+                    };
+                    nominees.push(nominee);
+                }
+                let unix_now = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap();
+                let mut pool_nominees = PoolNominees {
+                    id: pool_id,
+                    nominees,
+                    apr,
+                    last_nomination: None,
+                    ts: unix_now.as_secs(),
+                };
+
+                // Cache if one of the config pools
+                if pool_id == config.pool_id_1 || pool_id == config.pool_id_2 {
+                    // Cache pool nominees
+                    pool_nominees.last_nomination = last_nomination.clone();
+                    pool_nominees.cache()?;
+                }
+                pool.nominees = Some(pool_nominees);
+                pools_era.pools.push(pool);
+            }
         }
-
-        let unix_now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap();
-
-        let pool_nominees = PoolNominees {
-            id: pool_id,
-            nominees,
-            apr,
-            sessions_counter: records.total_full_epochs(),
-            last_nomination,
-            ts: unix_now.as_secs(),
-        };
-        // Serialize and cache
-        let serialized = serde_json::to_string(&pool_nominees)?;
-        fs::write(&filename, serialized)?;
     }
+    // Serialize and cache
+    pools_era.cache()?;
 
     Ok(())
 }
@@ -1558,31 +1576,17 @@ async fn try_run_nomination_pools(
                 explorer_url,
                 tx_events.extrinsic_hash().to_string()
             );
-            // Cache nominees
+            // Cache all pools nominees APR
             let unix_now = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap();
             let last_nomination = LastNomination {
+                sessions_counter: records.total_full_epochs(),
                 block_number,
                 extrinsic_hash: tx_events.extrinsic_hash(),
                 ts: unix_now.as_secs(),
             };
-            cache_pool_data_nominees(
-                &onet,
-                &records,
-                config.pool_id_1,
-                &config.pool_stash_1,
-                Some(last_nomination.clone()),
-            )
-            .await?;
-            cache_pool_data_nominees(
-                &onet,
-                &records,
-                config.pool_id_2,
-                &config.pool_stash_2,
-                Some(last_nomination),
-            )
-            .await?;
+            cache_pools_era(&onet, &records, Some(last_nomination)).await?;
             return Ok(message);
         }
     }

@@ -42,14 +42,13 @@ use std::{
     thread, time,
 };
 use subxt::{
-    sp_core::{crypto, sr25519, storage::StorageKey, Pair, H256},
+    sp_core::{crypto, sr25519, storage::StorageKey, Pair},
     sp_runtime::AccountId32,
     Client, ClientBuilder, DefaultConfig,
 };
 
 const TVP_VALIDATORS_FILENAME: &str = ".tvp";
 pub const EPOCH_FILENAME: &str = ".epoch";
-pub const POOL_FILENAME: &str = ".pool";
 
 type Message = Vec<String>;
 
@@ -275,56 +274,6 @@ struct Validity {
     valid: bool,
     #[serde(default)]
     r#type: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Pool {
-    #[serde(default)]
-    pub id: u32,
-    #[serde(default)]
-    pub metadata: String,
-    #[serde(default)]
-    pub bonded: String,
-    #[serde(default)]
-    pub member_counter: u32,
-    #[serde(default)]
-    pub state: String,
-    #[serde(default)]
-    pub ts: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Nominee {
-    #[serde(default)]
-    pub stash: String,
-    #[serde(default)]
-    pub identity: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct LastNomination {
-    #[serde(default)]
-    pub block_number: u32,
-    #[serde(default)]
-    pub extrinsic_hash: H256,
-    #[serde(default)]
-    pub ts: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PoolNominees {
-    #[serde(default)]
-    pub id: u32,
-    #[serde(default)]
-    pub nominees: Vec<Nominee>,
-    #[serde(default)]
-    pub apr: f64,
-    #[serde(default)]
-    pub sessions_counter: u32,
-    #[serde(default)]
-    pub last_nomination: Option<LastNomination>,
-    #[serde(default)]
-    pub ts: u64,
 }
 
 fn read_tvp_cached_filename(filename: &str) -> Result<Vec<Validator>, OnetError> {

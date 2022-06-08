@@ -24,6 +24,7 @@ mod config;
 mod errors;
 mod matrix;
 mod onet;
+mod pools;
 mod records;
 mod report;
 mod runtimes;
