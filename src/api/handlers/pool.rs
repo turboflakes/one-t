@@ -130,7 +130,7 @@ pub async fn get_pool_nomination(id: Path<u32>) -> Result<Json<PoolNominationRes
     }
 
     let filename = format!(
-        "{}{}_{}_nominees_{}",
+        "{}{}_{}_nomination_{}",
         config.data_path,
         POOL_FILENAME,
         *id,
