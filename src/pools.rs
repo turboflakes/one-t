@@ -74,7 +74,9 @@ pub struct Nominee {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct LastNomination {
+pub struct PoolNomination {
+    #[serde(default)]
+    pub id: u32,
     #[serde(default)]
     pub sessions_counter: u32,
     #[serde(default)]
@@ -85,14 +87,15 @@ pub struct LastNomination {
     pub ts: u64,
 }
 
-impl LastNomination {
+impl PoolNomination {
     pub fn cache(&self) -> Result<(), OnetError> {
         let config = CONFIG.clone();
         // Pool cache filename
         let filename = format!(
-            "{}{}_last_nomination_{}",
+            "{}{}_{}_nomination_{}",
             config.data_path,
             POOL_FILENAME,
+            self.id,
             config.chain_name.to_lowercase()
         );
         // Serialize and cache

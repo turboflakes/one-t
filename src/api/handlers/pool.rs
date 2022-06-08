@@ -22,7 +22,7 @@
 use crate::api::helpers::respond_json;
 use crate::config::CONFIG;
 use crate::errors::ApiError;
-use crate::pools::{LastNomination, Pool, PoolNominees, PoolsEra, POOL_FILENAME};
+use crate::pools::{Pool, PoolNomination, PoolNominees, PoolsEra, POOL_FILENAME};
 use actix_web::web::{Json, Path};
 use std::{fs, path, result::Result};
 
@@ -117,15 +117,23 @@ pub async fn get_pools_stats() -> Result<Json<PoolsStatsResponse>, ApiError> {
     respond_json(pools_stats.into())
 }
 
-type LastNominationResponse = LastNomination;
+type PoolNominationResponse = PoolNomination;
 
-pub async fn get_last_nomination() -> Result<Json<LastNominationResponse>, ApiError> {
+pub async fn get_pool_nomination(id: Path<u32>) -> Result<Json<PoolNominationResponse>, ApiError> {
     let config = CONFIG.clone();
 
+    if *id != config.pool_id_1 && *id != config.pool_id_2 {
+        return Err(ApiError::NotFound(format!(
+            "Pool with ID: {} not found.",
+            *id
+        )));
+    }
+
     let filename = format!(
-        "{}{}_last_nomination_{}",
+        "{}{}_{}_nominees_{}",
         config.data_path,
         POOL_FILENAME,
+        *id,
         config.chain_name.to_lowercase()
     );
 
@@ -138,6 +146,6 @@ pub async fn get_last_nomination() -> Result<Json<LastNominationResponse>, ApiEr
     }
 
     let serialized = fs::read_to_string(filename)?;
-    let last_nomination: LastNomination = serde_json::from_str(&serialized).unwrap();
-    respond_json(last_nomination.into())
+    let pool_nomination: PoolNomination = serde_json::from_str(&serialized).unwrap();
+    respond_json(pool_nomination.into())
 }

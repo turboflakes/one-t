@@ -83,6 +83,7 @@ pub enum ReportType {
     Parachains,
     Validator,
     Insights,
+    NominationPools,
 }
 
 impl ReportType {
@@ -92,6 +93,7 @@ impl ReportType {
             Self::Parachains => "Parachains Performance Report".to_string(),
             Self::Validator => "Validator Performance Report".to_string(),
             Self::Insights => "Validators Performance Insights Report".to_string(),
+            Self::NominationPools => "Nomination Pools Report".to_string(),
         }
     }
 }
@@ -103,6 +105,7 @@ impl std::fmt::Display for ReportType {
             Self::Parachains => write!(f, "Parachains"),
             Self::Validator => write!(f, "Validator"),
             Self::Insights => write!(f, "Insights"),
+            Self::NominationPools => write!(f, "Pools"),
         }
     }
 }

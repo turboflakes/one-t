@@ -204,11 +204,7 @@ pub struct Config {
     #[serde(default)]
     pub pool_id_1: u32,
     #[serde(default)]
-    pub pool_stash_1: String,
-    #[serde(default)]
     pub pool_id_2: u32,
-    #[serde(default)]
-    pub pool_stash_2: String,
     #[serde(default = "default_pools_nominator_seed_path")]
     pub pools_nominator_seed_path: String,
     #[serde(default = "default_pools_nominate_rate")]

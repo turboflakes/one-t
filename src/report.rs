@@ -223,6 +223,15 @@ pub struct RawDataParachains {
     pub parachains: Vec<(ParaId, ParaStats)>,
 }
 
+#[derive(Debug)]
+pub struct RawDataPools {
+    pub network: Network,
+    pub meta: Metadata,
+    pub report_type: ReportType,
+    pub onet_pools: Vec<(u32, String, f64)>,
+    pub pools_avg_apr: f64,
+}
+
 type Body = Vec<String>;
 
 pub struct Report {
@@ -888,6 +897,77 @@ impl From<RawData> for Report {
 
         // --- Specific report sections here [END] ---|
 
+        report.add_raw_text("——".into());
+        report.add_raw_text(format!(
+            "<code>{} v{}</code>",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION")
+        ));
+        report.add_break();
+
+        // Log report
+        report.log();
+
+        report
+    }
+}
+
+impl From<RawDataPools> for Report {
+    /// Converts a ONE-T `RawData` into a [`Report`].
+    fn from(data: RawDataPools) -> Report {
+        let config = CONFIG.clone();
+        let mut report = Report::new();
+
+        // --- Specific report here [START] -->
+
+        // Network info
+        report.add_break();
+        report.add_raw_text(format!(
+            "🎱 Nomination Pools Report → <b>{} // {}</b>",
+            data.network.name, data.meta.active_era_index,
+        ));
+        report.add_raw_text(format!(
+            "<i>At the present era the average APR for all nomination pools is {:.2}%</i>",
+            ((data.pools_avg_apr * 10000.0).round() / 10000.0) * 100.0,
+        ));
+        report.add_break();
+
+        // Calculate onet pools average APR
+        let total = data.onet_pools.iter().count();
+        let aprs: Vec<f64> = data
+            .onet_pools
+            .iter()
+            .map(|(_, _, apr)| apr.clone())
+            .collect();
+        let onet_pools_avg_apr = aprs.iter().sum::<f64>() / total as f64;
+
+        report.add_raw_text(format!(
+            "ONE-T Nomination pools have an average APR of {}:",
+            ((onet_pools_avg_apr * 10000.0).round() / 10000.0) * 100.0,
+        ));
+        for (pool_id, pool_metadata, pool_apr) in data.onet_pools.iter() {
+            report.add_raw_text(format!(
+                "‣ {} (Pool Id {}): <b>{} {:.2}% APR</b>",
+                pool_metadata,
+                pool_id,
+                trend(*pool_apr, data.pools_avg_apr),
+                ((pool_apr * 10000.0).round() / 10000.0) * 100.0,
+            ));
+        }
+
+        report.add_break();
+        report.add_raw_text(format!(
+            "<i>APR calculation: Nomination pool APR is based on the average APR for all the pool nominees for the last {} eras.</i>",
+            config.maximum_history_eras,
+        ));
+
+        report.add_break();
+        report.add_raw_text(format!(
+            "➕ Join ONE-T Nomination Pools here → <a href=\"https://one-t.turboflakes.io\">one-t.turboflakes.io</a>",
+        ));
+
+        // --- Specific report sections here [END] ---|
+        report.add_break();
         report.add_raw_text("——".into());
         report.add_raw_text(format!(
             "<code>{} v{}</code>",
