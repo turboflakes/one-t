@@ -85,6 +85,24 @@ pub struct LastNomination {
     pub ts: u64,
 }
 
+impl LastNomination {
+    pub fn cache(&self) -> Result<(), OnetError> {
+        let config = CONFIG.clone();
+        // Pool cache filename
+        let filename = format!(
+            "{}{}_last_nomination_{}",
+            config.data_path,
+            POOL_FILENAME,
+            config.chain_name.to_lowercase()
+        );
+        // Serialize and cache
+        let serialized = serde_json::to_string(&self)?;
+        fs::write(&filename, serialized)?;
+
+        Ok(())
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PoolNominees {
     #[serde(default)]
@@ -93,8 +111,6 @@ pub struct PoolNominees {
     pub nominees: Vec<Nominee>,
     #[serde(default)]
     pub apr: f64,
-    #[serde(default)]
-    pub last_nomination: Option<LastNomination>,
     #[serde(default)]
     pub ts: u64,
 }

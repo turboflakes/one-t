@@ -22,7 +22,7 @@
 use crate::api::handlers::{
     health::get_health,
     info::get_info,
-    pool::{get_pool, get_pool_nominees, get_pools_stats},
+    pool::{get_last_nomination, get_pool, get_pool_nominees, get_pools_stats},
 };
 use actix_web::web;
 
@@ -41,9 +41,13 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
                 // POOL routes
                 .service(
                     web::scope("/pool")
-                        .route("/", web::get().to(get_pools_stats))
+                        .route("", web::get().to(get_pools_stats))
                         .route("/{id}", web::get().to(get_pool))
                         .route("/{id}/nominees", web::get().to(get_pool_nominees)),
+                )
+                // LAST Nomination route
+                .service(
+                    web::scope("/last_nomination").route("", web::get().to(get_last_nomination)),
                 ),
         );
 }

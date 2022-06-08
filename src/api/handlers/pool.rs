@@ -22,7 +22,7 @@
 use crate::api::helpers::respond_json;
 use crate::config::CONFIG;
 use crate::errors::ApiError;
-use crate::pools::{Pool, PoolNominees, PoolsEra, POOL_FILENAME};
+use crate::pools::{LastNomination, Pool, PoolNominees, PoolsEra, POOL_FILENAME};
 use actix_web::web::{Json, Path};
 use std::{fs, path, result::Result};
 
@@ -115,4 +115,29 @@ pub async fn get_pools_stats() -> Result<Json<PoolsStatsResponse>, ApiError> {
     let serialized = fs::read_to_string(filename)?;
     let pools_stats: PoolsEra = serde_json::from_str(&serialized).unwrap();
     respond_json(pools_stats.into())
+}
+
+type LastNominationResponse = LastNomination;
+
+pub async fn get_last_nomination() -> Result<Json<LastNominationResponse>, ApiError> {
+    let config = CONFIG.clone();
+
+    let filename = format!(
+        "{}{}_last_nomination_{}",
+        config.data_path,
+        POOL_FILENAME,
+        config.chain_name.to_lowercase()
+    );
+
+    // Try to read from cached file
+    if !path::Path::new(&filename).exists() {
+        return Err(ApiError::InternalServerError(format!(
+            "Cache ({}) is not available.",
+            filename
+        )));
+    }
+
+    let serialized = fs::read_to_string(filename)?;
+    let last_nomination: LastNomination = serde_json::from_str(&serialized).unwrap();
+    respond_json(last_nomination.into())
 }

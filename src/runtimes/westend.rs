@@ -1176,6 +1176,8 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             );
                 }
             }
+            // Cache pools APR per era
+            cache_pools_era(&onet, active_era_index - 1).await?;
         }
     } else {
         let message = format!(
@@ -1436,17 +1438,13 @@ pub async fn calculate_apr(onet: &Onet, targets: Vec<AccountId32>) -> Result<f64
     }
 }
 
-pub async fn cache_pools_era(
-    onet: &Onet,
-    records: &Records,
-    last_nomination: Option<LastNomination>,
-) -> Result<(), OnetError> {
+pub async fn cache_pools_era(onet: &Onet, era_index: EraIndex) -> Result<(), OnetError> {
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
     let config = CONFIG.clone();
 
     // Pools Eras
-    let mut pools_era = PoolsEra::with_era(records.current_era() - 1);
+    let mut pools_era = PoolsEra::with_era(era_index);
 
     // Load pools stash accounts
     let mut pools = api
@@ -1489,14 +1487,11 @@ pub async fn cache_pools_era(
                     id: pool_id,
                     nominees,
                     apr,
-                    last_nomination: None,
                     ts: unix_now.as_secs(),
                 };
 
                 // Cache if one of the config pools
                 if pool_id == config.pool_id_1 || pool_id == config.pool_id_2 {
-                    // Cache pool nominees
-                    pool_nominees.last_nomination = last_nomination.clone();
                     pool_nominees.cache()?;
                 }
                 pool.nominees = Some(pool_nominees);
@@ -1569,12 +1564,13 @@ async fn try_run_nomination_pools(
                 tx_events.extrinsic_hash()
             );
             let message = format!(
-                "🗳️ Nomination for pools <i>{}</i> and <i>{}</i> finalized at block #{} (<a href=\"{}\">{}</a>)",
+                "🗳️ Nomination for pools <i>{}</i> and <i>{}</i> finalized at block #{} (<a href=\"{}\">{}</a>) → Join ONE-T pools <a href=\"https://one-t.turboflakes.io/#/{}\">one-t.turboflakes.io</a>",
                 config.pool_id_1,
                 config.pool_id_2,
                 block_number,
                 explorer_url,
-                tx_events.extrinsic_hash().to_string()
+                tx_events.extrinsic_hash().to_string(),
+                config.chain_name.to_lowercase(),
             );
             // Cache all pools nominees APR
             let unix_now = SystemTime::now()
@@ -1586,7 +1582,7 @@ async fn try_run_nomination_pools(
                 extrinsic_hash: tx_events.extrinsic_hash(),
                 ts: unix_now.as_secs(),
             };
-            cache_pools_era(&onet, &records, Some(last_nomination)).await?;
+            last_nomination.cache();
             return Ok(message);
         }
     }
