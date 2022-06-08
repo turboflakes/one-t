@@ -92,13 +92,13 @@ pub async fn get_pool_nominees(id: Path<u32>) -> Result<Json<PoolNomineesRespons
     respond_json(pool_nominees.into())
 }
 
-type PoolsStatsResponse = PoolsEra;
+type PoolsEraResponse = PoolsEra;
 
-pub async fn get_pools_stats() -> Result<Json<PoolsStatsResponse>, ApiError> {
+pub async fn get_pools_stats() -> Result<Json<PoolsEraResponse>, ApiError> {
     let config = CONFIG.clone();
 
     let filename = format!(
-        "{}{}_stats_{}",
+        "{}{}s_era_{}",
         config.data_path,
         POOL_FILENAME,
         config.chain_name.to_lowercase()
@@ -113,8 +113,8 @@ pub async fn get_pools_stats() -> Result<Json<PoolsStatsResponse>, ApiError> {
     }
 
     let serialized = fs::read_to_string(filename)?;
-    let pools_stats: PoolsEra = serde_json::from_str(&serialized).unwrap();
-    respond_json(pools_stats.into())
+    let pools_era: PoolsEra = serde_json::from_str(&serialized).unwrap();
+    respond_json(pools_era.into())
 }
 
 type PoolNominationResponse = PoolNomination;

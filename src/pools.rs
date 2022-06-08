@@ -162,7 +162,7 @@ impl PoolsEra {
     pub fn cache(&self) -> Result<(), OnetError> {
         let config = CONFIG.clone();
         let filename = format!(
-            "{}{}s_stats_era_{}_{}",
+            "{}{}s_era_{}_{}",
             config.data_path,
             POOL_FILENAME,
             self.era,
@@ -174,7 +174,7 @@ impl PoolsEra {
 
         // Cache as previous era
         let filename = format!(
-            "{}{}s_stats_{}",
+            "{}{}s_era_{}",
             config.data_path,
             POOL_FILENAME,
             config.chain_name.to_lowercase()
