@@ -927,7 +927,7 @@ impl From<RawDataPools> for Report {
             data.network.name, data.meta.active_era_index,
         ));
         report.add_raw_text(format!(
-            "<i>At the present era the average APR for all nomination pools is {:.2}%</i>",
+            "<i>At the present era the average APR¹ from all nomination pools is {:.2}%</i>",
             ((data.pools_avg_apr * 10000.0).round() / 10000.0) * 100.0,
         ));
         report.add_break();
@@ -942,7 +942,7 @@ impl From<RawDataPools> for Report {
         let onet_pools_avg_apr = aprs.iter().sum::<f64>() / total as f64;
 
         report.add_raw_text(format!(
-            "For the current set of nominees, ONE-T Nomination pools, offer {:.2}% APR:",
+            "For the current set of nominees, ONE-T Nomination pools, present {:.2}% APR:",
             ((onet_pools_avg_apr * 10000.0).round() / 10000.0) * 100.0,
         ));
         for (pool_id, pool_metadata, pool_apr) in data.onet_pools.iter() {
@@ -957,7 +957,7 @@ impl From<RawDataPools> for Report {
 
         report.add_break();
         report.add_raw_text(format!(
-            "<i>APR calculation: Nomination pool APR is based on the average APR for all the pool nominees for the last {} eras.</i>",
+            "<i>¹ Nomination pool APR is based on the average APR of all the pool nominees from the last {} eras, minus the respective validators commission.</i>",
             config.maximum_history_eras,
         ));
 
