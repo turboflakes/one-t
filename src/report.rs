@@ -942,12 +942,12 @@ impl From<RawDataPools> for Report {
         let onet_pools_avg_apr = aprs.iter().sum::<f64>() / total as f64;
 
         report.add_raw_text(format!(
-            "ONE-T Nomination pools have an average APR of {}:",
+            "For the current set of nominees, ONE-T Nomination pools, offer {:.2}% APR:",
             ((onet_pools_avg_apr * 10000.0).round() / 10000.0) * 100.0,
         ));
         for (pool_id, pool_metadata, pool_apr) in data.onet_pools.iter() {
             report.add_raw_text(format!(
-                "‣ {} (Pool Id {}): <b>{} {:.2}% APR</b>",
+                "‣ {} (Pool {}): <b>{} {:.2}% APR</b>",
                 pool_metadata,
                 pool_id,
                 trend(*pool_apr, data.pools_avg_apr),
