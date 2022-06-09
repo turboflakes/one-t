@@ -1177,9 +1177,12 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                         config.pools_minimum_sessions
                     );
                 }
+                // Cache pools APR and send message
+                try_run_cache_pools_era(active_era_index, true).await?;
+            } else {
+                // Only cache pools APR. No need to send message if no new nomination was performed
+                try_run_cache_pools_era(active_era_index, false).await?;
             }
-            // Cache pools APR at the beggining of each era and send message
-            try_run_cache_pools_era(active_era_index, true).await?;
         }
     } else {
         let message = format!(
@@ -1281,7 +1284,7 @@ pub async fn fetch_pool_data(onet: &Onet, pool_id: u32) -> Result<Option<Pool>, 
 
         // NOTE: Remove ONE-T metadata url
         let metadata = str(metadata);
-        
+
         let pool = Pool {
             id: pool_id,
             metadata: metadata
