@@ -1340,7 +1340,8 @@ pub async fn calculate_apr(onet: &Onet, targets: Vec<AccountId32>) -> Result<f64
     }
 
     // Collect chain data for maximum_history_eras
-    let start_era_index = current_era_index - config.maximum_history_eras;
+    // let start_era_index = current_era_index - config.maximum_history_eras;
+    let start_era_index = current_era_index - 84;
     for era_index in start_era_index..current_era_index {
         let era_reward_points = api
             .storage()
