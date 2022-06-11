@@ -1198,13 +1198,12 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     Ok(())
 }
 
-fn define_pool_call(
-    pool_id: u32,
-    validators: Validators,
-    minimum_para_epochs: u32,
+fn define_first_pool_call(
+    validators: &mut Vec<&Validator>,
     maximum_nominations: Option<u32>,
 ) -> Result<Call, OnetError> {
     let config = CONFIG.clone();
+    let pool_id = config.pool_id_1;
     if pool_id == 0 {
         return Err(OnetError::PoolError(format!(
             "Nomination Pool ID {} not defined.",
@@ -1212,37 +1211,80 @@ fn define_pool_call(
         )));
     }
 
-    let mut top_validators = validators
-        .iter()
-        .filter(|v| {
-            v.subset == Subset::TVP
-                && v.para_epochs >= minimum_para_epochs
-                && v.missed_ratio.is_some()
-        })
-        .collect::<Vec<&Validator>>();
-
-    if top_validators.len() > 0 {
+    if validators.len() > 0 {
         // Sort validators by score for Pool 1
-        top_validators.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        validators.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
 
         // Limit maximum nomination candidates to be included in the call
         let max: usize = if let Some(max) = maximum_nominations {
-            if top_validators.len() as u32 > max {
+            if validators.len() as u32 > max {
                 usize::try_from(max).unwrap()
             } else {
-                top_validators.len()
+                validators.len()
             }
         } else {
-            if top_validators.len() as u32 > config.pools_maximum_nominations {
+            if validators.len() as u32 > config.pools_maximum_nominations {
                 usize::try_from(config.pools_maximum_nominations).unwrap()
             } else {
-                top_validators.len()
+                validators.len()
             }
         };
 
-        top_validators.truncate(max);
+        validators.truncate(max);
 
-        let accounts = top_validators
+        let accounts = validators
+            .iter()
+            .map(|v| v.stash.clone())
+            .collect::<Vec<AccountId32>>();
+
+        // Define call
+        let call = Call::NominationPools(NominationPoolsCall::nominate {
+            pool_id: pool_id,
+            validators: accounts,
+        });
+        return Ok(call);
+    }
+    Err(OnetError::PoolError(format!(
+        "Call for nomination pool {} could not be defined since there are No validators to select",
+        pool_id
+    )))
+}
+
+fn define_second_pool_call(
+    validators: &mut Vec<&Validator>,
+    maximum_nominations: Option<u32>,
+) -> Result<Call, OnetError> {
+    let config = CONFIG.clone();
+    let pool_id = config.pool_id_2;
+    if pool_id == 0 {
+        return Err(OnetError::PoolError(format!(
+            "Nomination Pool ID {} not defined.",
+            pool_id
+        )));
+    }
+
+    if validators.len() > 0 {
+        // Sort validators by score for Pool 1
+        validators.sort_by(|a, b| b.commission_score.partial_cmp(&a.commission_score).unwrap());
+
+        // Limit maximum nomination candidates to be included in the call
+        let max: usize = if let Some(max) = maximum_nominations {
+            if validators.len() as u32 > max {
+                usize::try_from(max).unwrap()
+            } else {
+                validators.len()
+            }
+        } else {
+            if validators.len() as u32 > config.pools_maximum_nominations {
+                usize::try_from(config.pools_maximum_nominations).unwrap()
+            } else {
+                validators.len()
+            }
+        };
+
+        validators.truncate(max);
+
+        let accounts = validators
             .iter()
             .map(|v| v.stash.clone())
             .collect::<Vec<AccountId32>>();
@@ -1586,19 +1628,24 @@ async fn try_run_nomination_pools(
     // min_para_epochs = 5 if total_full_epochs = 48;
     let min_para_epochs = (records.total_full_epochs() / 12) + 1;
 
+    let tvp_validators = validators
+        .iter()
+        .filter(|v| {
+            v.subset == Subset::TVP && v.para_epochs >= min_para_epochs && v.missed_ratio.is_some()
+        })
+        .collect::<Vec<&Validator>>();
+
     // ** Define calls to be included in the batch **
 
     // Pool 1 should include top TVP validators in the last X sessions
     // Note: maximum validators are 24 in Kusama / 16 Polkadot
-    let call = define_pool_call(config.pool_id_1, validators.clone(), min_para_epochs, None)?;
+    let call = define_first_pool_call(&mut tvp_validators.clone(), None)?;
     calls.push(call);
 
     // Pool 2 should include top TVP validators with the lowest commission in the last X sessions
     // Note: maximum validators are 12 in Kusama / 8 Polkadot
-    let call = define_pool_call(
-        config.pool_id_2,
-        validators.clone(),
-        min_para_epochs,
+    let call = define_second_pool_call(
+        &mut tvp_validators.clone(),
         Some(config.pools_maximum_nominations / 2),
     )?;
     calls.push(call);
