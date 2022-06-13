@@ -956,9 +956,12 @@ impl From<RawDataPools> for Report {
         }
 
         report.add_break();
+        // report.add_raw_text(format!(
+        //     "<i>¹ Nomination pool APR is based on the average APR of all the pool nominees from the last {} eras, minus the respective validators commission.</i>",
+        //     config.maximum_history_eras,
+        // ));
         report.add_raw_text(format!(
-            "<i>¹ Nomination pool APR is based on the average APR of all the pool nominees from the last {} eras, minus the respective validators commission.</i>",
-            config.maximum_history_eras,
+            "<i>¹ Nomination pool APR is based on the average APR of all the pool nominees from the last 84 eras, minus the respective validators commission.</i>",
         ));
 
         report.add_break();
