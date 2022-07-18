@@ -61,7 +61,7 @@ mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        frame_support::storage::bounded_vec::BoundedVec, pallet_identity::types::Data,
+        sp_runtime::bounded::bounded_vec::BoundedVec, pallet_identity::types::Data,
         polkadot_parachain::primitives::Id, polkadot_primitives::v2::CoreIndex,
         polkadot_primitives::v2::GroupIndex, polkadot_primitives::v2::ValidatorIndex,
         polkadot_primitives::v2::ValidityAttestation, sp_arithmetic::per_things::Perbill,
