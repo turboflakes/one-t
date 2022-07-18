@@ -19,10 +19,27 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod blocks;
-pub mod health;
-pub mod info;
-pub mod pool;
-pub mod sessions;
-pub mod validators;
-pub mod ws;
+use crate::api::ws::{server, session};
+
+use actix::*;
+use actix_web::{web, Error, HttpRequest, HttpResponse};
+use actix_web_actors::ws;
+use std::time::Instant;
+
+/// Handler for websocket route
+pub async fn init(
+    req: HttpRequest,
+    stream: web::Payload,
+    srv: web::Data<Addr<server::Server>>,
+) -> Result<HttpResponse, Error> {
+    ws::start(
+        session::WsSession {
+            id: 0,
+            hb: Instant::now(),
+            name: None,
+            server_addr: srv.get_ref().clone(),
+        },
+        &req,
+        stream,
+    )
+}

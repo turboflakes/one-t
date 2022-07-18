@@ -20,9 +20,13 @@
 // SOFTWARE.
 
 use crate::api::handlers::{
+    blocks::get_best_block,
     health::get_health,
     info::get_info,
     pool::{get_pool, get_pool_nomination, get_pool_nominees, get_pools_stats},
+    sessions::get_session_by_index,
+    validators::{get_peer_by_authority, get_validator_by_stash, get_validators},
+    ws::init,
 };
 use actix_web::web;
 
@@ -38,13 +42,31 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
             web::scope("/api/v1")
                 // API info
                 .route("", web::get().to(get_info))
+                // WEBSOCKET route
+                .route("/ws", web::get().to(init))
+                // SESSION routes
+                .service(
+                    web::scope("/sessions").route("/{index}", web::get().to(get_session_by_index)),
+                )
+                // BLOCKS routes
+                .service(web::scope("/blocks").route("/best", web::get().to(get_best_block)))
+                // VALIDATOR routes
+                .service(
+                    web::scope("/validators")
+                        .route("/{stash}", web::get().to(get_validator_by_stash))
+                        .route(
+                            "/{stash}/peers/{peer}",
+                            web::get().to(get_peer_by_authority),
+                        )
+                        .route("", web::get().to(get_validators)),
+                )
                 // POOL routes
                 .service(
                     web::scope("/pool")
-                        .route("", web::get().to(get_pools_stats))
                         .route("/{id}", web::get().to(get_pool))
                         .route("/{id}/nominees", web::get().to(get_pool_nominees))
-                        .route("/{id}/nomination", web::get().to(get_pool_nomination)),
+                        .route("/{id}/nomination", web::get().to(get_pool_nomination))
+                        .route("", web::get().to(get_pools_stats)),
                 ),
         );
 }

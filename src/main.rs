@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 mod api;
+mod cache;
 mod config;
 mod errors;
 mod matrix;
@@ -30,21 +31,26 @@ mod report;
 mod runtimes;
 mod stats;
 
-use crate::api::routes::routes;
+use crate::api::{routes::routes, ws::server};
+use crate::cache::add_pool;
 use crate::config::CONFIG;
 use crate::onet::Onet;
+use actix::*;
 use actix_cors::Cors;
-use actix_web::{http, middleware, App, HttpServer};
+use actix_web::{http, middleware, web, App, HttpServer};
 use log::info;
 use std::env;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // Load configuration
+    // load configuration
     let config = CONFIG.clone();
 
     if config.is_debug {
-        env::set_var("RUST_LOG", "onet=debug,subxt=debug");
+        env::set_var(
+            "RUST_LOG",
+            "onet=debug,subxt=debug,actix_cors=debug,actix_web=debug,actix_server=debug",
+        );
     } else {
         env::set_var("RUST_LOG", "onet=info");
     }
@@ -57,9 +63,10 @@ async fn main() -> std::io::Result<()> {
         env!("CARGO_PKG_DESCRIPTION")
     );
 
+    // start chain subscription service
     Onet::spawn();
 
-    // Start http server
+    // start http server with an websocket /ws endpoint
     let addr = format!("{}:{}", config.api_host, config.api_port);
     HttpServer::new(move || {
         let cors = Cors::default()
@@ -73,8 +80,10 @@ async fn main() -> std::io::Result<()> {
             .supports_credentials()
             .max_age(3600);
         App::new()
+            .app_data(web::Data::new(server::Server::new().start()))
             .wrap(middleware::Logger::default())
             .wrap(cors)
+            .configure(add_pool)
             .configure(routes)
     })
     .bind(addr)?

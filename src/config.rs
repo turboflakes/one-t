@@ -156,15 +156,18 @@ fn default_api_cors_allow_origin() -> String {
     "*".into()
 }
 
+/// provides default value for redis_host if ONET_REDIS_HOST env var is not set
+fn default_redis_host() -> String {
+    "127.0.0.1".into()
+}
+
+/// provides default value for redis_database if ONET_REDIS_DATABASE env var is not set
+fn default_redis_database() -> u8 {
+    0
+}
+
 #[derive(Clone, Deserialize, Debug)]
 pub struct Config {
-    // api
-    #[serde(default = "default_api_host")]
-    pub api_host: String,
-    #[serde(default = "default_api_port")]
-    pub api_port: u16,
-    #[serde(default = "default_api_cors_allow_origin")]
-    pub api_cors_allow_origin: String,
     // general
     #[serde(default = "default_chain_name")]
     pub chain_name: String,
@@ -234,6 +237,22 @@ pub struct Config {
     pub matrix_public_room_disabled: bool,
     #[serde(default)]
     pub matrix_bot_display_name_disabled: bool,
+    // api
+    #[serde(default)]
+    pub api_enabled: bool,
+    #[serde(default = "default_api_host")]
+    pub api_host: String,
+    #[serde(default = "default_api_port")]
+    pub api_port: u16,
+    #[serde(default = "default_api_cors_allow_origin")]
+    pub api_cors_allow_origin: String,
+    // redis configuration
+    #[serde(default = "default_redis_host")]
+    pub redis_hostname: String,
+    #[serde(default)]
+    pub redis_password: String,
+    #[serde(default = "default_redis_database")]
+    pub redis_database: u8,
 }
 
 /// Inject dotenv and env vars into the Config struct

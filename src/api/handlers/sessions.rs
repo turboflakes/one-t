@@ -19,10 +19,33 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod blocks;
-pub mod health;
-pub mod info;
-pub mod pool;
-pub mod sessions;
-pub mod validators;
-pub mod ws;
+use crate::api::{
+    helpers::respond_json,
+    responses::{CacheMap, SessionResult},
+};
+use crate::cache::{get_conn, CacheKey, Index, RedisPool};
+use crate::errors::{ApiError, CacheError};
+use actix_web::web::{Data, Json, Path};
+use log::warn;
+use redis::aio::Connection;
+
+/// Get current session details
+pub async fn get_session_by_index(
+    index: Path<String>,
+    cache: Data<RedisPool>,
+) -> Result<Json<SessionResult>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+
+    let data: CacheMap = redis::cmd("HGETALL")
+        .arg(CacheKey::SessionByIndex(Index::Str(index.to_string())))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    if data.is_empty() {
+        let msg = format!("Current session details not found");
+        warn!("{}", msg);
+        return Err(ApiError::NotFound(msg));
+    }
+    respond_json(data.into())
+}

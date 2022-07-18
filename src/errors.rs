@@ -31,6 +31,8 @@ use thiserror::Error;
 /// On specific error messages
 #[derive(Error, Debug)]
 pub enum OnetError {
+    #[error("Cache error: {0}")]
+    CacheError(#[from] CacheError),
     #[error("Subxt error: {0}")]
     SubxtError(#[from] subxt::BasicError),
     #[error("Codec error: {0}")]
@@ -113,13 +115,14 @@ impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         match self {
             ApiError::BadRequest(error) => {
-                HttpResponse::BadRequest().json::<ErrorResponse>(error.into())
+                // let error_resp: ErrorResponse = error.into();
+                HttpResponse::BadRequest().json(ErrorResponse::from(error))
             }
             ApiError::NotFound(message) => {
-                HttpResponse::NotFound().json::<ErrorResponse>(message.into())
+                HttpResponse::NotFound().json(ErrorResponse::from(message))
             }
             ApiError::InternalServerError(error) => {
-                HttpResponse::InternalServerError().json::<ErrorResponse>(error.into())
+                HttpResponse::InternalServerError().json(ErrorResponse::from(error))
             }
         }
     }
@@ -150,5 +153,36 @@ impl From<&String> for ErrorResponse {
 impl From<std::io::Error> for ApiError {
     fn from(error: std::io::Error) -> Self {
         ApiError::InternalServerError(format!("{:?}", error))
+    }
+}
+
+/// Cache specific error messages
+#[derive(Error, Debug)]
+pub enum CacheError {
+    #[error("Could not get redis connection from pool : {0}")]
+    RedisPoolError(mobc::Error<mobc_redis::redis::RedisError>),
+    #[error("Error parsing string from redis result: {0}")]
+    RedisTypeError(mobc_redis::redis::RedisError),
+    #[error("Error executing redis command: {0}")]
+    RedisCMDError(mobc_redis::redis::RedisError),
+    #[error("Error creating redis client: {0}")]
+    RedisClientError(mobc_redis::redis::RedisError),
+    #[error("Pong response error")]
+    RedisPongError,
+    #[error("Other error: {0}")]
+    Other(String),
+}
+
+/// Convert CacheError to Sttring
+impl From<CacheError> for String {
+    fn from(error: CacheError) -> Self {
+        format!("{}", error).to_string()
+    }
+}
+
+/// Convert CacheError to ApiErrors
+impl From<CacheError> for ApiError {
+    fn from(error: CacheError) -> Self {
+        ApiError::InternalServerError(error.into())
     }
 }

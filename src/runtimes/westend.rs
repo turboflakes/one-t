@@ -322,7 +322,7 @@ pub async fn initialize_records(onet: &Onet, records: &mut Records) -> Result<()
         }
     }
 
-    debug!("records {:?}", records);
+    // debug!("records {:?}", records);
     Ok(())
 }
 
@@ -554,7 +554,7 @@ pub async fn track_records(
         }
     }
 
-    debug!("records {:?}", records);
+    // debug!("records {:?}", records);
 
     Ok(())
 }
@@ -572,10 +572,10 @@ pub async fn run_val_perf_report(
     let network = Network::load(client).await?;
     // Set era/session details
     let start_block = records
-        .start_block(EpochKey(era_index, epoch_index))
+        .start_block(Some(EpochKey(era_index, epoch_index)))
         .unwrap_or(&0);
     let end_block = records
-        .end_block(EpochKey(era_index, epoch_index))
+        .end_block(Some(EpochKey(era_index, epoch_index)))
         .unwrap_or(&0);
     let metadata = Metadata {
         active_era_index: era_index,
@@ -724,10 +724,10 @@ pub async fn run_groups_report(
 
     // Set era/session details
     let start_block = records
-        .start_block(EpochKey(era_index, epoch_index))
+        .start_block(Some(EpochKey(era_index, epoch_index)))
         .unwrap_or(&0);
     let end_block = records
-        .end_block(EpochKey(era_index, epoch_index))
+        .end_block(Some(EpochKey(era_index, epoch_index)))
         .unwrap_or(&0);
     let metadata = Metadata {
         active_era_index: era_index,
@@ -812,10 +812,10 @@ pub async fn run_parachains_report(
 
     // Set era/session details
     let start_block = records
-        .start_block(EpochKey(era_index, epoch_index))
+        .start_block(Some(EpochKey(era_index, epoch_index)))
         .unwrap_or(&0);
     let end_block = records
-        .end_block(EpochKey(era_index, epoch_index))
+        .end_block(Some(EpochKey(era_index, epoch_index)))
         .unwrap_or(&0);
     let metadata = Metadata {
         active_era_index: era_index,
@@ -1099,13 +1099,13 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         let start_epoch = current_session_index - records.total_full_epochs();
         if let Some(start_era) = records.get_era_index(Some(start_epoch)) {
             let start_block = records
-                .start_block(EpochKey(*start_era, start_epoch))
+                .start_block(Some(EpochKey(*start_era, start_epoch)))
                 .unwrap_or(&0);
 
             let end_epoch = current_session_index - 1;
             if let Some(end_era) = records.get_era_index(Some(end_epoch)) {
                 let end_block = records
-                    .end_block(EpochKey(*end_era, current_session_index - 1))
+                    .end_block(Some(EpochKey(*end_era, current_session_index - 1)))
                     .unwrap_or(&0);
                 let metadata = Metadata {
                     interval: Some(((*start_era, start_epoch), (*end_era, end_epoch))),

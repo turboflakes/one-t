@@ -18,20 +18,24 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+use crate::cache::{create_or_await_pool, CacheKey, RedisPool};
 use crate::config::{Config, CONFIG};
-use crate::errors::OnetError;
+use crate::errors::{CacheError, OnetError};
 use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
 use crate::records::EpochIndex;
+use crate::report::Network;
 use crate::runtimes::{
     kusama, polkadot,
     support::{ChainPrefix, SupportedRuntime},
     westend,
 };
 use log::{debug, error, info, warn};
+use redis::aio::Connection;
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     convert::TryInto,
     fs,
     fs::File,
@@ -158,6 +162,7 @@ pub struct Onet {
     runtime: SupportedRuntime,
     client: Client<DefaultConfig>,
     matrix: Matrix,
+    pub cache: RedisPool,
 }
 
 impl Onet {
@@ -190,6 +195,7 @@ impl Onet {
             runtime,
             client,
             matrix,
+            cache: create_or_await_pool(CONFIG.clone()),
         }
     }
 
@@ -214,6 +220,8 @@ impl Onet {
         // initialize and load TVP stashes
         try_fetch_stashes_from_remote_url().await?;
 
+        self.cache_network().await?;
+
         match self.runtime {
             SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
@@ -221,22 +229,55 @@ impl Onet {
             // _ => unreachable!(),
         }
     }
+    // cache methods
+    async fn cache_network(&self) -> Result<(), OnetError> {
+        let mut conn = self.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+        let client = self.client();
+
+        let mut data: BTreeMap<String, String> = BTreeMap::new();
+
+        let network = Network::load(client).await?;
+        // Get Network details
+        data.insert(String::from("name"), network.name);
+        data.insert(String::from("token_symbol"), network.token_symbol);
+        data.insert(
+            String::from("token_decimals"),
+            network.token_decimals.to_string(),
+        );
+        data.insert(String::from("ss58_format"), network.ss58_format.to_string());
+
+        // Cache genesis hash
+        let genesis_hash = client.rpc().genesis_hash().await?;
+        data.insert("genesis_hash".to_string(), format!("{:?}", genesis_hash));
+
+        let _: () = redis::cmd("HSET")
+            .arg(CacheKey::Network)
+            .arg(data)
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+
+        Ok(())
+    }
 }
 
 fn spawn_and_restart_matrix_lazy_load_on_error() {
     async_std::task::spawn(async {
         let config = CONFIG.clone();
-        loop {
-            let mut m = Matrix::new();
-            if let Err(e) = m.authenticate(config.chain_name.clone().into()).await {
-                error!("authenticate error: {}", e);
-                thread::sleep(time::Duration::from_secs(config.error_interval));
-                continue;
-            }
-            if let Err(e) = m.lazy_load_and_process_commands().await {
-                error!("lazy_load_and_process_commands error: {}", e);
-                thread::sleep(time::Duration::from_secs(config.error_interval));
-                continue;
+        if !config.matrix_disabled {
+            loop {
+                let mut m = Matrix::new();
+                if let Err(e) = m.authenticate(config.chain_name.clone().into()).await {
+                    error!("authenticate error: {}", e);
+                    thread::sleep(time::Duration::from_secs(config.error_interval));
+                    continue;
+                }
+                if let Err(e) = m.lazy_load_and_process_commands().await {
+                    error!("lazy_load_and_process_commands error: {}", e);
+                    thread::sleep(time::Duration::from_secs(config.error_interval));
+                    continue;
+                }
             }
         }
     });

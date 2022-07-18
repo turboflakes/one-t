@@ -19,10 +19,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod blocks;
-pub mod health;
-pub mod info;
-pub mod pool;
-pub mod sessions;
-pub mod validators;
-pub mod ws;
+pub mod channel;
+pub mod server;
+pub mod session;

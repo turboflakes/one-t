@@ -23,6 +23,7 @@ use crate::config::CONFIG;
 use crate::matrix::UserID;
 use codec::Decode;
 use log::info;
+use serde::{Deserialize, Serialize};
 use sp_consensus_babe::digests::PreDigest;
 use std::{collections::BTreeMap, collections::HashMap, collections::HashSet, hash::Hash};
 use subxt::{
@@ -238,19 +239,30 @@ impl Records {
         self.current_epoch
     }
 
-    pub fn start_block(&self, epoch_key: EpochKey) -> Option<&BlockNumber> {
-        self.blocks.get(&BlockKey(epoch_key, BlockKind::Start))
+    pub fn start_block(&self, epoch_key: Option<EpochKey>) -> Option<&BlockNumber> {
+        if let Some(epoch_key) = epoch_key {
+            return self.blocks.get(&BlockKey(epoch_key, BlockKind::Start));
+        } else {
+            let epoch_key = EpochKey(self.current_era, self.current_epoch);
+            return self.blocks.get(&BlockKey(epoch_key, BlockKind::Start));
+        }
     }
 
-    pub fn end_block(&self, epoch_key: EpochKey) -> Option<&BlockNumber> {
-        self.blocks.get(&BlockKey(epoch_key, BlockKind::End))
+    pub fn end_block(&self, epoch_key: Option<EpochKey>) -> Option<&BlockNumber> {
+        if let Some(epoch_key) = epoch_key {
+            return self.blocks.get(&BlockKey(epoch_key, BlockKind::End));
+        } else {
+            let epoch_key = EpochKey(self.current_era, self.current_epoch);
+            return self.blocks.get(&BlockKey(epoch_key, BlockKind::End));
+        }
     }
 
     pub fn current_block(&self) -> Option<&BlockNumber> {
-        self.blocks.get(&BlockKey(
-            EpochKey(self.current_era, self.current_epoch),
-            BlockKind::End,
-        ))
+        let block = self.end_block(Some(EpochKey(self.current_era, self.current_epoch)));
+        if block.is_none() {
+            return self.start_block(Some(EpochKey(self.current_era, self.current_epoch)));
+        }
+        block
     }
 
     pub fn start_new_epoch(&mut self, era: EraIndex, epoch: EpochIndex) {
@@ -744,14 +756,20 @@ impl Records {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AuthorityRecord {
     // index is the position of the stash in session().validators(None)
+    #[serde(rename = "aix")]
     index: AuthorityIndex,
+    #[serde(skip_serializing)]
     address: AccountId32,
+    #[serde(rename = "sp")]
     start_points: Points,
+    #[serde(rename = "ep")]
     end_points: Option<Points>,
+    #[serde(rename = "ab")]
     authored_blocks: AuthoredBlocks,
+    #[serde(skip_serializing)]
     is_flagged: bool,
 }
 
@@ -837,14 +855,17 @@ impl AuthorityRecord {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ParaRecord {
     // index is the position of the authority in paras_shared().active_validator_indices(None)
+    #[serde(rename = "pix")]
     index: ParaIndex,
     group: Option<GroupIndex>,
     core: Option<CoreIndex>,
+    #[serde(rename = "pid")]
     para_id: Option<ParaId>,
     peers: Vec<AuthorityIndex>,
+    #[serde(rename = "stats")]
     para_stats: BTreeMap<ParaId, ParaStats>,
 }
 
@@ -1016,15 +1037,32 @@ impl ParaRecord {
     pub fn para_stats(&self) -> &BTreeMap<ParaId, ParaStats> {
         &self.para_stats
     }
+
+    pub fn clone_without_stats(&self) -> ParaRecord {
+        ParaRecord {
+            index: self.index.clone(),
+            group: self.group.clone(),
+            core: self.core.clone(),
+            para_id: self.para_id.clone(),
+            peers: self.peers.clone(),
+            para_stats: BTreeMap::new(),
+        }
+    }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ParaStats {
+    #[serde(rename = "pt")]
     pub points: Points,
+    #[serde(rename = "ca")]
     pub core_assignments: u32,
+    #[serde(rename = "ab")]
     pub authored_blocks: AuthoredBlocks,
+    #[serde(rename = "ev")]
     pub explicit_votes: u32,
+    #[serde(rename = "iv")]
     pub implicit_votes: u32,
+    #[serde(rename = "mv")]
     pub missed_votes: u32,
 }
 

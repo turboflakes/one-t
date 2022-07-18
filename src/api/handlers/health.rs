@@ -20,8 +20,10 @@
 // SOFTWARE.
 
 use crate::api::helpers::respond_json;
-use crate::errors::ApiError;
-use actix_web::web::Json;
+use crate::cache::{get_conn, RedisPool};
+use crate::errors::{ApiError, CacheError};
+use actix_web::web::{Data, Json};
+use redis::aio::Connection;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -30,7 +32,16 @@ pub struct HealthResponse {
 }
 
 /// Handler to get the liveness of the service
-pub async fn get_health() -> Result<Json<HealthResponse>, ApiError> {
+pub async fn get_health(cache: Data<RedisPool>) -> Result<Json<HealthResponse>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+    let pong: String = redis::cmd("PING")
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    if pong.as_str() != "PONG" {
+        return Err(CacheError::RedisPongError.into());
+    }
     respond_json(HealthResponse {
         status: "ok".into(),
     })

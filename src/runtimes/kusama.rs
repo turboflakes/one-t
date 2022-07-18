@@ -18,9 +18,9 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-
+use crate::cache::{CacheKey, Index};
 use crate::config::CONFIG;
-use crate::errors::OnetError;
+use crate::errors::{CacheError, OnetError};
 use crate::matrix::FileInfo;
 use crate::onet::ReportType;
 use crate::onet::{
@@ -36,6 +36,7 @@ use crate::report::{
     Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara, RawDataParachains,
     RawDataPools, RawDataRank, Report, Subset, Validator, Validators,
 };
+use redis::aio::Connection;
 
 use async_recursion::async_recursion;
 use futures::StreamExt;
@@ -121,6 +122,10 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     // Initialize subscribers records
     initialize_records(&onet, &mut records).await?;
 
+    // Initialize cache
+    cache_session_records(&onet, &records).await?;
+    cache_track_records(&onet, &records).await?;
+
     // Subscribe to any events that occur:
     let mut sub = api.events().subscribe().await?;
 
@@ -152,16 +157,19 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
                         // Network public report
                         try_run_network_report(new_session_event.session_index, &records).await?;
+
+                        // Cache records every new session
+                        cache_session_records(&onet, &records).await?;
                     }
 
                     // Update current block number
                     records.set_current_block_number(block_number.into());
 
                     // Cache pools every minute
-                    if (block_number as f64 % 10.0_f64) == 0.0_f64 {
-                        cache_pool_data(&onet, config.pool_id_1).await?;
-                        cache_pool_data(&onet, config.pool_id_2).await?;
-                    }
+                    try_run_cache_pools_data(&onet, block_number).await?;
+
+                    // Cache records at every block
+                    cache_track_records(&onet, &records).await?;
                 } else {
                     warn!(
                         "Block #{} already received!",
@@ -173,6 +181,162 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     }
     // If subscription has closed for some reason await and subscribe again
     Err(OnetError::SubscriptionFinished)
+}
+
+pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if config.api_enabled {
+        let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+        // cache records every new block
+        if let Some(block) = records.current_block() {
+            redis::cmd("SET")
+                .arg(CacheKey::BestBlock)
+                .arg(*block)
+                .query_async(&mut cache as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+
+            let current_era = records.current_era();
+            let current_epoch = records.current_epoch();
+            if let Some(authorities) = records.get_authorities(None) {
+                for authority_idx in authorities.iter() {
+                    if let Some(authority_record) =
+                        records.get_authority_record(*authority_idx, None)
+                    {
+                        let mut data: BTreeMap<String, String> = BTreeMap::new();
+                        if let Some(para_record) = records.get_para_record(*authority_idx, None) {
+                            let serialized = serde_json::to_string(&para_record)?;
+                            data.insert(String::from("para"), serialized);
+                        }
+                        let serialized = serde_json::to_string(&authority_record)?;
+                        data.insert(String::from("auth"), serialized);
+                        redis::cmd("HSET")
+                            .arg(CacheKey::AuthorityRecord(
+                                current_era,
+                                current_epoch,
+                                *authority_idx,
+                            ))
+                            .arg(data)
+                            .query_async(&mut cache as &mut Connection)
+                            .await
+                            .map_err(CacheError::RedisCMDError)?;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if config.api_enabled {
+        let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+        // cache records every new session
+        let current_era = records.current_era();
+        let current_epoch = records.current_epoch();
+        // --- Cache SessionByIndex -> `current` or `epoch_index` (to be able to search history)
+        if let Some(block) = records.start_block(None) {
+            let mut data: BTreeMap<String, String> = BTreeMap::new();
+            data.insert(String::from("era"), records.current_era().to_string());
+            data.insert(String::from("session"), records.current_epoch().to_string());
+            data.insert(String::from("start_block"), (*block).to_string());
+
+            // by `current`
+            redis::cmd("HSET")
+                .arg(CacheKey::SessionByIndex(Index::Str(String::from(
+                    "current",
+                ))))
+                .arg(data.clone())
+                .query_async(&mut cache as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+
+            // by `epoch_index`
+            redis::cmd("HSET")
+                .arg(CacheKey::SessionByIndex(Index::Num(
+                    records.current_epoch(),
+                )))
+                .arg(data)
+                .query_async(&mut cache as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+        }
+        // ---
+        // cache authorities every new session
+        if let Some(authorities) = records.get_authorities(None) {
+            for authority_idx in authorities.iter() {
+                if let Some(authority_record) = records.get_authority_record(*authority_idx, None) {
+                    let identity =
+                        get_display_name(&onet, &authority_record.address(), None).await?;
+                    // cache authority key for the current era and session
+                    // along with data_type and identity
+                    let mut data: BTreeMap<String, String> = BTreeMap::new();
+                    data.insert(String::from("identity"), identity);
+                    data.insert(
+                        String::from("address"),
+                        (&authority_record.address()).to_string(),
+                    );
+                    data.insert(String::from("session"), records.current_epoch().to_string());
+                    redis::cmd("HSET")
+                        .arg(CacheKey::AuthorityRecord(
+                            current_era,
+                            current_epoch,
+                            *authority_idx,
+                        ))
+                        .arg(data)
+                        .query_async(&mut cache as &mut Connection)
+                        .await
+                        .map_err(CacheError::RedisCMDError)?;
+                    // cache authority key by stash account
+                    let mut data: BTreeMap<String, String> = BTreeMap::new();
+                    data.insert(String::from("era"), current_era.to_string());
+                    data.insert(String::from("session"), current_epoch.to_string());
+                    data.insert(String::from("authority"), (*authority_idx).to_string());
+                    redis::cmd("HSET")
+                        .arg(CacheKey::AuthorityKeyByAccountAndSession(
+                            authority_record.address().clone(),
+                            current_epoch,
+                        ))
+                        .arg(data)
+                        .query_async(&mut cache as &mut Connection)
+                        .await
+                        .map_err(CacheError::RedisCMDError)?;
+                    // cache authority key into authorities by session to be easily filtered
+                    let _: () = redis::cmd("SADD")
+                        .arg(CacheKey::AuthorityKeysBySession(current_epoch))
+                        .arg(
+                            CacheKey::AuthorityRecord(current_era, current_epoch, *authority_idx)
+                                .to_string(),
+                        )
+                        .query_async(&mut cache as &mut Connection)
+                        .await
+                        .map_err(CacheError::RedisCMDError)?;
+                    if records.get_para_record(*authority_idx, None).is_some() {
+                        // cache authority key into authorities by session (only para_validators) to be easily filtered
+                        let _: () = redis::cmd("SADD")
+                            .arg(CacheKey::AuthorityKeysBySessionParaOnly(current_epoch))
+                            .arg(
+                                CacheKey::AuthorityRecord(
+                                    current_era,
+                                    current_epoch,
+                                    *authority_idx,
+                                )
+                                .to_string(),
+                            )
+                            .query_async(&mut cache as &mut Connection)
+                            .await
+                            .map_err(CacheError::RedisCMDError)?;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn initialize_records(onet: &Onet, records: &mut Records) -> Result<(), OnetError> {
@@ -322,7 +486,7 @@ pub async fn initialize_records(onet: &Onet, records: &mut Records) -> Result<()
         }
     }
 
-    debug!("records {:?}", records);
+    // debug!("records {:?}", records);
     Ok(())
 }
 
@@ -380,31 +544,35 @@ pub async fn switch_new_session(
         current_era_index
     };
 
-    let records_cloned = records.clone();
-    let subscribers_cloned = subscribers.clone();
-    async_std::task::spawn(async move {
-        let epoch_index = records_cloned.current_epoch() - 1;
-        if let Err(e) =
-            run_val_perf_report(era_index, epoch_index, &records_cloned, &subscribers_cloned).await
-        {
-            error!(
-                "run_val_perf_report error: {:?} ({}//{})",
-                e, era_index, epoch_index
-            );
-        }
-        if let Err(e) = run_groups_report(era_index, epoch_index, &records_cloned).await {
-            error!(
-                "run_groups_report error: {:?} ({}//{})",
-                e, era_index, epoch_index
-            );
-        }
-        if let Err(e) = run_parachains_report(era_index, epoch_index, &records_cloned).await {
-            error!(
-                "run_parachains_report error: {:?} ({}//{})",
-                e, era_index, epoch_index
-            );
-        }
-    });
+    // try to run matrix reports
+    if !config.matrix_disabled {
+        let records_cloned = records.clone();
+        let subscribers_cloned = subscribers.clone();
+        async_std::task::spawn(async move {
+            let epoch_index = records_cloned.current_epoch() - 1;
+            if let Err(e) =
+                run_val_perf_report(era_index, epoch_index, &records_cloned, &subscribers_cloned)
+                    .await
+            {
+                error!(
+                    "run_val_perf_report error: {:?} ({}//{})",
+                    e, era_index, epoch_index
+                );
+            }
+            if let Err(e) = run_groups_report(era_index, epoch_index, &records_cloned).await {
+                error!(
+                    "run_groups_report error: {:?} ({}//{})",
+                    e, era_index, epoch_index
+                );
+            }
+            if let Err(e) = run_parachains_report(era_index, epoch_index, &records_cloned).await {
+                error!(
+                    "run_parachains_report error: {:?} ({}//{})",
+                    e, era_index, epoch_index
+                );
+            }
+        });
+    }
 
     // Cache current epoch
     let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
@@ -554,7 +722,7 @@ pub async fn track_records(
         }
     }
 
-    debug!("records {:?}", records);
+    // debug!("records {:?}", records);
 
     Ok(())
 }
@@ -572,10 +740,10 @@ pub async fn run_val_perf_report(
     let network = Network::load(client).await?;
     // Set era/session details
     let start_block = records
-        .start_block(EpochKey(era_index, epoch_index))
+        .start_block(Some(EpochKey(era_index, epoch_index)))
         .unwrap_or(&0);
     let end_block = records
-        .end_block(EpochKey(era_index, epoch_index))
+        .end_block(Some(EpochKey(era_index, epoch_index)))
         .unwrap_or(&0);
     let metadata = Metadata {
         active_era_index: era_index,
@@ -724,10 +892,10 @@ pub async fn run_groups_report(
 
     // Set era/session details
     let start_block = records
-        .start_block(EpochKey(era_index, epoch_index))
+        .start_block(Some(EpochKey(era_index, epoch_index)))
         .unwrap_or(&0);
     let end_block = records
-        .end_block(EpochKey(era_index, epoch_index))
+        .end_block(Some(EpochKey(era_index, epoch_index)))
         .unwrap_or(&0);
     let metadata = Metadata {
         active_era_index: era_index,
@@ -812,10 +980,10 @@ pub async fn run_parachains_report(
 
     // Set era/session details
     let start_block = records
-        .start_block(EpochKey(era_index, epoch_index))
+        .start_block(Some(EpochKey(era_index, epoch_index)))
         .unwrap_or(&0);
     let end_block = records
-        .end_block(EpochKey(era_index, epoch_index))
+        .end_block(Some(EpochKey(era_index, epoch_index)))
         .unwrap_or(&0);
     let metadata = Metadata {
         active_era_index: era_index,
@@ -884,16 +1052,18 @@ pub async fn try_run_network_report(
     records: &Records,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if (epoch_index as f64 % config.matrix_network_report_epoch_rate as f64) == 0.0_f64 {
-        if records.total_full_epochs() > 0 {
-            let records_cloned = records.clone();
-            async_std::task::spawn(async move {
-                if let Err(e) = run_network_report(&records_cloned).await {
-                    error!("try_run_network_report error: {:?}", e);
-                }
-            });
-        } else {
-            warn!("No full sessions yet to run the network report.")
+    if !config.matrix_disabled {
+        if (epoch_index as f64 % config.matrix_network_report_epoch_rate as f64) == 0.0_f64 {
+            if records.total_full_epochs() > 0 {
+                let records_cloned = records.clone();
+                async_std::task::spawn(async move {
+                    if let Err(e) = run_network_report(&records_cloned).await {
+                        error!("try_run_network_report error: {:?}", e);
+                    }
+                });
+            } else {
+                warn!("No full sessions yet to run the network report.")
+            }
         }
     }
 
@@ -1099,13 +1269,13 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         let start_epoch = current_session_index - records.total_full_epochs();
         if let Some(start_era) = records.get_era_index(Some(start_epoch)) {
             let start_block = records
-                .start_block(EpochKey(*start_era, start_epoch))
+                .start_block(Some(EpochKey(*start_era, start_epoch)))
                 .unwrap_or(&0);
 
             let end_epoch = current_session_index - 1;
             if let Some(end_era) = records.get_era_index(Some(end_epoch)) {
                 let end_block = records
-                    .end_block(EpochKey(*end_era, current_session_index - 1))
+                    .end_block(Some(EpochKey(*end_era, current_session_index - 1)))
                     .unwrap_or(&0);
                 let metadata = Metadata {
                     interval: Some(((*start_era, start_epoch), (*end_era, end_epoch))),
@@ -1349,11 +1519,21 @@ pub async fn fetch_pool_data(onet: &Onet, pool_id: u32) -> Result<Option<Pool>, 
     Ok(None)
 }
 
+pub async fn try_run_cache_pools_data(onet: &Onet, block_number: u32) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if config.pools_enabled {
+        if (block_number as f64 % 10.0_f64) == 0.0_f64 {
+            cache_pool_data(&onet, config.pool_id_1).await?;
+            cache_pool_data(&onet, config.pool_id_2).await?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn cache_pool_data(onet: &Onet, pool_id: u32) -> Result<(), OnetError> {
     if let Some(pool) = fetch_pool_data(&onet, pool_id).await? {
         pool.cache()?;
     }
-
     Ok(())
 }
 
@@ -1481,34 +1661,37 @@ pub async fn try_run_cache_pools_era(
 pub async fn run_cache_pools_era(era_index: EraIndex, send_report: bool) -> Result<(), OnetError> {
     let onet: Onet = Onet::new().await;
     let client = onet.client();
+    let config = CONFIG.clone();
 
-    match cache_pools_era(&onet, era_index).await {
-        Ok((onet_pools, pools_avg_apr)) => {
-            if send_report {
-                let network = Network::load(client).await?;
+    if config.pools_enabled {
+        match cache_pools_era(&onet, era_index).await {
+            Ok((onet_pools, pools_avg_apr)) => {
+                if send_report {
+                    let network = Network::load(client).await?;
 
-                let metadata = Metadata {
-                    active_era_index: era_index,
-                    ..Default::default()
-                };
+                    let metadata = Metadata {
+                        active_era_index: era_index,
+                        ..Default::default()
+                    };
 
-                let data = RawDataPools {
-                    network,
-                    meta: metadata,
-                    report_type: ReportType::NominationPools,
-                    onet_pools,
-                    pools_avg_apr,
-                };
+                    let data = RawDataPools {
+                        network,
+                        meta: metadata,
+                        report_type: ReportType::NominationPools,
+                        onet_pools,
+                        pools_avg_apr,
+                    };
 
-                // Send report only if para records available
-                let report = Report::from(data);
+                    // Send report only if para records available
+                    let report = Report::from(data);
 
-                onet.matrix()
-                    .send_public_message(&report.message(), Some(&report.formatted_message()))
-                    .await?;
+                    onet.matrix()
+                        .send_public_message(&report.message(), Some(&report.formatted_message()))
+                        .await?;
+                }
             }
+            Err(e) => error!("{}", e),
         }
-        Err(e) => error!("{}", e),
     }
 
     Ok(())

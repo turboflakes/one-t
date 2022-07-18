@@ -19,10 +19,29 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod blocks;
-pub mod health;
-pub mod info;
-pub mod pool;
-pub mod sessions;
-pub mod validators;
-pub mod ws;
+use crate::api::{helpers::respond_json, responses::BlockResult};
+use crate::cache::{get_conn, CacheKey, RedisPool};
+use crate::errors::{ApiError, CacheError};
+use crate::records::BlockNumber;
+use actix_web::web::{Data, Json};
+use log::warn;
+use redis::aio::Connection;
+
+/// Get best block
+pub async fn get_best_block(cache: Data<RedisPool>) -> Result<Json<BlockResult>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+
+    let data: BlockNumber = redis::cmd("GET")
+        .arg(CacheKey::BestBlock)
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    if data == 0 {
+        let msg = format!("Best block not found");
+        warn!("{}", msg);
+        return Err(ApiError::NotFound(msg));
+    }
+
+    respond_json(data.into())
+}

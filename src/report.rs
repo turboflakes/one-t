@@ -129,6 +129,7 @@ pub struct Network {
     pub name: String,
     pub token_symbol: String,
     pub token_decimals: u8,
+    pub ss58_format: u8,
 }
 
 impl Network {
@@ -146,20 +147,24 @@ impl Network {
         };
 
         // Get Token decimals
-        let token_decimals: u8 = if let Some(token_decimals) = properties.get("tokenDecimals") {
-            token_decimals
-                .as_u64()
-                .unwrap_or_default()
-                .try_into()
-                .unwrap()
+        let token_decimals: u8 = if let Some(value) = properties.get("tokenDecimals") {
+            value.as_u64().unwrap_or_default().try_into().unwrap()
         } else {
             12
+        };
+
+        // Get ss58 format
+        let ss58_format: u8 = if let Some(value) = properties.get("ss58Format") {
+            value.as_u64().unwrap_or_default().try_into().unwrap()
+        } else {
+            42
         };
 
         Ok(Network {
             name: chain_name,
             token_symbol,
             token_decimals,
+            ss58_format,
         })
     }
 }
@@ -915,7 +920,7 @@ impl From<RawData> for Report {
 impl From<RawDataPools> for Report {
     /// Converts a ONE-T `RawData` into a [`Report`].
     fn from(data: RawDataPools) -> Report {
-        let config = CONFIG.clone();
+        // let config = CONFIG.clone();
         let mut report = Report::new();
 
         // --- Specific report here [START] -->
