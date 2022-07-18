@@ -1,6 +1,6 @@
 [package]
 name = "onet"
-version = "0.10.0"
+version = "0.10.1"
 authors = ["Paulo <paulo@turboflakes.io>"]
 description = "ONE-T is a performance report bot for the Polkadot and Kusama network with a special focus on the One Thousand validator programme" 
 edition = "2018"
@@ -39,7 +39,7 @@ mobc-redis = { version = "0.7", default-features = false, features = ["async-std
 # subxt = { version = "0.21.0", git = "https://github.com/paritytech/subxt" }
 subxt = { rev = "6d731725", git = "https://github.com/paritytech/subxt" }
 # NOTE: sp-consensus-babe is needed to be able to decode the authority index in the block header logs
-sp-consensus-babe = {version = "0.10.0-dev", git = "https://github.com/paritytech/substrate" }
+sp-consensus-babe = {version = "0.10.1-dev", git = "https://github.com/paritytech/substrate" }
 
 
 async-std = { version = "1.11.0", features = ["attributes", "tokio1"] }
