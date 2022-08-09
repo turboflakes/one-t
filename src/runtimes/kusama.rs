@@ -62,10 +62,10 @@ mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        sp_runtime::bounded::bounded_vec::BoundedVec, pallet_identity::types::Data,
-        polkadot_parachain::primitives::Id, polkadot_primitives::v2::CoreIndex,
-        polkadot_primitives::v2::GroupIndex, polkadot_primitives::v2::ValidatorIndex,
-        polkadot_primitives::v2::ValidityAttestation, sp_arithmetic::per_things::Perbill,
+        pallet_identity::types::Data, polkadot_parachain::primitives::Id,
+        polkadot_primitives::v2::CoreIndex, polkadot_primitives::v2::GroupIndex,
+        polkadot_primitives::v2::ValidatorIndex, polkadot_primitives::v2::ValidityAttestation,
+        sp_arithmetic::per_things::Perbill, sp_runtime::bounded::bounded_vec::BoundedVec,
     },
     session::events::NewSession,
     system::events::ExtrinsicFailed,
@@ -1347,12 +1347,10 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                         config.pools_minimum_sessions
                     );
                 }
-                // Cache pools APR and send message
-                try_run_cache_pools_era(active_era_index, true).await?;
-            } else {
-                // Only cache pools APR. No need to send message if no new nomination was performed
-                try_run_cache_pools_era(active_era_index, false).await?;
             }
+            // Note: Only cache pools APR.
+            // TODO: Enable pools report via flag, just skip it in the meantime. Pools report is available online.
+            try_run_cache_pools_era(active_era_index, false).await?;
         }
     } else {
         let message = format!(

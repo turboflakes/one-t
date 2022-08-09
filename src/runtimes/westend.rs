@@ -61,10 +61,10 @@ mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        sp_runtime::bounded::bounded_vec::BoundedVec, pallet_identity::types::Data,
-        polkadot_parachain::primitives::Id, polkadot_primitives::v2::CoreIndex,
-        polkadot_primitives::v2::GroupIndex, polkadot_primitives::v2::ValidatorIndex,
-        polkadot_primitives::v2::ValidityAttestation, sp_arithmetic::per_things::Perbill,
+        pallet_identity::types::Data, polkadot_parachain::primitives::Id,
+        polkadot_primitives::v2::CoreIndex, polkadot_primitives::v2::GroupIndex,
+        polkadot_primitives::v2::ValidatorIndex, polkadot_primitives::v2::ValidityAttestation,
+        sp_arithmetic::per_things::Perbill, sp_runtime::bounded::bounded_vec::BoundedVec,
     },
     session::events::NewSession,
     system::events::ExtrinsicFailed,
