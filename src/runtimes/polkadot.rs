@@ -421,6 +421,13 @@ pub async fn track_records(
         records.update_para_group(para_id, core, group_idx);
     }
 
+    // Fetch para validator groups
+    let validator_groups = api
+        .storage()
+        .para_scheduler()
+        .validator_groups(None)
+        .await?;
+
     // Fetch Era reward points
     let era_reward_points = api
         .storage()
@@ -487,11 +494,18 @@ pub async fn track_records(
                                     } else {
                                         // Try to guarantee that one of the peers is in the same group
                                         if group_authorities.len() > 0 {
-                                            let (ValidatorIndex(para_idx), _) =
-                                                group_authorities[0];
                                             if let Some(group_idx) = para_record.group() {
-                                                if para_idx / 5 == group_idx {
-                                                    para_record.inc_missed_votes(para_id);
+                                                let (para_val_idx, _) = &group_authorities[0];
+
+                                                for (idx, group) in
+                                                    validator_groups.iter().enumerate()
+                                                {
+                                                    if group.contains(&para_val_idx) {
+                                                        if idx == group_idx as usize {
+                                                            para_record.inc_missed_votes(para_id);
+                                                            break;
+                                                        }
+                                                    }
                                                 }
                                             }
                                         } else {
