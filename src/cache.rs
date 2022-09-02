@@ -41,6 +41,7 @@ pub type RedisPool = Pool<RedisConnectionManager>;
 pub type RedisConn = Connection<RedisConnectionManager>;
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(untagged)]
 pub enum Index {
     Num(u32),
     Str(String),

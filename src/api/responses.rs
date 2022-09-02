@@ -84,6 +84,8 @@ pub struct SessionResult {
     six: EpochIndex,
     eix: EraIndex,
     sbix: BlockNumber,
+    esix: u8,
+    full: u8,
 }
 
 impl From<CacheMap> for SessionResult {
@@ -104,6 +106,16 @@ impl From<CacheMap> for SessionResult {
                 .get("start_block")
                 .unwrap_or(&zero)
                 .parse::<BlockNumber>()
+                .unwrap_or_default(),
+            esix: data
+                .get("era_session_index")
+                .unwrap_or(&zero)
+                .parse::<u8>()
+                .unwrap_or_default(),
+            full: data
+                .get("is_fully_recorded")
+                .unwrap_or(&zero)
+                .parse::<u8>()
                 .unwrap_or_default(),
         }
     }

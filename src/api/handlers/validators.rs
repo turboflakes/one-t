@@ -71,8 +71,8 @@ pub struct Params {
     role: Role,
     #[serde(default = "default_report")]
     report: Report,
-    #[serde(default)]
-    session: EpochIndex,
+    #[serde(default = "default_index")]
+    session: Index,
 }
 
 fn default_role() -> Role {
@@ -81,6 +81,10 @@ fn default_role() -> Role {
 
 fn default_report() -> Report {
     Report::NotDefined
+}
+
+fn default_index() -> Index {
+    Index::Str(String::from("current"))
 }
 
 /// Get active validators
@@ -142,13 +146,27 @@ pub async fn get_validators(
     params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorsResult>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+
+    let session_index_str = match redis::cmd("HGET")
+        .arg(CacheKey::SessionByIndex(params.session.clone()))
+        .arg("session")
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?
+    {
+        redis::Value::Data(index) => String::from_utf8(index).unwrap(),
+        _ => {
+            let msg = format!("Current session couldn't be found!");
+            warn!("{}", msg);
+            return Err(ApiError::NotFound(msg));
+        }
+    };
+    let session_index = session_index_str.parse::<EpochIndex>().unwrap_or_default();
+
     match params.role {
-        Role::Authority => {
-            return get_authorities(params.session, cache).await;
-        }
-        Role::ParaAuthority => {
-            return get_para_authorities(params.session, cache).await;
-        }
+        Role::Authority => get_authorities(session_index, cache).await,
+        Role::ParaAuthority => get_para_authorities(session_index, cache).await,
         _ => {
             let msg = format!(
                 "Parameter role={} must be equal to one of the options: [authority, para_authority]",
@@ -163,25 +181,27 @@ pub async fn get_validators(
 /// Get a validator by stash
 pub async fn get_validator_by_stash(
     stash: Path<String>,
+    params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
     let stash = AccountId32::from_str(&*stash.to_string())?;
 
-    let session_index: EpochIndex = redis::cmd("HGET")
-        .arg(CacheKey::SessionByIndex(Index::Str(String::from(
-            "current",
-        ))))
+    let session_index_str = match redis::cmd("HGET")
+        .arg(CacheKey::SessionByIndex(params.session.clone()))
         .arg("session")
         .query_async(&mut conn as &mut Connection)
         .await
-        .map_err(CacheError::RedisCMDError)?;
-
-    if session_index == 0 {
-        let msg = format!("Current session couldn't be found!");
-        warn!("{}", msg);
-        return Err(ApiError::InternalServerError(msg));
-    }
+        .map_err(CacheError::RedisCMDError)?
+    {
+        redis::Value::Data(index) => String::from_utf8(index).unwrap(),
+        _ => {
+            let msg = format!("Current session couldn't be found!");
+            warn!("{}", msg);
+            return Err(ApiError::NotFound(msg));
+        }
+    };
+    let session_index = session_index_str.parse::<EpochIndex>().unwrap_or_default();
 
     let data: AuthorityKeyCache = redis::cmd("HGETALL")
         .arg(CacheKey::AuthorityKeyByAccountAndSession(
@@ -192,7 +212,6 @@ pub async fn get_validator_by_stash(
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-    warn!("__{:?}", data);
     if data.is_empty() {
         let msg = format!(
             "At session {} the validator address {} was not found.",
@@ -216,6 +235,7 @@ pub async fn get_validator_by_stash(
 
 pub async fn get_peer_by_authority(
     path: Path<(String, u32)>,
+    params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
@@ -223,20 +243,21 @@ pub async fn get_peer_by_authority(
 
     let stash = AccountId32::from_str(&*stash.to_string())?;
 
-    let session_index: EpochIndex = redis::cmd("HGET")
-        .arg(CacheKey::SessionByIndex(Index::Str(String::from(
-            "current",
-        ))))
+    let session_index_str = match redis::cmd("HGET")
+        .arg(CacheKey::SessionByIndex(params.session.clone()))
         .arg("session")
         .query_async(&mut conn as &mut Connection)
         .await
-        .map_err(CacheError::RedisCMDError)?;
-
-    if session_index == 0 {
-        let msg = format!("Current session couldn't be found!");
-        warn!("{}", msg);
-        return Err(ApiError::InternalServerError(msg));
-    }
+        .map_err(CacheError::RedisCMDError)?
+    {
+        redis::Value::Data(index) => String::from_utf8(index).unwrap(),
+        _ => {
+            let msg = format!("Current session couldn't be found!");
+            warn!("{}", msg);
+            return Err(ApiError::NotFound(msg));
+        }
+    };
+    let session_index = session_index_str.parse::<EpochIndex>().unwrap_or_default();
 
     let data: AuthorityKeyCache = redis::cmd("HGETALL")
         .arg(CacheKey::AuthorityKeyByAccountAndSession(
