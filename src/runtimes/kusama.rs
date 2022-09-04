@@ -233,17 +233,48 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
 pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if config.api_enabled {
+        let client = onet.client();
+        let api = client.clone().to_runtime_api::<Api>();
         let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
         // cache records every new session
         let current_era = records.current_era();
         let current_epoch = records.current_epoch();
+
+        // get start session index
+        let start_session_index = match api
+            .storage()
+            .staking()
+            .eras_start_session_index(&current_era, None)
+            .await?
+        {
+            Some(index) => index,
+            None => return Err(OnetError::Other("Start session index not available".into())),
+        };
+
+        // era session index
+        let era_session_index = 1 + current_epoch - start_session_index;
+        // assume session is fully recorded if not the first one on the records
+        let is_fully_recorded: u8 = if !records.is_first_epoch(current_epoch) {
+            1
+        } else {
+            0
+        };
+
         // --- Cache SessionByIndex -> `current` or `epoch_index` (to be able to search history)
         if let Some(block) = records.start_block(None) {
             let mut data: BTreeMap<String, String> = BTreeMap::new();
             data.insert(String::from("era"), records.current_era().to_string());
             data.insert(String::from("session"), records.current_epoch().to_string());
             data.insert(String::from("start_block"), (*block).to_string());
+            data.insert(
+                String::from("era_session_index"),
+                era_session_index.to_string(),
+            );
+            data.insert(
+                String::from("is_fully_recorded"),
+                is_fully_recorded.to_string(),
+            );
 
             // by `current`
             redis::cmd("HSET")
