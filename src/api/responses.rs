@@ -85,7 +85,7 @@ pub struct SessionResult {
     eix: EraIndex,
     sbix: BlockNumber,
     esix: u8,
-    full: u8,
+    is_partial: bool,
 }
 
 impl From<CacheMap> for SessionResult {
@@ -112,10 +112,10 @@ impl From<CacheMap> for SessionResult {
                 .unwrap_or(&zero)
                 .parse::<u8>()
                 .unwrap_or_default(),
-            full: data
-                .get("is_fully_recorded")
+            is_partial: data
+                .get("is_partial")
                 .unwrap_or(&zero)
-                .parse::<u8>()
+                .parse::<bool>()
                 .unwrap_or_default(),
         }
     }

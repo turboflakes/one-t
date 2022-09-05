@@ -84,7 +84,7 @@ fn default_report() -> Report {
 }
 
 fn default_index() -> Index {
-    Index::Str(String::from("current"))
+    Index::Current
 }
 
 /// Get active validators
@@ -148,21 +148,24 @@ pub async fn get_validators(
 ) -> Result<Json<ValidatorsResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
-    let session_index_str = match redis::cmd("HGET")
-        .arg(CacheKey::SessionByIndex(params.session.clone()))
-        .arg("session")
-        .query_async(&mut conn as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?
-    {
-        redis::Value::Data(index) => String::from_utf8(index).unwrap(),
-        _ => {
-            let msg = format!("Current session couldn't be found!");
-            warn!("{}", msg);
-            return Err(ApiError::NotFound(msg));
+    let session_index: EpochIndex = match &params.session {
+        Index::Str(index) => {
+            if String::from("current") == *index {
+                redis::cmd("GET")
+                    .arg(CacheKey::SessionByIndex(Index::Current))
+                    .query_async(&mut conn as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?
+            } else {
+                index.parse::<EpochIndex>().unwrap_or_default()
+            }
         }
+        _ => redis::cmd("GET")
+            .arg(CacheKey::SessionByIndex(Index::Current))
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?,
     };
-    let session_index = session_index_str.parse::<EpochIndex>().unwrap_or_default();
 
     match params.role {
         Role::Authority => get_authorities(session_index, cache).await,
@@ -187,21 +190,24 @@ pub async fn get_validator_by_stash(
     let mut conn = get_conn(&cache).await?;
     let stash = AccountId32::from_str(&*stash.to_string())?;
 
-    let session_index_str = match redis::cmd("HGET")
-        .arg(CacheKey::SessionByIndex(params.session.clone()))
-        .arg("session")
-        .query_async(&mut conn as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?
-    {
-        redis::Value::Data(index) => String::from_utf8(index).unwrap(),
-        _ => {
-            let msg = format!("Current session couldn't be found!");
-            warn!("{}", msg);
-            return Err(ApiError::NotFound(msg));
+    let session_index: EpochIndex = match &params.session {
+        Index::Str(index) => {
+            if String::from("current") == *index {
+                redis::cmd("GET")
+                    .arg(CacheKey::SessionByIndex(Index::Current))
+                    .query_async(&mut conn as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?
+            } else {
+                index.parse::<EpochIndex>().unwrap_or_default()
+            }
         }
+        _ => redis::cmd("GET")
+            .arg(CacheKey::SessionByIndex(Index::Current))
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?,
     };
-    let session_index = session_index_str.parse::<EpochIndex>().unwrap_or_default();
 
     let data: AuthorityKeyCache = redis::cmd("HGETALL")
         .arg(CacheKey::AuthorityKeyByAccountAndSession(
@@ -243,21 +249,24 @@ pub async fn get_peer_by_authority(
 
     let stash = AccountId32::from_str(&*stash.to_string())?;
 
-    let session_index_str = match redis::cmd("HGET")
-        .arg(CacheKey::SessionByIndex(params.session.clone()))
-        .arg("session")
-        .query_async(&mut conn as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?
-    {
-        redis::Value::Data(index) => String::from_utf8(index).unwrap(),
-        _ => {
-            let msg = format!("Current session couldn't be found!");
-            warn!("{}", msg);
-            return Err(ApiError::NotFound(msg));
+    let session_index: EpochIndex = match &params.session {
+        Index::Str(index) => {
+            if String::from("current") == *index {
+                redis::cmd("GET")
+                    .arg(CacheKey::SessionByIndex(Index::Current))
+                    .query_async(&mut conn as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?
+            } else {
+                index.parse::<EpochIndex>().unwrap_or_default()
+            }
         }
+        _ => redis::cmd("GET")
+            .arg(CacheKey::SessionByIndex(Index::Current))
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?,
     };
-    let session_index = session_index_str.parse::<EpochIndex>().unwrap_or_default();
 
     let data: AuthorityKeyCache = redis::cmd("HGETALL")
         .arg(CacheKey::AuthorityKeyByAccountAndSession(

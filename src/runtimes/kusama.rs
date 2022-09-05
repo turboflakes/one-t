@@ -161,7 +161,6 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                         // Cache records every new session
                         cache_session_records(&onet, &records).await?;
                     }
-
                     // Update current block number
                     records.set_current_block_number(block_number.into());
 
@@ -189,10 +188,10 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
         let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
         // cache records every new block
-        if let Some(block) = records.current_block() {
+        if let Some(current_block) = records.current_block() {
             redis::cmd("SET")
                 .arg(CacheKey::BestBlock)
-                .arg(*block)
+                .arg(*current_block)
                 .query_async(&mut cache as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
@@ -224,6 +223,24 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                     }
                 }
             }
+
+            // cache current_block for the current_session
+            if let Some(start_block) = records.start_block(None) {
+                if current_block != start_block {
+                    let mut data: BTreeMap<String, String> = BTreeMap::new();
+                    data.insert(String::from("is_new"), (false).to_string());
+                    data.insert(String::from("current_block"), (*current_block).to_string());
+                    // by `epoch_index`
+                    redis::cmd("HSET")
+                        .arg(CacheKey::SessionByIndex(Index::Num(
+                            records.current_epoch(),
+                        )))
+                        .arg(data)
+                        .query_async(&mut cache as &mut Connection)
+                        .await
+                        .map_err(CacheError::RedisCMDError)?;
+                }
+            }
         }
     }
 
@@ -241,60 +258,61 @@ pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(),
         let current_era = records.current_era();
         let current_epoch = records.current_epoch();
 
-        // get start session index
-        let start_session_index = match api
-            .storage()
-            .staking()
-            .eras_start_session_index(&current_era, None)
-            .await?
-        {
-            Some(index) => index,
-            None => return Err(OnetError::Other("Start session index not available".into())),
-        };
-
-        // era session index
-        let era_session_index = 1 + current_epoch - start_session_index;
-        // assume session is fully recorded if not the first one on the records
-        let is_fully_recorded: u8 = if !records.is_first_epoch(current_epoch) {
-            1
-        } else {
-            0
-        };
-
         // --- Cache SessionByIndex -> `current` or `epoch_index` (to be able to search history)
-        if let Some(block) = records.start_block(None) {
-            let mut data: BTreeMap<String, String> = BTreeMap::new();
-            data.insert(String::from("era"), records.current_era().to_string());
-            data.insert(String::from("session"), records.current_epoch().to_string());
-            data.insert(String::from("start_block"), (*block).to_string());
-            data.insert(
-                String::from("era_session_index"),
-                era_session_index.to_string(),
-            );
-            data.insert(
-                String::from("is_fully_recorded"),
-                is_fully_recorded.to_string(),
-            );
+        if let Some(start_block) = records.start_block(None) {
+            if let Some(current_block) = records.current_block() {
+                // get start session index
+                let start_session_index = match api
+                    .storage()
+                    .staking()
+                    .eras_start_session_index(&current_era, None)
+                    .await?
+                {
+                    Some(index) => index,
+                    None => {
+                        return Err(OnetError::Other("Start session index not available".into()))
+                    }
+                };
 
-            // by `current`
-            redis::cmd("HSET")
-                .arg(CacheKey::SessionByIndex(Index::Str(String::from(
-                    "current",
-                ))))
-                .arg(data.clone())
-                .query_async(&mut cache as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
+                // era session index
+                let era_session_index = 1 + current_epoch - start_session_index;
 
-            // by `epoch_index`
-            redis::cmd("HSET")
-                .arg(CacheKey::SessionByIndex(Index::Num(
-                    records.current_epoch(),
-                )))
-                .arg(data)
-                .query_async(&mut cache as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
+                let mut data: BTreeMap<String, String> = BTreeMap::new();
+                data.insert(String::from("era"), records.current_era().to_string());
+                data.insert(String::from("session"), records.current_epoch().to_string());
+                data.insert(String::from("start_block"), (*start_block).to_string());
+                data.insert(String::from("current_block"), (*current_block).to_string());
+                data.insert(String::from("is_new"), (true).to_string());
+                data.insert(
+                    String::from("era_session_index"),
+                    era_session_index.to_string(),
+                );
+                // assume session will be fully recorded if not the first one on the records
+                data.insert(
+                    String::from("is_partial"),
+                    (records.is_first_epoch(current_epoch)).to_string(),
+                );
+
+                // by `current`
+                redis::cmd("SET")
+                    .arg(CacheKey::SessionByIndex(Index::Str(String::from(
+                        "current",
+                    ))))
+                    .arg(records.current_epoch().to_string())
+                    .query_async(&mut cache as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?;
+
+                // by `epoch_index`
+                redis::cmd("HSET")
+                    .arg(CacheKey::SessionByIndex(Index::Num(
+                        records.current_epoch(),
+                    )))
+                    .arg(data)
+                    .query_async(&mut cache as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?;
+            }
         }
         // ---
         // cache authorities every new session

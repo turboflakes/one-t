@@ -42,7 +42,7 @@ const BLOCK_INTERVAL: Duration = Duration::from_secs(6);
 #[derive(Clone, Eq, Hash, PartialEq, Debug)]
 pub enum Topic {
     BestBlock,
-    CurrentSession,
+    NewSession,
     Validator(AccountId32),
     ParaAuthorities(EpochIndex),
 }
@@ -51,7 +51,7 @@ impl std::fmt::Display for Topic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BestBlock => write!(f, "best_block"),
-            Self::CurrentSession => write!(f, "current_session"),
+            Self::NewSession => write!(f, "new_session"),
             Self::Validator(account) => write!(f, "v:{}", account),
             Self::ParaAuthorities(index) => write!(f, "pas:{}", index),
         }
@@ -126,22 +126,39 @@ impl Channel {
                     };
                     block_on(future);
                 }
-                Topic::CurrentSession => {
+                Topic::NewSession => {
+                    // TODO subscribe new session and send it over only when session changes
                     let future = async {
                         if let Ok(mut conn) = get_conn(&act.cache).await {
-                            if let Ok(data) = redis::cmd("HGETALL")
+                            if let Ok(current) = redis::cmd("GET")
                                 .arg(CacheKey::SessionByIndex(Index::Str(String::from(
                                     "current",
                                 ))))
-                                .query_async::<Connection, CacheMap>(&mut conn)
+                                .query_async::<Connection, EpochIndex>(&mut conn)
                                 .await
                             {
-                                let resp = WsResponseMessage {
-                                    r#type: String::from("session"),
-                                    result: SessionResult::from(data),
-                                };
-                                let serialized = serde_json::to_string(&resp).unwrap();
-                                act.publish_message(&serialized, 0);
+                                if let Ok(is_new) = redis::cmd("HGET")
+                                    .arg(CacheKey::SessionByIndex(Index::Num(current)))
+                                    .arg("is_new")
+                                    .query_async::<Connection, String>(&mut conn)
+                                    .await
+                                {
+                                    let is_new: bool = is_new.parse().unwrap_or(false);
+                                    if is_new {
+                                        if let Ok(data) = redis::cmd("HGETALL")
+                                            .arg(CacheKey::SessionByIndex(Index::Num(current)))
+                                            .query_async::<Connection, CacheMap>(&mut conn)
+                                            .await
+                                        {
+                                            let resp = WsResponseMessage {
+                                                r#type: String::from("session"),
+                                                result: SessionResult::from(data),
+                                            };
+                                            let serialized = serde_json::to_string(&resp).unwrap();
+                                            act.publish_message(&serialized, 0);
+                                        }
+                                    }
+                                }
                             }
                         }
                     };
@@ -150,11 +167,10 @@ impl Channel {
                 Topic::Validator(account) => {
                     let future = async {
                         if let Ok(mut conn) = get_conn(&act.cache).await {
-                            if let Ok(current_session) = redis::cmd("HGET")
+                            if let Ok(current_session) = redis::cmd("GET")
                                 .arg(CacheKey::SessionByIndex(Index::Str(String::from(
                                     "current",
                                 ))))
-                                .arg("session")
                                 .query_async::<Connection, EpochIndex>(&mut conn)
                                 .await
                             {

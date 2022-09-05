@@ -45,6 +45,7 @@ pub type RedisConn = Connection<RedisConnectionManager>;
 pub enum Index {
     Num(u32),
     Str(String),
+    Current,
 }
 
 impl std::fmt::Display for Index {
@@ -52,6 +53,7 @@ impl std::fmt::Display for Index {
         match self {
             Self::Num(index) => write!(f, "{}", index),
             Self::Str(name) => write!(f, "{}", name),
+            Self::Current => write!(f, "current"),
         }
     }
 }

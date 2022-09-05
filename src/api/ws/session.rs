@@ -146,10 +146,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                         }
                     }
                     Methods::SubscribeSession => {
-                        if &req.params[0] == "current" {
+                        if &req.params[0] == "new" {
                             self.server_addr.do_send(server::Subscribe {
                                 id: self.id,
-                                topic: Topic::CurrentSession,
+                                topic: Topic::NewSession,
                             });
                         }
                     }

@@ -25,6 +25,7 @@ use crate::api::{
 };
 use crate::cache::{get_conn, CacheKey, Index, RedisPool};
 use crate::errors::{ApiError, CacheError};
+use crate::records::EpochIndex;
 use actix_web::web::{Data, Json, Path};
 use log::warn;
 use redis::aio::Connection;
@@ -36,8 +37,19 @@ pub async fn get_session_by_index(
 ) -> Result<Json<SessionResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
+    let index: Index = if String::from("current") == index.to_string() {
+        let session: EpochIndex = redis::cmd("GET")
+            .arg(CacheKey::SessionByIndex(Index::Current))
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+        Index::Num(session)
+    } else {
+        Index::Str(index.to_string())
+    };
+
     let data: CacheMap = redis::cmd("HGETALL")
-        .arg(CacheKey::SessionByIndex(Index::Str(index.to_string())))
+        .arg(CacheKey::SessionByIndex(index))
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
