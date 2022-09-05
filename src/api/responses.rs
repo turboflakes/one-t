@@ -86,6 +86,7 @@ pub struct SessionResult {
     sbix: BlockNumber,
     esix: u8,
     is_partial: bool,
+    is_current: bool,
 }
 
 impl From<CacheMap> for SessionResult {
@@ -114,6 +115,11 @@ impl From<CacheMap> for SessionResult {
                 .unwrap_or_default(),
             is_partial: data
                 .get("is_partial")
+                .unwrap_or(&zero)
+                .parse::<bool>()
+                .unwrap_or_default(),
+            is_current: data
+                .get("is_current")
                 .unwrap_or(&zero)
                 .parse::<bool>()
                 .unwrap_or_default(),

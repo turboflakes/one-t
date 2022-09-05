@@ -145,6 +145,20 @@ impl Channel {
                                 {
                                     let is_new: bool = is_new.parse().unwrap_or(false);
                                     if is_new {
+                                        // send previous session (clients might find it usuful, since is no longer the current session)
+                                        if let Ok(data) = redis::cmd("HGETALL")
+                                            .arg(CacheKey::SessionByIndex(Index::Num(current - 1)))
+                                            .query_async::<Connection, CacheMap>(&mut conn)
+                                            .await
+                                        {
+                                            let resp = WsResponseMessage {
+                                                r#type: String::from("session"),
+                                                result: SessionResult::from(data),
+                                            };
+                                            let serialized = serde_json::to_string(&resp).unwrap();
+                                            act.publish_message(&serialized, 0);
+                                        }
+                                        // send new session
                                         if let Ok(data) = redis::cmd("HGETALL")
                                             .arg(CacheKey::SessionByIndex(Index::Num(current)))
                                             .query_async::<Connection, CacheMap>(&mut conn)
