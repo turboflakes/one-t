@@ -24,7 +24,7 @@ use crate::api::handlers::{
     health::get_health,
     info::get_info,
     pool::{get_pool, get_pool_nomination, get_pool_nominees, get_pools_stats},
-    sessions::get_session_by_index,
+    sessions::{get_session_by_index, get_sessions},
     validators::{get_peer_by_authority, get_validator_by_stash, get_validators},
     ws::init,
 };
@@ -46,7 +46,9 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
                 .route("/ws", web::get().to(init))
                 // SESSION routes
                 .service(
-                    web::scope("/sessions").route("/{index}", web::get().to(get_session_by_index)),
+                    web::scope("/sessions")
+                        .route("/{index}", web::get().to(get_session_by_index))
+                        .route("", web::get().to(get_sessions)),
                 )
                 // BLOCKS routes
                 .service(web::scope("/blocks").route("/best", web::get().to(get_best_block)))

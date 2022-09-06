@@ -84,9 +84,12 @@ pub struct SessionResult {
     six: EpochIndex,
     eix: EraIndex,
     sbix: BlockNumber,
+    ebix: BlockNumber,
     esix: u8,
     is_partial: bool,
     is_current: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    is_empty: Option<bool>,
 }
 
 impl From<CacheMap> for SessionResult {
@@ -108,6 +111,11 @@ impl From<CacheMap> for SessionResult {
                 .unwrap_or(&zero)
                 .parse::<BlockNumber>()
                 .unwrap_or_default(),
+            ebix: data
+                .get("current_block")
+                .unwrap_or(&zero)
+                .parse::<BlockNumber>()
+                .unwrap_or_default(),
             esix: data
                 .get("era_session_index")
                 .unwrap_or(&zero)
@@ -123,7 +131,23 @@ impl From<CacheMap> for SessionResult {
                 .unwrap_or(&zero)
                 .parse::<bool>()
                 .unwrap_or_default(),
+            is_empty: if data.get("is_empty").is_some() {
+                Some(true)
+            } else {
+                None
+            },
         }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct SessionsResult {
+    pub data: Vec<SessionResult>,
+}
+
+impl From<Vec<SessionResult>> for SessionsResult {
+    fn from(data: Vec<SessionResult>) -> Self {
+        SessionsResult { data }
     }
 }
 

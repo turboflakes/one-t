@@ -21,14 +21,66 @@
 
 use crate::api::{
     helpers::respond_json,
-    responses::{CacheMap, SessionResult},
+    responses::{CacheMap, SessionResult, SessionsResult},
 };
 use crate::cache::{get_conn, CacheKey, Index, RedisPool};
 use crate::errors::{ApiError, CacheError};
 use crate::records::EpochIndex;
-use actix_web::web::{Data, Json, Path};
+use actix_web::web::{Data, Json, Path, Query};
 use log::warn;
 use redis::aio::Connection;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+pub struct Params {
+    #[serde(default = "default_max")]
+    max: u32,
+}
+
+fn default_max() -> u32 {
+    48
+}
+
+/// Get a sessions filtered by query params
+pub async fn get_sessions(
+    params: Query<Params>,
+    cache: Data<RedisPool>,
+) -> Result<Json<SessionsResult>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+
+    let current: EpochIndex = redis::cmd("GET")
+        .arg(CacheKey::SessionByIndex(Index::Current))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    let mut data: Vec<SessionResult> = Vec::new();
+    let mut max = Some(params.max);
+    while let Some(i) = max {
+        if i == 0 {
+            max = None;
+        } else {
+            let index = current - i;
+
+            let mut session_data: CacheMap = redis::cmd("HGETALL")
+                .arg(CacheKey::SessionByIndex(Index::Num(index)))
+                .query_async(&mut conn as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+
+            if session_data.is_empty() {
+                session_data.insert(String::from("session"), index.to_string());
+                session_data.insert(String::from("is_empty"), (true).to_string());
+            }
+
+            data.push(session_data.into());
+
+            max = Some(i - 1);
+        }
+    }
+
+    respond_json(data.into())
+}
 
 /// Get current session details
 pub async fn get_session_by_index(
