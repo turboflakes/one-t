@@ -23,7 +23,6 @@ use crate::records::{AuthorityIndex, BlockNumber, EpochIndex, EraIndex};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
-
 pub type AuthorityKeyCache = BTreeMap<String, String>;
 
 #[derive(Debug, Serialize, PartialEq)]

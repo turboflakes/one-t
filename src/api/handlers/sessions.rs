@@ -60,7 +60,7 @@ pub async fn get_sessions(
         if i == 0 {
             max = None;
         } else {
-            let index = current - i;
+            let index = current - i + 1;
 
             let mut session_data: CacheMap = redis::cmd("HGETALL")
                 .arg(CacheKey::SessionByIndex(Index::Num(index)))
@@ -68,7 +68,7 @@ pub async fn get_sessions(
                 .await
                 .map_err(CacheError::RedisCMDError)?;
 
-            if session_data.is_empty() {
+            if session_data.is_empty() || session_data.get("session").is_none() {
                 session_data.insert(String::from("session"), index.to_string());
                 session_data.insert(String::from("is_empty"), (true).to_string());
             }
