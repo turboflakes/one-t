@@ -23,7 +23,7 @@ use crate::api::{
     helpers::respond_json,
     responses::{AuthorityKey, AuthorityKeyCache, CacheMap, ValidatorResult, ValidatorsResult},
 };
-use crate::cache::{get_conn, CacheKey, Index, RedisPool};
+use crate::cache::{get_conn, CacheKey, Index, RedisPool, Verbosity};
 use crate::errors::{ApiError, CacheError};
 use crate::records::EpochIndex;
 use actix_web::web::{Data, Json, Path, Query};
@@ -73,6 +73,12 @@ pub struct Params {
     report: Report,
     #[serde(default = "default_index")]
     session: Index,
+    // show_stats indicates wheter parachain details should be retrieved or not, default false
+    #[serde(default)]
+    show_stats: bool,
+    // show_summary indicates wheter parachain summary should be retrieved or not, default false
+    #[serde(default)]
+    show_summary: bool,
 }
 
 fn default_role() -> Role {
@@ -117,6 +123,8 @@ async fn get_authorities(
 /// Get active para_validators
 async fn get_para_authorities(
     index: EpochIndex,
+    show_stats: bool,
+    show_summary: bool,
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorsResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
@@ -129,11 +137,35 @@ async fn get_para_authorities(
 
     let mut data: Vec<ValidatorResult> = Vec::new();
     for key in authority_keys.iter() {
-        let auth: CacheMap = redis::cmd("HGETALL")
+        let mut auth: CacheMap = redis::cmd("HGETALL")
             .arg(key)
             .query_async(&mut conn as &mut Connection)
             .await
             .map_err(CacheError::RedisCMDError)?;
+
+        if show_stats {
+            let stats: CacheMap = redis::cmd("HGETALL")
+                .arg(CacheKey::AuthorityRecordVerbose(
+                    key.to_string(),
+                    Verbosity::Stats,
+                ))
+                .query_async(&mut conn as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+            auth.extend(stats);
+        }
+
+        if show_summary {
+            let summary: CacheMap = redis::cmd("HGETALL")
+                .arg(CacheKey::AuthorityRecordVerbose(
+                    key.to_string(),
+                    Verbosity::Summary,
+                ))
+                .query_async(&mut conn as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+            auth.extend(summary);
+        }
 
         data.push(auth.into());
     }
@@ -169,7 +201,9 @@ pub async fn get_validators(
 
     match params.role {
         Role::Authority => get_authorities(session_index, cache).await,
-        Role::ParaAuthority => get_para_authorities(session_index, cache).await,
+        Role::ParaAuthority => {
+            get_para_authorities(session_index, params.show_stats, params.show_summary, cache).await
+        }
         _ => {
             let msg = format!(
                 "Parameter role={} must be equal to one of the options: [authority, para_authority]",

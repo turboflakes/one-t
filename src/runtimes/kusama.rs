@@ -18,7 +18,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-use crate::cache::{CacheKey, Index};
+use crate::cache::{CacheKey, Index, Verbosity};
 use crate::config::CONFIG;
 use crate::errors::{CacheError, OnetError};
 use crate::matrix::FileInfo;
@@ -203,19 +203,51 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                     if let Some(authority_record) =
                         records.get_authority_record(*authority_idx, None)
                     {
+                        let authority_key =
+                            CacheKey::AuthorityRecord(current_era, current_epoch, *authority_idx);
                         let mut data: BTreeMap<String, String> = BTreeMap::new();
                         if let Some(para_record) = records.get_para_record(*authority_idx, None) {
                             let serialized = serde_json::to_string(&para_record)?;
                             data.insert(String::from("para"), serialized);
+
+                            // cache para.stats as a different cache key
+                            let serialized = serde_json::to_string(&para_record.para_stats())?;
+                            redis::cmd("HSET")
+                                .arg(CacheKey::AuthorityRecordVerbose(
+                                    authority_key.to_string(),
+                                    Verbosity::Stats,
+                                ))
+                                .arg(String::from("para_stats"))
+                                .arg(serialized)
+                                .query_async(&mut cache as &mut Connection)
+                                .await
+                                .map_err(CacheError::RedisCMDError)?;
+
+                            // cache para.summary as a different cache key
+                            let summary = ParaStats {
+                                points: para_record.total_points(),
+                                authored_blocks: para_record.total_authored_blocks(),
+                                core_assignments: para_record.total_core_assignments(),
+                                explicit_votes: para_record.total_explicit_votes(),
+                                implicit_votes: para_record.total_implicit_votes(),
+                                missed_votes: para_record.total_missed_votes(),
+                            };
+                            let serialized = serde_json::to_string(&summary)?;
+                            redis::cmd("HSET")
+                                .arg(CacheKey::AuthorityRecordVerbose(
+                                    authority_key.to_string(),
+                                    Verbosity::Summary,
+                                ))
+                                .arg(String::from("para_summary"))
+                                .arg(serialized)
+                                .query_async(&mut cache as &mut Connection)
+                                .await
+                                .map_err(CacheError::RedisCMDError)?;
                         }
                         let serialized = serde_json::to_string(&authority_record)?;
                         data.insert(String::from("auth"), serialized);
                         redis::cmd("HSET")
-                            .arg(CacheKey::AuthorityRecord(
-                                current_era,
-                                current_epoch,
-                                *authority_idx,
-                            ))
+                            .arg(authority_key)
                             .arg(data)
                             .query_async(&mut cache as &mut Connection)
                             .await
@@ -332,12 +364,14 @@ pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(),
         if let Some(authorities) = records.get_authorities(None) {
             for authority_idx in authorities.iter() {
                 if let Some(authority_record) = records.get_authority_record(*authority_idx, None) {
-                    let identity =
-                        get_display_name(&onet, &authority_record.address(), None).await?;
                     // cache authority key for the current era and session
                     // along with data_type and identity
                     let mut data: BTreeMap<String, String> = BTreeMap::new();
-                    data.insert(String::from("identity"), identity);
+                    if let Some(identity) =
+                        get_identity(&onet, &authority_record.address(), None).await?
+                    {
+                        data.insert(String::from("identity"), identity);
+                    };
                     data.insert(
                         String::from("address"),
                         (&authority_record.address()).to_string(),
@@ -353,6 +387,7 @@ pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(),
                         .query_async(&mut cache as &mut Connection)
                         .await
                         .map_err(CacheError::RedisCMDError)?;
+
                     // cache authority key by stash account
                     let mut data: BTreeMap<String, String> = BTreeMap::new();
                     data.insert(String::from("era"), current_era.to_string());
@@ -367,6 +402,7 @@ pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(),
                         .query_async(&mut cache as &mut Connection)
                         .await
                         .map_err(CacheError::RedisCMDError)?;
+
                     // cache authority key into authorities by session to be easily filtered
                     let _: () = redis::cmd("SADD")
                         .arg(CacheKey::AuthorityKeysBySession(current_epoch))
@@ -377,6 +413,7 @@ pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(),
                         .query_async(&mut cache as &mut Connection)
                         .await
                         .map_err(CacheError::RedisCMDError)?;
+
                     if records.get_para_record(*authority_idx, None).is_some() {
                         // cache authority key into authorities by session (only para_validators) to be easily filtered
                         let _: () = redis::cmd("SADD")
@@ -871,7 +908,7 @@ pub async fn run_val_perf_report(
     if let Some(subs) = subscribers.get(Some(EpochKey(era_index, epoch_index))) {
         for (stash, user_id) in subs.iter() {
             let mut validator = Validator::new(stash.clone());
-            validator.name = get_display_name(&onet, &stash, None).await?;
+            validator.name = get_display_name(&onet, &stash).await?;
             let mut data = RawDataPara {
                 network: network.clone(),
                 meta: metadata.clone(),
@@ -920,8 +957,7 @@ pub async fn run_val_perf_report(
                             Some(EpochKey(era_index, epoch_index)),
                         ) {
                             let peer_name =
-                                get_display_name(&onet, peer_authority_record.address(), None)
-                                    .await?;
+                                get_display_name(&onet, peer_authority_record.address()).await?;
 
                             if let Some(peer_para_record) = records.get_para_record(
                                 *peer_authority_index,
@@ -995,8 +1031,7 @@ pub async fn run_groups_report(
                         Some(EpochKey(era_index, epoch_index)),
                     ) {
                         // get validator name
-                        let name =
-                            get_display_name(&onet, &authority_record.address(), None).await?;
+                        let name = get_display_name(&onet, &authority_record.address()).await?;
 
                         //
                         let auths = group_authorities_map.entry(group_idx).or_insert(Vec::new());
@@ -1228,7 +1263,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             )) = para_data
             {
                 // Note: If Para data exists than get node identity to be visible in the report
-                v.name = get_display_name(&onet, &stash, None).await?;
+                v.name = get_display_name(&onet, &stash).await?;
                 //
                 v.para_epochs = para_epochs;
                 v.explicit_votes = explicit_votes;
@@ -1814,7 +1849,7 @@ pub async fn cache_pools_era(
                     // get nominee identity
                     let nominee = Nominee {
                         stash: nominee.to_string(),
-                        identity: get_display_name(&onet, &nominee, None).await?,
+                        identity: get_display_name(&onet, &nominee).await?,
                     };
                     nominees.push(nominee);
                 }
@@ -2006,12 +2041,21 @@ async fn get_own_stake(onet: &Onet, stash: &AccountId32) -> Result<u128, OnetErr
     return Ok(0);
 }
 
+async fn get_display_name(onet: &Onet, stash: &AccountId32) -> Result<String, OnetError> {
+    if let Some(identity) = get_identity(&onet, &stash, None).await? {
+        return Ok(identity);
+    } else {
+        let s = &stash.to_string();
+        Ok(format!("{}...{}", &s[..6], &s[s.len() - 6..]))
+    }
+}
+
 #[async_recursion]
-async fn get_display_name(
+async fn get_identity(
     onet: &Onet,
     stash: &AccountId32,
     sub_account_name: Option<String>,
-) -> Result<String, OnetError> {
+) -> Result<Option<String>, OnetError> {
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
 
@@ -2023,22 +2067,17 @@ async fn get_display_name(
                 Some(child) => format!("{}/{}", parent, child),
                 None => parent,
             };
-            Ok(name)
+            Ok(Some(name))
         }
         None => {
             if let Some((parent_account, data)) =
                 api.storage().identity().super_of(stash, None).await?
             {
                 let sub_account_name = parse_identity_data(data);
-                return get_display_name(
-                    &onet,
-                    &parent_account,
-                    Some(sub_account_name.to_string()),
-                )
-                .await;
+                return get_identity(&onet, &parent_account, Some(sub_account_name.to_string()))
+                    .await;
             } else {
-                let s = &stash.to_string();
-                Ok(format!("{}...{}", &s[..6], &s[s.len() - 6..]))
+                Ok(None)
             }
         }
     }

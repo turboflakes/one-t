@@ -25,7 +25,7 @@ use crate::api::{
     },
     ws::server::{Message, Remove, Server, WsResponseMessage},
 };
-use crate::cache::{create_or_await_pool, get_conn, CacheKey, Index, RedisPool};
+use crate::cache::{create_or_await_pool, get_conn, CacheKey, Index, RedisPool, Verbosity};
 use crate::config::CONFIG;
 use crate::records::{BlockNumber, EpochIndex};
 
@@ -44,7 +44,7 @@ pub enum Topic {
     BestBlock,
     NewSession,
     Validator(AccountId32),
-    ParaAuthorities(EpochIndex),
+    ParaAuthorities(EpochIndex, Verbosity),
 }
 
 impl std::fmt::Display for Topic {
@@ -53,7 +53,7 @@ impl std::fmt::Display for Topic {
             Self::BestBlock => write!(f, "best_block"),
             Self::NewSession => write!(f, "new_session"),
             Self::Validator(account) => write!(f, "v:{}", account),
-            Self::ParaAuthorities(index) => write!(f, "pas:{}", index),
+            Self::ParaAuthorities(index, verbosity) => write!(f, "pas:{}:{}", index, verbosity),
         }
     }
 }
@@ -218,7 +218,7 @@ impl Channel {
                     };
                     block_on(future);
                 }
-                Topic::ParaAuthorities(index) => {
+                Topic::ParaAuthorities(index, verbosity) => {
                     let future = async {
                         if let Ok(mut conn) = get_conn(&act.cache).await {
                             if let Ok(authority_keys) = redis::cmd("SMEMBERS")
@@ -229,12 +229,22 @@ impl Channel {
                                 if !authority_keys.is_empty() {
                                     let mut data: Vec<ValidatorResult> = Vec::new();
                                     for key in authority_keys.iter() {
-                                        if let Ok(auth) = redis::cmd("HGETALL")
+                                        if let Ok(mut auth) = redis::cmd("HGETALL")
                                             .arg(key)
                                             .query_async::<Connection, CacheMap>(&mut conn)
                                             .await
                                         {
-                                            data.push(auth.into());
+                                            if let Ok(tmp) = redis::cmd("HGETALL")
+                                                .arg(CacheKey::AuthorityRecordVerbose(
+                                                    key.to_string(),
+                                                    verbosity.clone(),
+                                                ))
+                                                .query_async::<Connection, CacheMap>(&mut conn)
+                                                .await
+                                            {
+                                                auth.extend(tmp);
+                                                data.push(auth.into());
+                                            }
                                         }
                                     }
                                     let resp = WsResponseMessage {

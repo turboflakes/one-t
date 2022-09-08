@@ -865,7 +865,7 @@ pub struct ParaRecord {
     #[serde(rename = "pid")]
     para_id: Option<ParaId>,
     peers: Vec<AuthorityIndex>,
-    #[serde(rename = "stats")]
+    #[serde(skip)]
     para_stats: BTreeMap<ParaId, ParaStats>,
 }
 
@@ -980,6 +980,17 @@ impl ParaRecord {
             .entry(para_id)
             .or_insert(ParaStats::default());
         stats.missed_votes += 1;
+    }
+
+    pub fn total_points(&self) -> Points {
+        self.para_stats.iter().map(|(_, stats)| stats.points).sum()
+    }
+
+    pub fn total_authored_blocks(&self) -> AuthoredBlocks {
+        self.para_stats
+            .iter()
+            .map(|(_, stats)| stats.authored_blocks)
+            .sum()
     }
 
     pub fn total_missed_votes(&self) -> Votes {

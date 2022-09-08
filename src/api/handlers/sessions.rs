@@ -21,7 +21,7 @@
 
 use crate::api::{
     helpers::respond_json,
-    responses::{CacheMap, SessionResult, SessionsResult},
+    responses::{CacheMap, SessionResult, SessionsResult, ValidatorResult},
 };
 use crate::cache::{get_conn, CacheKey, Index, RedisPool};
 use crate::errors::{ApiError, CacheError};
@@ -72,6 +72,60 @@ pub async fn get_sessions(
                 session_data.insert(String::from("session"), index.to_string());
                 session_data.insert(String::from("is_empty"), (true).to_string());
             }
+
+            // // calculate session MVR if not already cached
+            // if session_data.get("mvr").is_none() {
+            //     let authority_keys: Vec<String> = redis::cmd("SMEMBERS")
+            //         .arg(CacheKey::AuthorityKeysBySessionParaOnly(index))
+            //         .query_async(&mut conn as &mut Connection)
+            //         .await
+            //         .map_err(CacheError::RedisCMDError)?;
+
+            //     let mut data: Vec<ValidatorResult> = Vec::new();
+            //     for key in authority_keys.iter() {
+            //         let auth: CacheMap = redis::cmd("HGETALL")
+            //             .arg(key)
+            //             .query_async(&mut conn as &mut Connection)
+            //             .await
+            //             .map_err(CacheError::RedisCMDError)?;
+
+            //         let v: ValidatorResult = auth.into();
+            //         warn!("__calculate MVR {:?}", v.mvr());
+
+            //         // data.push(auth.into());
+            //     }
+            //     // warn!("__calculate MVR {:?}", data);
+
+            //     // const data = action.payload.map(o => { if (o.is_auth && o.is_para) {
+            //     //     const stats = Object.values(o.para.stats)
+            //     //     const explicit_votes = stats.map(o => o.ev).reduce((p, c) => p + c, 0)
+            //     //     const implicit_votes = stats.map(o => o.iv).reduce((p, c) => p + c, 0)
+            //     //     const missed_votes = stats.map(o => o.mv).reduce((p, c) => p + c, 0)
+            //     //     return createValidityData(explicit_votes, implicit_votes, missed_votes)
+            //     //   } else {
+            //     //     return createValidityData(0, 0, 0)
+            //     //   }
+            //     // })
+            //     // const mvr = calculateMvr(
+            //     //   data.map(o => o.e).reduce((p, c) => p + c, 0),
+            //     //   data.map(o => o.i).reduce((p, c) => p + c, 0),
+            //     //   data.map(o => o.m).reduce((p, c) => p + c, 0),
+            //     // )
+
+            //     // let tvp: Vec<u128> = data
+            //     //     .validators
+            //     //     .iter()
+            //     //     .filter(|v| v.subset == Subset::TVP)
+            //     //     .map(|v| v.own_stake)
+            //     //     .collect();
+
+            //     // let tmp: Vec<bool> = data
+            //     //     .iter()
+            //     //     .map(|v| if v.is_auth && v.is_para { true } else { false })
+            //     //     .collect();
+            //     // warn!("__calculate MVR tmp {:?}", tmp);
+            //     // TODO cache MVR
+            // }
 
             data.push(session_data.into());
 

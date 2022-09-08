@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 pub type AuthorityKeyCache = BTreeMap<String, String>;
+use log::warn;
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct AuthorityKey {
@@ -153,22 +154,42 @@ impl From<Vec<SessionResult>> for SessionsResult {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ValidatorResult {
     address: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     identity: String,
     session: EpochIndex,
     is_auth: bool,
     is_para: bool,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     auth: BTreeMap<String, Value>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     para: BTreeMap<String, Value>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    para_summary: BTreeMap<String, Value>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    para_stats: BTreeMap<String, Value>,
 }
 
 impl From<CacheMap> for ValidatorResult {
     fn from(data: CacheMap) -> Self {
         let zero = "0".to_string();
+
         let serialized = data.get("auth").unwrap_or(&"{}".to_string()).to_string();
         let auth: BTreeMap<String, Value> = serde_json::from_str(&serialized).unwrap();
 
         let serialized = data.get("para").unwrap_or(&"{}".to_string()).to_string();
         let para: BTreeMap<String, Value> = serde_json::from_str(&serialized).unwrap();
+
+        let serialized = data
+            .get("para_summary")
+            .unwrap_or(&"{}".to_string())
+            .to_string();
+        let para_summary: BTreeMap<String, Value> = serde_json::from_str(&serialized).unwrap();
+
+        let serialized = data
+            .get("para_stats")
+            .unwrap_or(&"{}".to_string())
+            .to_string();
+        let para_stats: BTreeMap<String, Value> = serde_json::from_str(&serialized).unwrap();
 
         ValidatorResult {
             is_auth: !auth.is_empty(),
@@ -182,6 +203,8 @@ impl From<CacheMap> for ValidatorResult {
                 .unwrap_or_default(),
             auth,
             para,
+            para_summary,
+            para_stats,
         }
     }
 }
@@ -194,5 +217,44 @@ pub struct ValidatorsResult {
 impl From<Vec<ValidatorResult>> for ValidatorsResult {
     fn from(data: Vec<ValidatorResult>) -> Self {
         ValidatorsResult { data }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ValidatorSummaryResult {
+    pub address: String,
+    pub session: EpochIndex,
+    // pub is_auth: bool,
+    // pub is_para: bool,
+    pub summary: BTreeMap<String, Value>,
+}
+
+impl From<CacheMap> for ValidatorSummaryResult {
+    fn from(data: CacheMap) -> Self {
+        let zero = "0".to_string();
+
+        let serialized = data.get("summary").unwrap_or(&"{}".to_string()).to_string();
+        let summary: BTreeMap<String, Value> = serde_json::from_str(&serialized).unwrap();
+
+        ValidatorSummaryResult {
+            address: data.get("address").unwrap_or(&"".to_string()).to_string(),
+            session: data
+                .get("session")
+                .unwrap_or(&zero)
+                .parse::<EpochIndex>()
+                .unwrap_or_default(),
+            summary,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ValidatorsSummaryResult {
+    pub data: Vec<ValidatorSummaryResult>,
+}
+
+impl From<Vec<ValidatorSummaryResult>> for ValidatorsSummaryResult {
+    fn from(data: Vec<ValidatorSummaryResult>) -> Self {
+        ValidatorsSummaryResult { data }
     }
 }

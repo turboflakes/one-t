@@ -8,6 +8,7 @@ use crate::api::ws::{
     server,
     server::{Methods, WsRequestMessage},
 };
+use crate::cache::Verbosity;
 use crate::records::EpochIndex;
 use actix::prelude::*;
 use actix_web_actors::ws;
@@ -163,14 +164,40 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                             }
                         }
                     }
-                    Methods::SubscribeParaAuthorities => {
+                    Methods::SubscribeParaAuthoritiesSummary => {
                         for index in req.params.iter() {
                             if let Ok(index) = &index.parse::<EpochIndex>() {
                                 self.server_addr.do_send(server::Subscribe {
                                     id: self.id,
-                                    topic: Topic::ParaAuthorities(*index),
+                                    topic: Topic::ParaAuthorities(*index, Verbosity::Summary),
                                 });
                             }
+                        }
+                    }
+                    Methods::SubscribeParaAuthoritiesStats => {
+                        for index in req.params.iter() {
+                            if let Ok(index) = &index.parse::<EpochIndex>() {
+                                self.server_addr.do_send(server::Subscribe {
+                                    id: self.id,
+                                    topic: Topic::ParaAuthorities(*index, Verbosity::Stats),
+                                });
+                            }
+                        }
+                    }
+                    Methods::UnsubscribeBlock => {
+                        if &req.params[0] == "best" {
+                            self.server_addr.do_send(server::Unsubscribe {
+                                id: self.id,
+                                topic: Topic::BestBlock,
+                            });
+                        }
+                    }
+                    Methods::UnsubscribeSession => {
+                        if &req.params[0] == "new" {
+                            self.server_addr.do_send(server::Unsubscribe {
+                                id: self.id,
+                                topic: Topic::NewSession,
+                            });
                         }
                     }
                     Methods::UnsubscribeValidator => {
@@ -183,12 +210,22 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                             }
                         }
                     }
-                    Methods::UnsubscribeParaAuthorities => {
+                    Methods::UnsubscribeParaAuthoritiesSummary => {
                         for index in req.params.iter() {
                             if let Ok(index) = &index.parse::<EpochIndex>() {
                                 self.server_addr.do_send(server::Unsubscribe {
                                     id: self.id,
-                                    topic: Topic::ParaAuthorities(*index),
+                                    topic: Topic::ParaAuthorities(*index, Verbosity::Summary),
+                                });
+                            }
+                        }
+                    }
+                    Methods::UnsubscribeParaAuthoritiesStats => {
+                        for index in req.params.iter() {
+                            if let Ok(index) = &index.parse::<EpochIndex>() {
+                                self.server_addr.do_send(server::Unsubscribe {
+                                    id: self.id,
+                                    topic: Topic::ParaAuthorities(*index, Verbosity::Stats),
                                 });
                             }
                         }

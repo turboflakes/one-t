@@ -58,12 +58,30 @@ impl std::fmt::Display for Index {
     }
 }
 
+pub type AuthorityRecordKey = String;
+
+#[derive(Clone, Eq, Hash, PartialEq, Debug)]
+pub enum Verbosity {
+    Stats,
+    Summary,
+}
+
+impl std::fmt::Display for Verbosity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stats => write!(f, "stats"),
+            Self::Summary => write!(f, "summary"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CacheKey {
     Network,
     BestBlock,
     SessionByIndex(Index),
     AuthorityRecord(EraIndex, EpochIndex, AuthorityIndex),
+    AuthorityRecordVerbose(AuthorityRecordKey, Verbosity),
     AuthorityKeyByAccountAndSession(AccountId32, EpochIndex),
     AuthorityKeysBySession(EpochIndex),
     AuthorityKeysBySessionParaOnly(EpochIndex),
@@ -80,6 +98,9 @@ impl std::fmt::Display for CacheKey {
                 "e:{}:s:{}:a:{}",
                 era_index, session_index, authority_index
             ),
+            Self::AuthorityRecordVerbose(authority_key, verbosity) => {
+                write!(f, "{}:{}", authority_key, verbosity)
+            }
             Self::AuthorityKeyByAccountAndSession(account, session) => {
                 write!(f, "akas:{}:{}", account, session)
             }
