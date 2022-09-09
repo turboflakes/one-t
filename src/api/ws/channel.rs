@@ -197,13 +197,33 @@ impl Channel {
                                     .await
                                 {
                                     if !data.is_empty() {
-                                        let authority_key: AuthorityKey = data.into();
+                                        let key: AuthorityKey = data.into();
 
-                                        if let Ok(data) = redis::cmd("HGETALL")
-                                            .arg(authority_key.to_string())
+                                        if let Ok(mut data) = redis::cmd("HGETALL")
+                                            .arg(key.to_string())
                                             .query_async::<Connection, CacheMap>(&mut conn)
                                             .await
                                         {
+                                            if let Ok(tmp) = redis::cmd("HGETALL")
+                                                .arg(CacheKey::AuthorityRecordVerbose(
+                                                    key.to_string(),
+                                                    Verbosity::Stats,
+                                                ))
+                                                .query_async::<Connection, CacheMap>(&mut conn)
+                                                .await
+                                            {
+                                                data.extend(tmp);
+                                            }
+                                            if let Ok(tmp) = redis::cmd("HGETALL")
+                                                .arg(CacheKey::AuthorityRecordVerbose(
+                                                    key.to_string(),
+                                                    Verbosity::Summary,
+                                                ))
+                                                .query_async::<Connection, CacheMap>(&mut conn)
+                                                .await
+                                            {
+                                                data.extend(tmp);
+                                            }
                                             let resp = WsResponseMessage {
                                                 r#type: String::from("validator"),
                                                 result: ValidatorResult::from(data),
@@ -243,8 +263,8 @@ impl Channel {
                                                 .await
                                             {
                                                 auth.extend(tmp);
-                                                data.push(auth.into());
                                             }
+                                            data.push(auth.into());
                                         }
                                     }
                                     let resp = WsResponseMessage {

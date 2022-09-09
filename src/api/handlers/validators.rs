@@ -262,13 +262,37 @@ pub async fn get_validator_by_stash(
     }
     // TODO check if era and session are the current ones
     //
-    let authority_key: AuthorityKey = data.into();
+    let key: AuthorityKey = data.into();
 
-    let data: CacheMap = redis::cmd("HGETALL")
-        .arg(authority_key.to_string())
+    let mut data: CacheMap = redis::cmd("HGETALL")
+        .arg(key.to_string())
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
+
+    if params.show_stats {
+        let stats: CacheMap = redis::cmd("HGETALL")
+            .arg(CacheKey::AuthorityRecordVerbose(
+                key.to_string(),
+                Verbosity::Stats,
+            ))
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+        data.extend(stats);
+    }
+
+    if params.show_summary {
+        let summary: CacheMap = redis::cmd("HGETALL")
+            .arg(CacheKey::AuthorityRecordVerbose(
+                key.to_string(),
+                Verbosity::Summary,
+            ))
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+        data.extend(summary);
+    }
 
     respond_json(data.into())
 }
@@ -320,15 +344,39 @@ pub async fn get_peer_by_authority(
         return Err(ApiError::NotFound(msg));
     }
 
-    let mut authority_key: AuthorityKey = data.into();
+    let mut key: AuthorityKey = data.into();
     // set peer authority index to authority key
-    authority_key.authority_index = peer_authority_index;
+    key.authority_index = peer_authority_index;
 
-    let data: CacheMap = redis::cmd("HGETALL")
-        .arg(authority_key.to_string())
+    let mut data: CacheMap = redis::cmd("HGETALL")
+        .arg(key.to_string())
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
+
+    if params.show_stats {
+        let stats: CacheMap = redis::cmd("HGETALL")
+            .arg(CacheKey::AuthorityRecordVerbose(
+                key.to_string(),
+                Verbosity::Stats,
+            ))
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+        data.extend(stats);
+    }
+
+    if params.show_summary {
+        let summary: CacheMap = redis::cmd("HGETALL")
+            .arg(CacheKey::AuthorityRecordVerbose(
+                key.to_string(),
+                Verbosity::Summary,
+            ))
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+        data.extend(summary);
+    }
 
     respond_json(data.into())
 }
