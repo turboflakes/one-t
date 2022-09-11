@@ -315,7 +315,6 @@ pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(),
                 data.insert(String::from("start_block"), (*start_block).to_string());
                 data.insert(String::from("current_block"), (*current_block).to_string());
                 data.insert(String::from("is_new"), (true).to_string());
-                data.insert(String::from("is_current"), (true).to_string());
                 data.insert(
                     String::from("era_session_index"),
                     era_session_index.to_string(),
@@ -340,18 +339,6 @@ pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(),
                 redis::cmd("HSET")
                     .arg(CacheKey::SessionByIndex(Index::Num(
                         records.current_epoch(),
-                    )))
-                    .arg(data)
-                    .query_async(&mut cache as &mut Connection)
-                    .await
-                    .map_err(CacheError::RedisCMDError)?;
-
-                // update previous session
-                let mut data: BTreeMap<String, String> = BTreeMap::new();
-                data.insert(String::from("is_current"), (false).to_string());
-                redis::cmd("HSET")
-                    .arg(CacheKey::SessionByIndex(Index::Num(
-                        records.current_epoch() - 1,
                     )))
                     .arg(data)
                     .query_async(&mut cache as &mut Connection)

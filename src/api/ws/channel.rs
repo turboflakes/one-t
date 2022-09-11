@@ -146,11 +146,15 @@ impl Channel {
                                     let is_new: bool = is_new.parse().unwrap_or(false);
                                     if is_new {
                                         // send previous session (clients might find it usuful, since is no longer the current session)
-                                        if let Ok(data) = redis::cmd("HGETALL")
+                                        if let Ok(mut data) = redis::cmd("HGETALL")
                                             .arg(CacheKey::SessionByIndex(Index::Num(current - 1)))
                                             .query_async::<Connection, CacheMap>(&mut conn)
                                             .await
                                         {
+                                            data.insert(
+                                                String::from("is_current"),
+                                                (false).to_string(),
+                                            );
                                             let resp = WsResponseMessage {
                                                 r#type: String::from("session"),
                                                 result: SessionResult::from(data),
@@ -159,11 +163,15 @@ impl Channel {
                                             act.publish_message(&serialized, 0);
                                         }
                                         // send new session
-                                        if let Ok(data) = redis::cmd("HGETALL")
+                                        if let Ok(mut data) = redis::cmd("HGETALL")
                                             .arg(CacheKey::SessionByIndex(Index::Num(current)))
                                             .query_async::<Connection, CacheMap>(&mut conn)
                                             .await
                                         {
+                                            data.insert(
+                                                String::from("is_current"),
+                                                (true).to_string(),
+                                            );
                                             let resp = WsResponseMessage {
                                                 r#type: String::from("session"),
                                                 result: SessionResult::from(data),
