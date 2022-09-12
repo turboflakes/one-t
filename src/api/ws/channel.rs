@@ -22,7 +22,7 @@
 use crate::api::{
     responses::{
         AuthorityKey, AuthorityKeyCache, BlockResult, CacheMap, ParachainsResult, SessionResult,
-        ValidatorResult,
+        ValidatorResult, ValidatorsResult,
     },
     ws::server::{Message, Remove, Server, WsResponseMessage},
 };
@@ -235,6 +235,10 @@ impl Channel {
                                             {
                                                 data.extend(tmp);
                                             }
+                                            data.insert(
+                                                String::from("session"),
+                                                current_session.to_string(),
+                                            );
                                             let resp = WsResponseMessage {
                                                 r#type: String::from("validator"),
                                                 result: ValidatorResult::from(data),
@@ -280,7 +284,10 @@ impl Channel {
                                     }
                                     let resp = WsResponseMessage {
                                         r#type: String::from("validators"),
-                                        result: data,
+                                        result: ValidatorsResult {
+                                            session: *index,
+                                            data,
+                                        },
                                     };
                                     let serialized = serde_json::to_string(&resp).unwrap();
                                     act.publish_message(&serialized, 0);

@@ -109,9 +109,6 @@ impl std::fmt::Display for CacheKey {
             Self::AuthorityKeysBySessionParaOnly(session_index) => {
                 write!(f, "aks:{}:p", session_index)
             }
-            Self::AuthorityKeysBySessionParaOnly(session_index) => {
-                write!(f, "aks:{}:p", session_index)
-            }
             Self::ParachainsBySession(session_index) => {
                 write!(f, "p:{}", session_index)
             }

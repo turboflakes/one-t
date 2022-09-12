@@ -117,7 +117,10 @@ async fn get_authorities(
         data.push(auth.into());
     }
 
-    respond_json(data.into())
+    respond_json(ValidatorsResult {
+        session: index,
+        data,
+    })
 }
 
 /// Get active para_validators
@@ -170,7 +173,10 @@ async fn get_para_authorities(
         data.push(auth.into());
     }
 
-    respond_json(data.into())
+    respond_json(ValidatorsResult {
+        session: index,
+        data,
+    })
 }
 
 /// Get a validators filtered by query params
@@ -294,6 +300,8 @@ pub async fn get_validator_by_stash(
         data.extend(summary);
     }
 
+    data.insert(String::from("session"), session_index.to_string());
+
     respond_json(data.into())
 }
 
@@ -377,6 +385,8 @@ pub async fn get_peer_by_authority(
             .map_err(CacheError::RedisCMDError)?;
         data.extend(summary);
     }
+
+    data.insert(String::from("session"), session_index.to_string());
 
     respond_json(data.into())
 }

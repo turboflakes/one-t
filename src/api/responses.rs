@@ -19,12 +19,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::records::{AuthorityIndex, BlockNumber, EpochIndex, EraIndex, ParaId, ParachainRecord};
+use crate::records::{
+    AuthorityIndex, BlockNumber, EpochIndex, EraIndex, ParachainRecord, Validity,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 pub type AuthorityKeyCache = BTreeMap<String, String>;
-use log::warn;
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct AuthorityKey {
@@ -156,6 +157,7 @@ pub struct ValidatorResult {
     address: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     identity: String,
+    #[serde(skip_serializing_if = "EpochIndex::is_zero")]
     session: EpochIndex,
     is_auth: bool,
     is_para: bool,
@@ -211,13 +213,8 @@ impl From<CacheMap> for ValidatorResult {
 
 #[derive(Debug, Serialize)]
 pub struct ValidatorsResult {
+    pub session: EpochIndex,
     pub data: Vec<ValidatorResult>,
-}
-
-impl From<Vec<ValidatorResult>> for ValidatorsResult {
-    fn from(data: Vec<ValidatorResult>) -> Self {
-        ValidatorsResult { data }
-    }
 }
 
 // Parachains

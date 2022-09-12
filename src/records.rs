@@ -35,6 +35,17 @@ use subxt::{
 pub type BlockNumber = u64;
 pub type EraIndex = u32;
 pub type EpochIndex = u32;
+
+pub trait Validity {
+    fn is_zero(&self) -> bool;
+}
+
+impl Validity for EpochIndex {
+    fn is_zero(&self) -> bool {
+        *self == 0
+    }
+}
+
 pub type GroupIndex = u32;
 pub type CoreIndex = u32;
 pub type AuthorityIndex = u32;

@@ -401,7 +401,6 @@ pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(),
                         String::from("address"),
                         (&authority_record.address()).to_string(),
                     );
-                    data.insert(String::from("session"), records.current_epoch().to_string());
                     redis::cmd("HSET")
                         .arg(CacheKey::AuthorityRecord(
                             current_era,
