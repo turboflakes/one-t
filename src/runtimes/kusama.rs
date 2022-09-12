@@ -254,9 +254,15 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                                 pm.stats.implicit_votes += stats.implicit_votes();
                                 pm.stats.explicit_votes += stats.explicit_votes();
                                 pm.stats.missed_votes += stats.missed_votes();
-                                pm.stats.core_assignments += stats.core_assignments();
                                 pm.stats.authored_blocks += stats.authored_blocks();
                                 pm.stats.points += stats.points();
+                                // NOTE: parachain core_assignments is related to the val_group
+                                // to calculate the core_assignments, just take into consideration that each authority in the val_group
+                                // has 1 core_assignment which means that 5 validators ca in the same group represent 1 core_assignment for the parachain.
+                                // The total of core_assignments will be given in cents meaning 100 = 1
+                                let ca: u32 = (100 / (para_record.peers().len() + 1)) as u32
+                                    * stats.core_assignments();
+                                pm.stats.core_assignments += ca;
                                 pm.para_id = *para_id;
                             }
 
