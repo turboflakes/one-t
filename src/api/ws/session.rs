@@ -184,6 +184,16 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                             }
                         }
                     }
+                    Methods::SubscribeParachains => {
+                        for index in req.params.iter() {
+                            if let Ok(index) = &index.parse::<EpochIndex>() {
+                                self.server_addr.do_send(server::Subscribe {
+                                    id: self.id,
+                                    topic: Topic::Parachains(*index),
+                                });
+                            }
+                        }
+                    }
                     Methods::UnsubscribeBlock => {
                         if &req.params[0] == "best" {
                             self.server_addr.do_send(server::Unsubscribe {
@@ -226,6 +236,16 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                 self.server_addr.do_send(server::Unsubscribe {
                                     id: self.id,
                                     topic: Topic::ParaAuthorities(*index, Verbosity::Stats),
+                                });
+                            }
+                        }
+                    }
+                    Methods::UnsubscribeParachains => {
+                        for index in req.params.iter() {
+                            if let Ok(index) = &index.parse::<EpochIndex>() {
+                                self.server_addr.do_send(server::Unsubscribe {
+                                    id: self.id,
+                                    topic: Topic::Parachains(*index),
                                 });
                             }
                         }

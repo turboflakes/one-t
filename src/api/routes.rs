@@ -23,6 +23,7 @@ use crate::api::handlers::{
     blocks::get_best_block,
     health::get_health,
     info::get_info,
+    parachains::get_parachains,
     pool::{get_pool, get_pool_nomination, get_pool_nominees, get_pools_stats},
     sessions::{get_session_by_index, get_sessions},
     validators::{get_peer_by_authority, get_validator_by_stash, get_validators},
@@ -62,6 +63,8 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
                         )
                         .route("", web::get().to(get_validators)),
                 )
+                // PARACHAIN routes
+                .service(web::scope("/parachains").route("", web::get().to(get_parachains)))
                 // POOL routes
                 .service(
                     web::scope("/pool")

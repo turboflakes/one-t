@@ -85,6 +85,7 @@ pub enum CacheKey {
     AuthorityKeyByAccountAndSession(AccountId32, EpochIndex),
     AuthorityKeysBySession(EpochIndex),
     AuthorityKeysBySessionParaOnly(EpochIndex),
+    ParachainsBySession(EpochIndex),
 }
 
 impl std::fmt::Display for CacheKey {
@@ -107,6 +108,12 @@ impl std::fmt::Display for CacheKey {
             Self::AuthorityKeysBySession(session_index) => write!(f, "aks:{}", session_index),
             Self::AuthorityKeysBySessionParaOnly(session_index) => {
                 write!(f, "aks:{}:p", session_index)
+            }
+            Self::AuthorityKeysBySessionParaOnly(session_index) => {
+                write!(f, "aks:{}:p", session_index)
+            }
+            Self::ParachainsBySession(session_index) => {
+                write!(f, "p:{}", session_index)
             }
         }
     }

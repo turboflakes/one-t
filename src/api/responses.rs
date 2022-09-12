@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::records::{AuthorityIndex, BlockNumber, EpochIndex, EraIndex};
+use crate::records::{AuthorityIndex, BlockNumber, EpochIndex, EraIndex, ParaId, ParachainRecord};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -220,41 +220,40 @@ impl From<Vec<ValidatorResult>> for ValidatorsResult {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ValidatorSummaryResult {
-    pub address: String,
-    pub session: EpochIndex,
-    // pub is_auth: bool,
-    // pub is_para: bool,
-    pub summary: BTreeMap<String, Value>,
+// Parachains
+pub type ParachainResult = ParachainRecord;
+
+impl From<&std::string::String> for ParachainResult {
+    fn from(serialized: &std::string::String) -> Self {
+        serde_json::from_str(&serialized).unwrap()
+    }
 }
 
-impl From<CacheMap> for ValidatorSummaryResult {
+#[derive(Debug, Serialize)]
+pub struct ParachainsResult {
+    pub session: EpochIndex,
+    pub data: Vec<ParachainResult>,
+}
+
+impl From<CacheMap> for ParachainsResult {
     fn from(data: CacheMap) -> Self {
         let zero = "0".to_string();
 
-        let serialized = data.get("summary").unwrap_or(&"{}".to_string()).to_string();
-        let summary: BTreeMap<String, Value> = serde_json::from_str(&serialized).unwrap();
+        let mut out: Vec<ParachainResult> = Vec::new();
+        for (para_id, serialized) in data.iter() {
+            if para_id == "session" {
+                continue;
+            }
+            out.push(serialized.into());
+        }
 
-        ValidatorSummaryResult {
-            address: data.get("address").unwrap_or(&"".to_string()).to_string(),
+        ParachainsResult {
             session: data
                 .get("session")
                 .unwrap_or(&zero)
                 .parse::<EpochIndex>()
                 .unwrap_or_default(),
-            summary,
+            data: out,
         }
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct ValidatorsSummaryResult {
-    pub data: Vec<ValidatorSummaryResult>,
-}
-
-impl From<Vec<ValidatorSummaryResult>> for ValidatorsSummaryResult {
-    fn from(data: Vec<ValidatorSummaryResult>) -> Self {
-        ValidatorsSummaryResult { data }
     }
 }

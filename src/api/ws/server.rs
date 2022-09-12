@@ -42,11 +42,13 @@ pub enum Methods {
     SubscribeValidator,
     SubscribeParaAuthoritiesStats,
     SubscribeParaAuthoritiesSummary,
+    SubscribeParachains,
     UnsubscribeBlock,
     UnsubscribeSession,
     UnsubscribeValidator,
     UnsubscribeParaAuthoritiesStats,
     UnsubscribeParaAuthoritiesSummary,
+    UnsubscribeParachains,
     NotSupported,
 }
 

@@ -30,7 +30,7 @@ use crate::onet::{
 use crate::pools::{Nominee, Pool, PoolNomination, PoolNominees, PoolsEra};
 use crate::records::{
     decode_authority_index, AuthorityIndex, AuthorityRecord, EpochIndex, EpochKey, EraIndex,
-    ParaId, ParaRecord, ParaStats, Points, Records, Subscribers, Votes,
+    ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records, Subscribers, Votes,
 };
 use crate::report::{
     Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara, RawDataParachains,
@@ -198,6 +198,8 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
 
             let current_era = records.current_era();
             let current_epoch = records.current_epoch();
+            let mut parachains_map: BTreeMap<ParaId, ParachainRecord> = BTreeMap::new();
+
             if let Some(authorities) = records.get_authorities(None) {
                 for authority_idx in authorities.iter() {
                     if let Some(authority_record) =
@@ -243,6 +245,30 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                                 .query_async(&mut cache as &mut Connection)
                                 .await
                                 .map_err(CacheError::RedisCMDError)?;
+
+                            // aggregate parachains counters
+                            for (para_id, stats) in para_record.para_stats().iter() {
+                                let pm = parachains_map
+                                    .entry(*para_id)
+                                    .or_insert(ParachainRecord::default());
+                                pm.stats.implicit_votes += stats.implicit_votes();
+                                pm.stats.explicit_votes += stats.explicit_votes();
+                                pm.stats.missed_votes += stats.missed_votes();
+                                pm.stats.core_assignments += stats.core_assignments();
+                                pm.stats.authored_blocks += stats.authored_blocks();
+                                pm.stats.points += stats.points();
+                                pm.para_id = *para_id;
+                            }
+
+                            if let Some(para_id) = para_record.para_id() {
+                                let pm = parachains_map
+                                    .entry(para_id)
+                                    .or_insert(ParachainRecord::default());
+                                pm.current_group = para_record.group();
+                                let mut authorities: Vec<AuthorityIndex> = vec![*authority_idx];
+                                authorities.append(&mut para_record.peers());
+                                pm.current_authorities = authorities;
+                            }
                         }
                         let serialized = serde_json::to_string(&authority_record)?;
                         data.insert(String::from("auth"), serialized);
@@ -254,6 +280,18 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                             .map_err(CacheError::RedisCMDError)?;
                     }
                 }
+            }
+
+            // cache parachains stats
+            for (para_id, records) in parachains_map.iter() {
+                let serialized = serde_json::to_string(&records)?;
+                redis::cmd("HSET")
+                    .arg(CacheKey::ParachainsBySession(current_epoch))
+                    .arg(para_id.to_string())
+                    .arg(serialized)
+                    .query_async(&mut cache as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?;
             }
 
             // cache current_block for the current_session

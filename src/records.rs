@@ -1186,6 +1186,17 @@ impl Subscribers {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ParachainRecord {
+    #[serde(rename = "pid")]
+    pub para_id: ParaId,
+    #[serde(rename = "group")]
+    pub current_group: Option<GroupIndex>,
+    #[serde(rename = "auths")]
+    pub current_authorities: Vec<AuthorityIndex>,
+    pub stats: ParaStats,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

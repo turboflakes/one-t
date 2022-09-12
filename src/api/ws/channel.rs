@@ -21,7 +21,8 @@
 
 use crate::api::{
     responses::{
-        AuthorityKey, AuthorityKeyCache, BlockResult, CacheMap, SessionResult, ValidatorResult,
+        AuthorityKey, AuthorityKeyCache, BlockResult, CacheMap, ParachainsResult, SessionResult,
+        ValidatorResult,
     },
     ws::server::{Message, Remove, Server, WsResponseMessage},
 };
@@ -45,6 +46,7 @@ pub enum Topic {
     NewSession,
     Validator(AccountId32),
     ParaAuthorities(EpochIndex, Verbosity),
+    Parachains(EpochIndex),
 }
 
 impl std::fmt::Display for Topic {
@@ -54,6 +56,7 @@ impl std::fmt::Display for Topic {
             Self::NewSession => write!(f, "new_session"),
             Self::Validator(account) => write!(f, "v:{}", account),
             Self::ParaAuthorities(index, verbosity) => write!(f, "pas:{}:{}", index, verbosity),
+            Self::Parachains(index) => write!(f, "parachains:{}", index),
         }
     }
 }
@@ -278,6 +281,28 @@ impl Channel {
                                     let resp = WsResponseMessage {
                                         r#type: String::from("validators"),
                                         result: data,
+                                    };
+                                    let serialized = serde_json::to_string(&resp).unwrap();
+                                    act.publish_message(&serialized, 0);
+                                }
+                            }
+                        }
+                    };
+                    block_on(future);
+                }
+                Topic::Parachains(index) => {
+                    let future = async {
+                        if let Ok(mut conn) = get_conn(&act.cache).await {
+                            if let Ok(mut data) = redis::cmd("HGETALL")
+                                .arg(CacheKey::ParachainsBySession(*index))
+                                .query_async::<Connection, CacheMap>(&mut conn)
+                                .await
+                            {
+                                if !data.is_empty() {
+                                    data.insert(String::from("session"), index.to_string());
+                                    let resp = WsResponseMessage {
+                                        r#type: String::from("parachains"),
+                                        result: ParachainsResult::from(data),
                                     };
                                     let serialized = serde_json::to_string(&resp).unwrap();
                                     act.publish_message(&serialized, 0);
