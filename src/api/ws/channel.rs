@@ -140,48 +140,55 @@ impl Channel {
                                 .query_async::<Connection, EpochIndex>(&mut conn)
                                 .await
                             {
-                                if let Ok(is_new) = redis::cmd("HGET")
+                                if let Ok(mut current_data) = redis::cmd("HGETALL")
                                     .arg(CacheKey::SessionByIndex(Index::Num(current)))
-                                    .arg("is_new")
-                                    .query_async::<Connection, String>(&mut conn)
+                                    .query_async::<Connection, CacheMap>(&mut conn)
                                     .await
                                 {
-                                    let is_new: bool = is_new.parse().unwrap_or(false);
-                                    if is_new {
-                                        // send previous session (clients might find it usuful, since is no longer the current session)
-                                        if let Ok(mut data) = redis::cmd("HGETALL")
+                                    let zero = "0".to_string();
+                                    let current_block = current_data
+                                        .get("current_block")
+                                        .unwrap_or(&zero)
+                                        .parse::<BlockNumber>()
+                                        .unwrap_or_default();
+                                    let start_block = current_data
+                                        .get("start_block")
+                                        .unwrap_or(&zero)
+                                        .parse::<BlockNumber>()
+                                        .unwrap_or_default();
+                                    let diff = current_block - start_block;
+
+                                    // let's push the current_session to clients every
+                                    // the first 10 blocks of each session
+                                    if diff < 10 {
+                                        // send previous session (clients might find it useful
+                                        // since is no longer the current session)
+                                        if let Ok(mut previous_data) = redis::cmd("HGETALL")
                                             .arg(CacheKey::SessionByIndex(Index::Num(current - 1)))
                                             .query_async::<Connection, CacheMap>(&mut conn)
                                             .await
                                         {
-                                            data.insert(
+                                            // set is_current to false and send previous session
+                                            previous_data.insert(
                                                 String::from("is_current"),
                                                 (false).to_string(),
                                             );
                                             let resp = WsResponseMessage {
                                                 r#type: String::from("session"),
-                                                result: SessionResult::from(data),
+                                                result: SessionResult::from(previous_data),
                                             };
                                             let serialized = serde_json::to_string(&resp).unwrap();
                                             act.publish_message(&serialized, 0);
                                         }
-                                        // send new session
-                                        if let Ok(mut data) = redis::cmd("HGETALL")
-                                            .arg(CacheKey::SessionByIndex(Index::Num(current)))
-                                            .query_async::<Connection, CacheMap>(&mut conn)
-                                            .await
-                                        {
-                                            data.insert(
-                                                String::from("is_current"),
-                                                (true).to_string(),
-                                            );
-                                            let resp = WsResponseMessage {
-                                                r#type: String::from("session"),
-                                                result: SessionResult::from(data),
-                                            };
-                                            let serialized = serde_json::to_string(&resp).unwrap();
-                                            act.publish_message(&serialized, 0);
-                                        }
+                                        // set is_current to true and send new session
+                                        current_data
+                                            .insert(String::from("is_current"), (true).to_string());
+                                        let resp = WsResponseMessage {
+                                            r#type: String::from("session"),
+                                            result: SessionResult::from(current_data),
+                                        };
+                                        let serialized = serde_json::to_string(&resp).unwrap();
+                                        act.publish_message(&serialized, 0);
                                     }
                                 }
                             }

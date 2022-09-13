@@ -304,7 +304,6 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
             if let Some(start_block) = records.start_block(None) {
                 if current_block != start_block {
                     let mut data: BTreeMap<String, String> = BTreeMap::new();
-                    data.insert(String::from("is_new"), (false).to_string());
                     data.insert(String::from("current_block"), (*current_block).to_string());
                     // by `epoch_index`
                     redis::cmd("HSET")
@@ -358,7 +357,6 @@ pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(),
                 data.insert(String::from("session"), records.current_epoch().to_string());
                 data.insert(String::from("start_block"), (*start_block).to_string());
                 data.insert(String::from("current_block"), (*current_block).to_string());
-                data.insert(String::from("is_new"), (true).to_string());
                 data.insert(
                     String::from("era_session_index"),
                     era_session_index.to_string(),
