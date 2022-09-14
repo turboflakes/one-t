@@ -33,11 +33,11 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 pub struct Params {
-    #[serde(default = "default_max")]
-    max: u32,
+    #[serde(default = "default_number_last_sessions")]
+    number_last_sessions: u32,
 }
 
-fn default_max() -> u32 {
+fn default_number_last_sessions() -> u32 {
     48
 }
 
@@ -55,10 +55,10 @@ pub async fn get_sessions(
         .map_err(CacheError::RedisCMDError)?;
 
     let mut data: Vec<SessionResult> = Vec::new();
-    let mut max = Some(params.max);
-    while let Some(i) = max {
+    let mut last = Some(params.number_last_sessions);
+    while let Some(i) = last {
         if i == 0 {
-            max = None;
+            last = None;
         } else {
             let index = current - i + 1;
 
@@ -75,7 +75,7 @@ pub async fn get_sessions(
 
             data.push(session_data.into());
 
-            max = Some(i - 1);
+            last = Some(i - 1);
         }
     }
 

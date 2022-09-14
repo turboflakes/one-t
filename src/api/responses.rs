@@ -152,23 +152,23 @@ impl From<Vec<SessionResult>> for SessionsResult {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ValidatorResult {
-    address: String,
+    pub address: String,
     #[serde(skip_serializing_if = "String::is_empty")]
-    identity: String,
+    pub identity: String,
     #[serde(skip_serializing_if = "EpochIndex::is_zero")]
-    session: EpochIndex,
-    is_auth: bool,
-    is_para: bool,
+    pub session: EpochIndex,
+    pub is_auth: bool,
+    pub is_para: bool,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    auth: BTreeMap<String, Value>,
+    pub auth: BTreeMap<String, Value>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    para: BTreeMap<String, Value>,
+    pub para: BTreeMap<String, Value>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    para_summary: BTreeMap<String, Value>,
+    pub para_summary: BTreeMap<String, Value>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    para_stats: BTreeMap<String, Value>,
+    pub para_stats: BTreeMap<String, Value>,
 }
 
 impl From<CacheMap> for ValidatorResult {
@@ -211,8 +211,9 @@ impl From<CacheMap> for ValidatorResult {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct ValidatorsResult {
+    #[serde(skip_serializing_if = "EpochIndex::is_zero")]
     pub session: EpochIndex,
     pub data: Vec<ValidatorResult>,
 }
@@ -228,6 +229,7 @@ impl From<&std::string::String> for ParachainResult {
 
 #[derive(Debug, Serialize)]
 pub struct ParachainsResult {
+    #[serde(skip_serializing_if = "EpochIndex::is_zero")]
     pub session: EpochIndex,
     pub data: Vec<ParachainResult>,
 }
