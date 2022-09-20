@@ -27,7 +27,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 pub type AuthorityKeyCache = BTreeMap<String, String>;
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct AuthorityKey {
     pub era_index: EraIndex,
     pub epoch_index: EpochIndex,
@@ -152,7 +152,7 @@ impl From<Vec<SessionResult>> for SessionsResult {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ValidatorResult {
     pub address: String,
     #[serde(skip_serializing_if = "String::is_empty")]

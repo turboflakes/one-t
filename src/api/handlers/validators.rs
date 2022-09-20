@@ -30,6 +30,7 @@ use actix_web::web::{Data, Json, Path, Query};
 use log::warn;
 use redis::aio::Connection;
 use serde::Deserialize;
+use serde_json::Value;
 use std::str::FromStr;
 use subxt::sp_runtime::AccountId32;
 
@@ -73,12 +74,15 @@ pub struct Params {
     report: Report,
     #[serde(default = "default_index")]
     session: Index,
-    // show_stats indicates wheter parachain details should be retrieved or not, default false
+    // show_stats indicates whether parachain details should be retrieved or not, default false
     #[serde(default)]
     show_stats: bool,
-    // show_summary indicates wheter parachain summary should be retrieved or not, default false
+    // show_summary indicates whether parachain summary should be retrieved or not, default false
     #[serde(default)]
     show_summary: bool,
+    // fetch_peers indicates whether peers should be also retrieved and included in the response, default false
+    #[serde(default)]
+    fetch_peers: bool,
     // address must be in combination with number_last_sessions
     #[serde(default)]
     address: String,
@@ -142,7 +146,6 @@ async fn get_session_para_authorities(
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
-
     let mut data: Vec<ValidatorResult> = Vec::new();
     for key in authority_keys.iter() {
         let mut auth: CacheMap = redis::cmd("HGETALL")
@@ -184,42 +187,17 @@ async fn get_session_para_authorities(
     })
 }
 
-/// Get validator by stash addresss and index
-async fn get_validator_by_stash_and_index(
-    stash: AccountId32,
-    session_index: EpochIndex,
+/// Get validator by AuthorityKey
+async fn get_validator_by_authority_key(
+    auth_key: AuthorityKey,
     show_stats: bool,
     show_summary: bool,
     cache: Data<RedisPool>,
 ) -> Result<ValidatorResult, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
-    let data: AuthorityKeyCache = redis::cmd("HGETALL")
-        .arg(CacheKey::AuthorityKeyByAccountAndSession(
-            stash.clone(),
-            session_index,
-        ))
-        .query_async(&mut conn as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?;
-
-    if data.is_empty() {
-        let msg = format!(
-            "At session {} the validator address {} was not found.",
-            session_index, stash
-        );
-        warn!("{}", msg);
-        return Ok(ValidatorResult {
-            address: stash.to_string(),
-            session: session_index,
-            ..Default::default()
-        });
-    }
-
-    let key: AuthorityKey = data.into();
-
     let mut data: CacheMap = redis::cmd("HGETALL")
-        .arg(key.to_string())
+        .arg(auth_key.to_string())
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
@@ -227,7 +205,7 @@ async fn get_validator_by_stash_and_index(
     if show_stats {
         let stats: CacheMap = redis::cmd("HGETALL")
             .arg(CacheKey::AuthorityRecordVerbose(
-                key.to_string(),
+                auth_key.to_string(),
                 Verbosity::Stats,
             ))
             .query_async(&mut conn as &mut Connection)
@@ -239,7 +217,7 @@ async fn get_validator_by_stash_and_index(
     if show_summary {
         let summary: CacheMap = redis::cmd("HGETALL")
             .arg(CacheKey::AuthorityRecordVerbose(
-                key.to_string(),
+                auth_key.to_string(),
                 Verbosity::Summary,
             ))
             .query_async(&mut conn as &mut Connection)
@@ -248,9 +226,55 @@ async fn get_validator_by_stash_and_index(
         data.extend(summary);
     }
 
-    data.insert(String::from("session"), session_index.to_string());
+    data.insert(String::from("session"), auth_key.epoch_index.to_string());
 
     Ok(data.into())
+}
+
+/// Get validator by stash addresss and index
+async fn get_validator_by_stash_and_index(
+    stash: AccountId32,
+    session_index: EpochIndex,
+    show_stats: bool,
+    show_summary: bool,
+    cache: Data<RedisPool>,
+) -> Result<(ValidatorResult, AuthorityKey), ApiError> {
+    let mut conn = get_conn(&cache).await?;
+
+    let authority_key_data: AuthorityKeyCache = redis::cmd("HGETALL")
+        .arg(CacheKey::AuthorityKeyByAccountAndSession(
+            stash.clone(),
+            session_index,
+        ))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    if authority_key_data.is_empty() {
+        let msg = format!(
+            "At session {} the validator address {} was not found.",
+            session_index, stash
+        );
+        warn!("{}", msg);
+        return Ok((
+            ValidatorResult {
+                address: stash.to_string(),
+                session: session_index,
+                ..Default::default()
+            },
+            authority_key_data.into(),
+        ));
+    }
+
+    // let authority_key: AuthorityKey = authority_key_data.into();
+    let data = get_validator_by_authority_key(
+        authority_key_data.clone().into(),
+        show_stats,
+        show_summary,
+        cache,
+    )
+    .await?;
+    Ok((data, authority_key_data.into()))
 }
 
 /// Get a validators filtered by query params
@@ -260,7 +284,7 @@ pub async fn get_validators(
 ) -> Result<Json<ValidatorsResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
-    let session_index: EpochIndex = match &params.session {
+    let first_session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
             if String::from("current") == *index {
                 redis::cmd("GET")
@@ -283,25 +307,56 @@ pub async fn get_validators(
         let stash = AccountId32::from_str(&params.address)?;
         let mut data: Vec<ValidatorResult> = Vec::new();
 
-        let mut last = Some(params.number_last_sessions);
-        while let Some(i) = last {
-            if i == 0 {
+        let mut last = Some(first_session_index);
+
+        while let Some(session_index) = last {
+            if session_index <= first_session_index - params.number_last_sessions {
                 last = None;
             } else {
-                let index = session_index - i + 1;
-
-                let validator_data = get_validator_by_stash_and_index(
+                let (validator_data, mut authority_key) = get_validator_by_stash_and_index(
                     stash.clone(),
-                    index,
+                    session_index,
                     params.show_stats,
                     params.show_summary,
                     cache.clone(),
                 )
                 .await?;
 
-                data.push(validator_data.into());
+                data.push(validator_data.clone().into());
 
-                last = Some(i - 1);
+                if params.fetch_peers && validator_data.is_para {
+                    if let Some(peers_array) = validator_data.para.get("peers") {
+                        match peers_array {
+                            Value::Array(peers) => {
+                                for peer in peers {
+                                    if let Some(index) = peer.as_u64() {
+                                        // set peer_authority_index into authority_key so that peer data
+                                        // could be retrieved from cache from the exactly same session
+                                        authority_key.authority_index = index as u32;
+                                        let peer_data = get_validator_by_authority_key(
+                                            authority_key.clone(),
+                                            params.show_stats,
+                                            params.show_summary,
+                                            cache.clone(),
+                                        )
+                                        .await?;
+
+                                        data.push(peer_data.into());
+                                    }
+                                }
+                            }
+                            _ => {
+                                warn!(
+                                    "Invalid peers Type for stash {} in session {}",
+                                    stash.to_string(),
+                                    session_index
+                                );
+                            }
+                        };
+                    }
+                }
+
+                last = Some(session_index - 1);
             }
         }
 
@@ -312,10 +367,10 @@ pub async fn get_validators(
     }
 
     match params.role {
-        Role::Authority => get_session_authorities(session_index, cache).await,
+        Role::Authority => get_session_authorities(first_session_index, cache).await,
         Role::ParaAuthority => {
             get_session_para_authorities(
-                session_index,
+                first_session_index,
                 params.show_stats,
                 params.show_summary,
                 cache,
@@ -361,7 +416,7 @@ pub async fn get_validator_by_stash(
             .map_err(CacheError::RedisCMDError)?,
     };
 
-    let data = get_validator_by_stash_and_index(
+    let (data, _) = get_validator_by_stash_and_index(
         stash,
         session_index,
         params.show_stats,
@@ -402,7 +457,7 @@ pub async fn get_peer_by_authority(
             .map_err(CacheError::RedisCMDError)?,
     };
 
-    let data: AuthorityKeyCache = redis::cmd("HGETALL")
+    let authority_key_data: AuthorityKeyCache = redis::cmd("HGETALL")
         .arg(CacheKey::AuthorityKeyByAccountAndSession(
             stash.clone(),
             session_index,
@@ -411,7 +466,7 @@ pub async fn get_peer_by_authority(
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-    if data.is_empty() {
+    if authority_key_data.is_empty() {
         let msg = format!(
             "At session {} the validator address {} was not found.",
             session_index, stash
@@ -420,41 +475,18 @@ pub async fn get_peer_by_authority(
         return Err(ApiError::NotFound(msg));
     }
 
-    let mut key: AuthorityKey = data.into();
-    // set peer authority index to authority key
-    key.authority_index = peer_authority_index;
+    let mut authority_key: AuthorityKey = authority_key_data.into();
+    // set peer_authority_index into authority_key so that peer data
+    // could be retrieved from cache from the exactly same session
+    authority_key.authority_index = peer_authority_index;
 
-    let mut data: CacheMap = redis::cmd("HGETALL")
-        .arg(key.to_string())
-        .query_async(&mut conn as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?;
-
-    if params.show_stats {
-        let stats: CacheMap = redis::cmd("HGETALL")
-            .arg(CacheKey::AuthorityRecordVerbose(
-                key.to_string(),
-                Verbosity::Stats,
-            ))
-            .query_async(&mut conn as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?;
-        data.extend(stats);
-    }
-
-    if params.show_summary {
-        let summary: CacheMap = redis::cmd("HGETALL")
-            .arg(CacheKey::AuthorityRecordVerbose(
-                key.to_string(),
-                Verbosity::Summary,
-            ))
-            .query_async(&mut conn as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?;
-        data.extend(summary);
-    }
-
-    data.insert(String::from("session"), session_index.to_string());
+    let data = get_validator_by_authority_key(
+        authority_key,
+        params.show_stats,
+        params.show_summary,
+        cache,
+    )
+    .await?;
 
     respond_json(data.into())
 }
