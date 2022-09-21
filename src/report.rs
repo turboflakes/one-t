@@ -341,9 +341,10 @@ impl From<RawDataRank> for Report {
         report.add_break();
 
         report.add_raw_text(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             "#",
             "Validator",
+            "Stash",
             "Subset",
             "Active Sessions",
             "P/V Sessions",
@@ -364,9 +365,10 @@ impl From<RawDataRank> for Report {
         for (i, validator) in validators.iter().enumerate() {
             if let Some(mvr) = validator.missed_ratio {
                 report.add_raw_text(format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     i + 1,
                     replace_crln(&validator.name, ""),
+                    validator.stash,
                     validator.subset.to_string(),
                     validator.active_epochs,
                     validator.para_epochs,
@@ -389,9 +391,10 @@ impl From<RawDataRank> for Report {
                 ));
             } else {
                 report.add_raw_text(format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     i + 1,
                     validator.name,
+                    validator.stash,
                     "-",
                     "-",
                     "-",
