@@ -20,7 +20,8 @@
 // SOFTWARE.
 
 use crate::records::{
-    AuthorityIndex, BlockNumber, EpochIndex, EraIndex, ParachainRecord, Validity,
+    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, ParaId, ParaStats,
+    ParachainRecord, Validity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -91,11 +92,15 @@ pub struct SessionResult {
     is_current: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     is_empty: Option<bool>,
+    #[serde(skip_serializing_if = "SessionStats::is_empty")]
+    stats: SessionStats,
 }
 
 impl From<CacheMap> for SessionResult {
     fn from(data: CacheMap) -> Self {
         let zero = "0".to_string();
+        let serialized = data.get("stats").unwrap_or(&"{}".to_string()).to_string();
+        let stats: SessionStats = serde_json::from_str(&serialized).unwrap_or_default();
         SessionResult {
             eix: data
                 .get("era")
@@ -137,6 +142,7 @@ impl From<CacheMap> for SessionResult {
             } else {
                 None
             },
+            stats,
         }
     }
 }
@@ -157,18 +163,18 @@ pub struct ValidatorResult {
     pub address: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub identity: String,
-    #[serde(skip_serializing_if = "EpochIndex::is_zero")]
+    #[serde(skip_serializing_if = "EpochIndex::is_empty")]
     pub session: EpochIndex,
     pub is_auth: bool,
     pub is_para: bool,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub auth: BTreeMap<String, Value>,
+    #[serde(skip_serializing_if = "AuthorityRecord::is_empty")]
+    pub auth: AuthorityRecord,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub para: BTreeMap<String, Value>,
+    #[serde(skip_serializing_if = "ParaStats::is_empty")]
+    pub para_summary: ParaStats,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub para_summary: BTreeMap<String, Value>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub para_stats: BTreeMap<String, Value>,
+    pub para_stats: BTreeMap<ParaId, ParaStats>,
 }
 
 impl From<CacheMap> for ValidatorResult {
@@ -176,7 +182,7 @@ impl From<CacheMap> for ValidatorResult {
         let zero = "0".to_string();
 
         let serialized = data.get("auth").unwrap_or(&"{}".to_string()).to_string();
-        let auth: BTreeMap<String, Value> = serde_json::from_str(&serialized).unwrap();
+        let auth: AuthorityRecord = serde_json::from_str(&serialized).unwrap_or_default();
 
         let serialized = data.get("para").unwrap_or(&"{}".to_string()).to_string();
         let para: BTreeMap<String, Value> = serde_json::from_str(&serialized).unwrap();
@@ -185,13 +191,15 @@ impl From<CacheMap> for ValidatorResult {
             .get("para_summary")
             .unwrap_or(&"{}".to_string())
             .to_string();
-        let para_summary: BTreeMap<String, Value> = serde_json::from_str(&serialized).unwrap();
+
+        let para_summary: ParaStats = serde_json::from_str(&serialized).unwrap_or_default();
 
         let serialized = data
             .get("para_stats")
             .unwrap_or(&"{}".to_string())
             .to_string();
-        let para_stats: BTreeMap<String, Value> = serde_json::from_str(&serialized).unwrap();
+        let para_stats: BTreeMap<ParaId, ParaStats> =
+            serde_json::from_str(&serialized).unwrap_or_default();
 
         ValidatorResult {
             is_auth: !auth.is_empty(),
@@ -213,7 +221,7 @@ impl From<CacheMap> for ValidatorResult {
 
 #[derive(Debug, Serialize, Default)]
 pub struct ValidatorsResult {
-    #[serde(skip_serializing_if = "EpochIndex::is_zero")]
+    #[serde(skip_serializing_if = "EpochIndex::is_empty")]
     pub session: EpochIndex,
     pub data: Vec<ValidatorResult>,
 }
@@ -229,7 +237,7 @@ impl From<&std::string::String> for ParachainResult {
 
 #[derive(Debug, Serialize)]
 pub struct ParachainsResult {
-    #[serde(skip_serializing_if = "EpochIndex::is_zero")]
+    #[serde(skip_serializing_if = "EpochIndex::is_empty")]
     pub session: EpochIndex,
     pub data: Vec<ParachainResult>,
 }
@@ -253,6 +261,63 @@ impl From<CacheMap> for ParachainsResult {
                 .parse::<EpochIndex>()
                 .unwrap_or_default(),
             data: out,
+        }
+    }
+}
+
+pub type SessionStats = ParaStats;
+
+impl From<Vec<ValidatorResult>> for SessionStats {
+    fn from(data: Vec<ValidatorResult>) -> Self {
+        let core_assignments: u32 = data
+            .iter()
+            .filter(|v| v.is_para)
+            .map(|v| v.para_summary.core_assignments())
+            .reduce(|a, b| a + b)
+            .unwrap_or_default();
+
+        let explicit_votes: u32 = data
+            .iter()
+            .filter(|v| v.is_para)
+            .map(|v| v.para_summary.explicit_votes())
+            .reduce(|a, b| a + b)
+            .unwrap_or_default();
+
+        let implicit_votes: u32 = data
+            .iter()
+            .filter(|v| v.is_para)
+            .map(|v| v.para_summary.implicit_votes())
+            .reduce(|a, b| a + b)
+            .unwrap_or_default();
+
+        let missed_votes: u32 = data
+            .iter()
+            .filter(|v| v.is_para)
+            .map(|v| v.para_summary.missed_votes())
+            .reduce(|a, b| a + b)
+            .unwrap_or_default();
+
+        let authored_blocks: u32 = data
+            .iter()
+            .filter(|v| v.is_auth)
+            .map(|v| v.auth.authored_blocks())
+            .reduce(|a, b| a + b)
+            .unwrap_or_default();
+
+        let points: u32 = data
+            .iter()
+            .filter(|v| v.is_auth)
+            .map(|v| v.auth.points())
+            .reduce(|a, b| a + b)
+            .unwrap_or_default();
+
+        SessionStats {
+            points,
+            core_assignments,
+            authored_blocks,
+            explicit_votes,
+            implicit_votes,
+            missed_votes,
         }
     }
 }

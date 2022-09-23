@@ -80,6 +80,7 @@ pub enum CacheKey {
     Network,
     BestBlock,
     SessionByIndex(Index),
+    SessionByIndexStats(Index),
     AuthorityRecord(EraIndex, EpochIndex, AuthorityIndex),
     AuthorityRecordVerbose(AuthorityRecordKey, Verbosity),
     AuthorityKeyByAccountAndSession(AccountId32, EpochIndex),
@@ -94,6 +95,7 @@ impl std::fmt::Display for CacheKey {
             Self::Network => write!(f, "network"),
             Self::BestBlock => write!(f, "best"),
             Self::SessionByIndex(index) => write!(f, "s:{}", index),
+            Self::SessionByIndexStats(index) => write!(f, "s:{}:s", index),
             Self::AuthorityRecord(era_index, session_index, authority_index) => write!(
                 f,
                 "e:{}:s:{}:a:{}",

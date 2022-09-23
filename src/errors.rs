@@ -156,6 +156,13 @@ impl From<std::io::Error> for ApiError {
     }
 }
 
+/// Convert serde_json::Error to ApiError
+impl From<serde_json::Error> for ApiError {
+    fn from(error: serde_json::Error) -> Self {
+        ApiError::InternalServerError(format!("{:?}", error))
+    }
+}
+
 /// Cache specific error messages
 #[derive(Error, Debug)]
 pub enum CacheError {

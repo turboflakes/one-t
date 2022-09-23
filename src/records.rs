@@ -37,11 +37,11 @@ pub type EraIndex = u32;
 pub type EpochIndex = u32;
 
 pub trait Validity {
-    fn is_zero(&self) -> bool;
+    fn is_empty(&self) -> bool;
 }
 
 impl Validity for EpochIndex {
-    fn is_zero(&self) -> bool {
+    fn is_empty(&self) -> bool {
         *self == 0
     }
 }
@@ -725,24 +725,23 @@ impl Records {
                     .authority_records
                     .get(&RecordKey(epoch_key.clone(), *auth_idx))
                 {
-                    // remove authority address from addresses map
-                    if self
-                        .addresses
-                        .remove(&AddressKey(
-                            epoch_key.clone(),
-                            authority_record.address.to_string(),
-                        ))
-                        .is_some()
-                    {
-                        counter += 1;
-                    }
-                    // remove para record
-                    if self
-                        .para_records
-                        .remove(&RecordKey(epoch_key.clone(), *auth_idx))
-                        .is_some()
-                    {
-                        counter += 1;
+                    if let Some(stash) = authority_record.address() {
+                        // remove authority address from addresses map
+                        if self
+                            .addresses
+                            .remove(&AddressKey(epoch_key.clone(), stash.to_string()))
+                            .is_some()
+                        {
+                            counter += 1;
+                        }
+                        // remove para record
+                        if self
+                            .para_records
+                            .remove(&RecordKey(epoch_key.clone(), *auth_idx))
+                            .is_some()
+                        {
+                            counter += 1;
+                        }
                     }
                 }
                 // remove authority records
@@ -767,19 +766,22 @@ impl Records {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct AuthorityRecord {
     // index is the position of the stash in session().validators(None)
     #[serde(rename = "aix")]
-    index: AuthorityIndex,
+    #[serde(default)]
+    index: Option<AuthorityIndex>,
+    #[serde(default)]
     #[serde(skip_serializing)]
-    address: AccountId32,
+    address: Option<AccountId32>,
     #[serde(rename = "sp")]
     start_points: Points,
     #[serde(rename = "ep")]
     end_points: Option<Points>,
     #[serde(rename = "ab")]
     authored_blocks: AuthoredBlocks,
+    #[serde(default)]
     #[serde(skip_serializing)]
     is_flagged: bool,
 }
@@ -792,8 +794,8 @@ impl AuthorityRecord {
         authored_blocks: AuthoredBlocks,
     ) -> Self {
         Self {
-            index,
-            address,
+            index: Some(index),
+            address: Some(address),
             start_points,
             end_points: None,
             authored_blocks,
@@ -801,12 +803,12 @@ impl AuthorityRecord {
         }
     }
 
-    pub fn authority_index(&self) -> &AuthorityIndex {
-        &self.index
+    pub fn authority_index(&self) -> Option<AuthorityIndex> {
+        self.index
     }
 
-    pub fn address(&self) -> &AccountId32 {
-        &self.address
+    pub fn address(&self) -> Option<&AccountId32> {
+        self.address.as_ref()
     }
 
     pub fn start_points(&self) -> Points {
@@ -819,7 +821,11 @@ impl AuthorityRecord {
 
     pub fn points(&self) -> Points {
         if let Some(end_points) = self.end_points {
-            end_points - self.start_points
+            if end_points > self.start_points {
+                end_points - self.start_points
+            } else {
+                0
+            }
         } else {
             self.start_points
         }
@@ -863,6 +869,12 @@ impl AuthorityRecord {
         };
         self.end_points = Some(current_points);
         diff_points
+    }
+}
+
+impl Validity for AuthorityRecord {
+    fn is_empty(&self) -> bool {
+        self.index.is_none()
     }
 }
 
@@ -1123,6 +1135,16 @@ impl ParaStats {
 
     pub fn votes_points(&self) -> Points {
         self.total_votes() * 20
+    }
+}
+
+impl Validity for ParaStats {
+    fn is_empty(&self) -> bool {
+        self.missed_votes() == 0
+            && self.total_votes() == 0
+            && self.authored_blocks() == 0
+            && self.core_assignments() == 0
+            && self.points() == 0
     }
 }
 

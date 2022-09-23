@@ -663,136 +663,101 @@ impl From<RawDataPara> for Report {
         // Validator info
         // --- Specific parachains report here [START] -->
         if let Some(authority_record) = data.authority_record {
-            report.add_raw_text(format!(
-                "<b><a href=\"https://{}.subscan.io/validator/{}\">{}</a></b>",
-                data.network.name.to_lowercase(),
-                data.validator.stash,
-                data.validator.name
-            ));
-
-            if let Some(para_record) = data.para_record {
-                // Find position rank
-                let mut v = Vec::<(AuthorityIndex, Points)>::new();
-                v.push((
-                    *authority_record.authority_index(),
-                    authority_record.points(),
+            if let Some(authority_index) = authority_record.authority_index() {
+                report.add_raw_text(format!(
+                    "<b><a href=\"https://{}.subscan.io/validator/{}\">{}</a></b>",
+                    data.network.name.to_lowercase(),
+                    data.validator.stash,
+                    data.validator.name
                 ));
-                for peer in data.peers.iter() {
-                    v.push((*peer.1.authority_index(), peer.1.points()));
-                }
 
-                // Print Grade
-                if let Some(mvr) = para_record.missed_votes_ratio() {
+                if let Some(para_record) = data.para_record {
+                    // Find position rank
+                    let mut v = Vec::<(AuthorityIndex, Points)>::new();
+
+                    v.push((authority_index, authority_record.points()));
+                    for peer in data.peers.iter() {
+                        if let Some(peer_authority_index) = peer.1.authority_index() {
+                            v.push((peer_authority_index, peer.1.points()));
+                        }
+                    }
+
+                    // Print Grade
+                    if let Some(mvr) = para_record.missed_votes_ratio() {
+                        report.add_raw_text(format!(
+                            "🎓 Session {} Grade: <b>{}</b>",
+                            data.meta.current_session_index,
+                            grade(1.0_f64 - mvr)
+                        ));
+                    }
+                    report.add_break();
+                    // Print Rankings
+                    report.add_raw_text(format!("<i>Rankings</i>"));
                     report.add_raw_text(format!(
-                        "🎓 Session {} Grade: <b>{}</b>",
-                        data.meta.current_session_index,
-                        grade(1.0_f64 - mvr)
+                        "✨ All Stars: {} // 200 {}",
+                        data.para_validator_rank.unwrap_or_default() + 1,
+                        position_emoji(data.para_validator_rank.unwrap_or_default())
                     ));
-                }
-                report.add_break();
-                // Print Rankings
-                report.add_raw_text(format!("<i>Rankings</i>"));
-                report.add_raw_text(format!(
-                    "✨ All Stars: {} // 200 {}",
-                    data.para_validator_rank.unwrap_or_default() + 1,
-                    position_emoji(data.para_validator_rank.unwrap_or_default())
-                ));
-                report.add_raw_text(format!(
-                    "🏀 Groups: {} // 40 {}",
-                    data.group_rank.unwrap_or_default() + 1,
-                    position_emoji(data.group_rank.unwrap_or_default())
-                ));
+                    report.add_raw_text(format!(
+                        "🏀 Groups: {} // 40 {}",
+                        data.group_rank.unwrap_or_default() + 1,
+                        position_emoji(data.group_rank.unwrap_or_default())
+                    ));
 
-                let para_validator_group_rank = position(
-                    *authority_record.authority_index(),
-                    group_by_points(v.clone()),
-                );
+                    let para_validator_group_rank =
+                        position(authority_index, group_by_points(v.clone()));
 
-                let emoji = if authority_record.is_flagged() {
-                    Random::HealthCheck
-                } else {
-                    position_emoji(para_validator_group_rank.unwrap_or_default())
-                };
-                report.add_raw_text(format!(
-                    "⛹️ Sole: {} // 5 {}",
-                    para_validator_group_rank.unwrap_or_default() + 1,
-                    emoji
-                ));
-                report.add_break();
+                    let emoji = if authority_record.is_flagged() {
+                        Random::HealthCheck
+                    } else {
+                        position_emoji(para_validator_group_rank.unwrap_or_default())
+                    };
+                    report.add_raw_text(format!(
+                        "⛹️ Sole: {} // 5 {}",
+                        para_validator_group_rank.unwrap_or_default() + 1,
+                        emoji
+                    ));
+                    report.add_break();
 
-                // Print breakdown points
-                let mut clode_block = String::from("<pre><code>");
+                    // Print breakdown points
+                    let mut clode_block = String::from("<pre><code>");
 
-                // val. group validator names
-                clode_block.push_str(&format!(
-                    "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
-                    "#",
-                    format!("VAL_GROUP_{}", para_record.group().unwrap_or_default()),
-                    "❒",
-                    "↻",
-                    "✓i",
-                    "✓e",
-                    "✗",
-                    "GRD",
-                    "MVR",
-                    "PPTS",
-                    "TPTS",
-                ));
-
-                if let Some(mvr) = para_record.missed_votes_ratio() {
+                    // val. group validator names
                     clode_block.push_str(&format!(
                         "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
-                        "*",
-                        slice(&replace_emoji(&data.validator.name, "_"), 24),
-                        authority_record.authored_blocks(),
-                        para_record.total_core_assignments(),
-                        para_record.total_implicit_votes(),
-                        para_record.total_explicit_votes(),
-                        para_record.total_missed_votes(),
-                        grade(1.0_f64 - mvr),
-                        (mvr * 10000.0).round() / 10000.0,
-                        authority_record.para_points(),
-                        authority_record.points(),
+                        "#",
+                        format!("VAL_GROUP_{}", para_record.group().unwrap_or_default()),
+                        "❒",
+                        "↻",
+                        "✓i",
+                        "✓e",
+                        "✗",
+                        "GRD",
+                        "MVR",
+                        "PPTS",
+                        "TPTS",
                     ));
-                } else {
-                    clode_block.push_str(&format!(
-                        "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
-                        "*",
-                        slice(&replace_emoji(&data.validator.name, "_"), 24),
-                        "-",
-                        "-",
-                        "-",
-                        "-",
-                        "-",
-                        "-",
-                        "-",
-                        "-",
-                        "-"
-                    ));
-                }
-                // Print out peers names
-                let peers_letters = vec!["A", "B", "C", "D"];
-                for (i, peer) in data.peers.iter().enumerate() {
-                    if let Some(mvr) = peer.2.missed_votes_ratio() {
+
+                    if let Some(mvr) = para_record.missed_votes_ratio() {
                         clode_block.push_str(&format!(
                             "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
-                            peers_letters[i],
-                            slice(&replace_emoji(&peer.0.clone(), "_"), 24),
-                            peer.1.authored_blocks(),
-                            peer.2.total_core_assignments(),
-                            peer.2.total_implicit_votes(),
-                            peer.2.total_explicit_votes(),
-                            peer.2.total_missed_votes(),
+                            "*",
+                            slice(&replace_emoji(&data.validator.name, "_"), 24),
+                            authority_record.authored_blocks(),
+                            para_record.total_core_assignments(),
+                            para_record.total_implicit_votes(),
+                            para_record.total_explicit_votes(),
+                            para_record.total_missed_votes(),
                             grade(1.0_f64 - mvr),
                             (mvr * 10000.0).round() / 10000.0,
-                            peer.1.para_points(),
-                            peer.1.points()
+                            authority_record.para_points(),
+                            authority_record.points(),
                         ));
                     } else {
                         clode_block.push_str(&format!(
                             "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
-                            peers_letters[i],
-                            slice(&replace_emoji(&peer.0.clone(), "_"), 24),
+                            "*",
+                            slice(&replace_emoji(&data.validator.name, "_"), 24),
                             "-",
                             "-",
                             "-",
@@ -804,50 +769,85 @@ impl From<RawDataPara> for Report {
                             "-"
                         ));
                     }
-                }
+                    // Print out peers names
+                    let peers_letters = vec!["A", "B", "C", "D"];
+                    for (i, peer) in data.peers.iter().enumerate() {
+                        if let Some(mvr) = peer.2.missed_votes_ratio() {
+                            clode_block.push_str(&format!(
+                                "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
+                                peers_letters[i],
+                                slice(&replace_emoji(&peer.0.clone(), "_"), 24),
+                                peer.1.authored_blocks(),
+                                peer.2.total_core_assignments(),
+                                peer.2.total_implicit_votes(),
+                                peer.2.total_explicit_votes(),
+                                peer.2.total_missed_votes(),
+                                grade(1.0_f64 - mvr),
+                                (mvr * 10000.0).round() / 10000.0,
+                                peer.1.para_points(),
+                                peer.1.points()
+                            ));
+                        } else {
+                            clode_block.push_str(&format!(
+                                "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
+                                peers_letters[i],
+                                slice(&replace_emoji(&peer.0.clone(), "_"), 24),
+                                "-",
+                                "-",
+                                "-",
+                                "-",
+                                "-",
+                                "-",
+                                "-",
+                                "-",
+                                "-"
+                            ));
+                        }
+                    }
 
-                clode_block.push_str("\nPARACHAINS BREAKDOWN\n");
-                // Print out parachains breakdown
-                clode_block.push_str(&format!(
-                    "{:<12}{:>13}{:>13}{:>13}{:>13}{:>13}\n",
-                    "",
-                    "┌──── * ────┐",
-                    "┌──── A ────┐",
-                    "┌──── B ────┐",
-                    "┌──── C ────┐",
-                    "┌──── D ────┐",
-                ));
-                clode_block.push_str(&format!(
+                    clode_block.push_str("\nPARACHAINS BREAKDOWN\n");
+                    // Print out parachains breakdown
+                    clode_block.push_str(&format!(
+                        "{:<12}{:>13}{:>13}{:>13}{:>13}{:>13}\n",
+                        "",
+                        "┌──── * ────┐",
+                        "┌──── A ────┐",
+                        "┌──── B ────┐",
+                        "┌──── C ────┐",
+                        "┌──── D ────┐",
+                    ));
+                    clode_block.push_str(&format!(
                     "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}\n",
                     "#", "❒", "↻", "✓", "✗", "p", "✓", "✗", "p", "✓", "✗", "p", "✓", "✗", "p", "✓", "✗", "p",
                 ));
-                for para_id in data.parachains.iter() {
-                    // Print out votes per para id
-                    if let Some(stats) = para_record.get_para_id_stats(*para_id) {
-                        let mut line: String = format!(
-                            "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}",
-                            para_id,
-                            stats.authored_blocks(),
-                            stats.core_assignments(),
-                            stats.total_votes(),
-                            stats.missed_votes(),
-                            stats.para_points(),
-                        );
-                        for peer in data.peers.iter() {
-                            if let Some(peer_stats) = peer.2.get_para_id_stats(*para_id) {
-                                line.push_str(&format!(
-                                    "{:>4}{:>4}{:>5}",
-                                    peer_stats.total_votes(),
-                                    peer_stats.missed_votes(),
-                                    peer_stats.para_points()
-                                ));
+                    for para_id in data.parachains.iter() {
+                        // Print out votes per para id
+                        if let Some(stats) = para_record.get_para_id_stats(*para_id) {
+                            let mut line: String = format!(
+                                "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}",
+                                para_id,
+                                stats.authored_blocks(),
+                                stats.core_assignments(),
+                                stats.total_votes(),
+                                stats.missed_votes(),
+                                stats.para_points(),
+                            );
+                            for peer in data.peers.iter() {
+                                if let Some(peer_stats) = peer.2.get_para_id_stats(*para_id) {
+                                    line.push_str(&format!(
+                                        "{:>4}{:>4}{:>5}",
+                                        peer_stats.total_votes(),
+                                        peer_stats.missed_votes(),
+                                        peer_stats.para_points()
+                                    ));
+                                }
                             }
+                            clode_block.push_str(&format!("{line}\n"));
                         }
-                        clode_block.push_str(&format!("{line}\n"));
                     }
+                    clode_block.push_str("\n</code></pre>");
+                    report.add_raw_text(clode_block);
                 }
-                clode_block.push_str("\n</code></pre>");
-                report.add_raw_text(clode_block);
             }
         } else {
             report.add_raw_text(format!(

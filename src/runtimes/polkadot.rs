@@ -441,107 +441,110 @@ pub async fn track_records(
         // Find groupIdx and peers for each authority
         for authority_idx in authorities.iter() {
             if let Some(authority_record) = records.get_mut_authority_record(*authority_idx) {
-                // Increment authored blocks if it is the current block author
-                if authority_index == *authority_idx {
-                    authority_record.inc_authored_blocks();
-                }
+                if authority_record.address().is_some() {
+                    // Increment authored blocks if it is the current block author
+                    if authority_index == *authority_idx {
+                        authority_record.inc_authored_blocks();
+                    }
 
-                // Collect current points
-                let current_points = if let Some((_s, points)) = era_reward_points
-                    .individual
-                    .iter()
-                    .find(|(s, _p)| s == authority_record.address())
-                {
-                    *points
-                } else {
-                    0
-                };
-                // Update authority current points and get the difference
-                let diff_points = authority_record.update_current_points(current_points);
+                    // Collect current points
+                    let current_points = if let Some((_s, points)) = era_reward_points
+                        .individual
+                        .iter()
+                        .find(|(s, _p)| s == authority_record.address().unwrap())
+                    {
+                        *points
+                    } else {
+                        0
+                    };
+                    // Update authority current points and get the difference
+                    let diff_points = authority_record.update_current_points(current_points);
 
-                if let Some(para_record) = records.get_mut_para_record(*authority_idx) {
-                    // 1st. Increment current para_id diff_points and authored blocks if the author of the finalized block
-                    para_record.update_points(diff_points, authority_index == *authority_idx);
+                    if let Some(para_record) = records.get_mut_para_record(*authority_idx) {
+                        // 1st. Increment current para_id diff_points and authored blocks if the author of the finalized block
+                        para_record.update_points(diff_points, authority_index == *authority_idx);
 
-                    // 2nd. Check if the para_id assigned to this authority got any on chain votes
-                    if let Some(ref backing_votes) = on_chain_votes {
-                        // Verify that records are in the same session as on chain votes
-                        if current_session == backing_votes.session {
-                            for (candidate_receipt, group_authorities) in
-                                backing_votes.backing_validators_per_candidate.iter()
-                            {
-                                debug!(
-                                    "para_id: {:?} group_authorities {:?}",
-                                    candidate_receipt.descriptor.para_id, group_authorities
-                                );
-                                // Destructure ParaId
-                                let Id(para_id) = candidate_receipt.descriptor.para_id;
-                                // If para id exists increment vote or missed vote
-                                if para_record.is_para_id_assigned(para_id) {
-                                    if let Some((_, vote)) = group_authorities.iter().find(
-                                        |(ValidatorIndex(para_idx), _)| {
-                                            para_idx == para_record.para_index()
-                                        },
-                                    ) {
-                                        match vote {
-                                            ValidityAttestation::Explicit(_) => {
-                                                para_record.inc_explicit_votes(para_id);
-                                            }
-                                            ValidityAttestation::Implicit(_) => {
-                                                para_record.inc_implicit_votes(para_id);
-                                            }
-                                        }
-                                    } else {
-                                        // Try to guarantee that one of the peers is in the same group
-                                        if group_authorities.len() > 0 {
-                                            if let Some(group_idx) = para_record.group() {
-                                                let (para_val_idx, _) = &group_authorities[0];
-
-                                                for (idx, group) in
-                                                    validator_groups.iter().enumerate()
-                                                {
-                                                    if group.contains(&para_val_idx) {
-                                                        if idx == group_idx as usize {
-                                                            para_record.inc_missed_votes(para_id);
-                                                            break;
-                                                        }
-                                                    }
+                        // 2nd. Check if the para_id assigned to this authority got any on chain votes
+                        if let Some(ref backing_votes) = on_chain_votes {
+                            // Verify that records are in the same session as on chain votes
+                            if current_session == backing_votes.session {
+                                for (candidate_receipt, group_authorities) in
+                                    backing_votes.backing_validators_per_candidate.iter()
+                                {
+                                    debug!(
+                                        "para_id: {:?} group_authorities {:?}",
+                                        candidate_receipt.descriptor.para_id, group_authorities
+                                    );
+                                    // Destructure ParaId
+                                    let Id(para_id) = candidate_receipt.descriptor.para_id;
+                                    // If para id exists increment vote or missed vote
+                                    if para_record.is_para_id_assigned(para_id) {
+                                        if let Some((_, vote)) = group_authorities.iter().find(
+                                            |(ValidatorIndex(para_idx), _)| {
+                                                para_idx == para_record.para_index()
+                                            },
+                                        ) {
+                                            match vote {
+                                                ValidityAttestation::Explicit(_) => {
+                                                    para_record.inc_explicit_votes(para_id);
+                                                }
+                                                ValidityAttestation::Implicit(_) => {
+                                                    para_record.inc_implicit_votes(para_id);
                                                 }
                                             }
                                         } else {
-                                            para_record.inc_missed_votes(para_id);
-                                        }
-                                    }
+                                            // Try to guarantee that one of the peers is in the same group
+                                            if group_authorities.len() > 0 {
+                                                if let Some(group_idx) = para_record.group() {
+                                                    let (para_val_idx, _) = &group_authorities[0];
 
-                                    break;
-                                } else {
-                                    debug!("On chain votes para_id: {:?} is different from the para_id: {:?} current assigned to the validator index: {}.", para_id, para_record.para_id(), para_record.para_index());
+                                                    for (idx, group) in
+                                                        validator_groups.iter().enumerate()
+                                                    {
+                                                        if group.contains(&para_val_idx) {
+                                                            if idx == group_idx as usize {
+                                                                para_record
+                                                                    .inc_missed_votes(para_id);
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                para_record.inc_missed_votes(para_id);
+                                            }
+                                        }
+
+                                        break;
+                                    } else {
+                                        debug!("On chain votes para_id: {:?} is different from the para_id: {:?} current assigned to the validator index: {}.", para_id, para_record.para_id(), para_record.para_index());
+                                    }
                                 }
-                            }
-                        } else {
-                            warn!(
+                            } else {
+                                warn!(
                                 "Backing votes session: {} is different from records.current_session: {}",
                                 backing_votes.session, current_session
                             );
+                            }
                         }
-                    }
 
-                    // debug!("------");
-                    // debug!("------");
-                    // debug!("authored_blocks: {} points: {}", authored_blocks, points);
-                    // debug!(
-                    //     "validator_index: {:?} group: {:?} para_id: {:?} peers: {:?}",
-                    //     para_record.para_index(),
-                    //     para_record.group(),
-                    //     para_record.para_id(),
-                    //     para_record.peers()
-                    // );
-                    // for (k, s) in para_record.para_stats().iter() {
-                    //     debug!("para_id: {}", k);
-                    //     debug!("stats: {:?}", s);
-                    // }
-                    // debug!("------");
-                    // debug!("------");
+                        // debug!("------");
+                        // debug!("------");
+                        // debug!("authored_blocks: {} points: {}", authored_blocks, points);
+                        // debug!(
+                        //     "validator_index: {:?} group: {:?} para_id: {:?} peers: {:?}",
+                        //     para_record.para_index(),
+                        //     para_record.group(),
+                        //     para_record.para_id(),
+                        //     para_record.peers()
+                        // );
+                        // for (k, s) in para_record.para_stats().iter() {
+                        //     debug!("para_id: {}", k);
+                        //     debug!("stats: {:?}", s);
+                        // }
+                        // debug!("------");
+                        // debug!("------");
+                    }
                 }
             }
         }
@@ -620,7 +623,7 @@ pub async fn run_val_perf_report(
     if let Some(subs) = subscribers.get(Some(EpochKey(era_index, epoch_index))) {
         for (stash, user_id) in subs.iter() {
             let mut validator = Validator::new(stash.clone());
-            validator.name = get_display_name(&onet, &stash, None).await?;
+            validator.name = get_display_name(&onet, &stash).await?;
             let mut data = RawDataPara {
                 network: network.clone(),
                 meta: metadata.clone(),
@@ -668,19 +671,19 @@ pub async fn run_val_perf_report(
                             *peer_authority_index,
                             Some(EpochKey(era_index, epoch_index)),
                         ) {
-                            let peer_name =
-                                get_display_name(&onet, peer_authority_record.address(), None)
-                                    .await?;
+                            if let Some(peer_stash) = peer_authority_record.address() {
+                                let peer_name = get_display_name(&onet, &peer_stash).await?;
 
-                            if let Some(peer_para_record) = records.get_para_record(
-                                *peer_authority_index,
-                                Some(EpochKey(era_index, epoch_index)),
-                            ) {
-                                data.peers.push((
-                                    peer_name,
-                                    peer_authority_record.clone(),
-                                    peer_para_record.clone(),
-                                ))
+                                if let Some(peer_para_record) = records.get_para_record(
+                                    *peer_authority_index,
+                                    Some(EpochKey(era_index, epoch_index)),
+                                ) {
+                                    data.peers.push((
+                                        peer_name,
+                                        peer_authority_record.clone(),
+                                        peer_para_record.clone(),
+                                    ))
+                                }
                             }
                         }
                     }
@@ -743,14 +746,18 @@ pub async fn run_groups_report(
                         *authority_idx,
                         Some(EpochKey(era_index, epoch_index)),
                     ) {
-                        // get validator name
-                        let name =
-                            get_display_name(&onet, &authority_record.address(), None).await?;
+                        if let Some(stash) = authority_record.address() {
+                            // get validator name
+                            let name = get_display_name(&onet, &stash).await?;
 
-                        //
-                        let auths = group_authorities_map.entry(group_idx).or_insert(Vec::new());
-                        auths.push((authority_record.clone(), para_record.clone(), name));
-                        auths.sort_by(|(a, _, _), (b, _, _)| b.para_points().cmp(&a.para_points()));
+                            //
+                            let auths =
+                                group_authorities_map.entry(group_idx).or_insert(Vec::new());
+                            auths.push((authority_record.clone(), para_record.clone(), name));
+                            auths.sort_by(|(a, _, _), (b, _, _)| {
+                                b.para_points().cmp(&a.para_points())
+                            });
+                        }
                     }
                 }
             }
@@ -975,7 +982,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             )) = para_data
             {
                 // Note: If Para data exists than get node identity to be visible in the report
-                v.name = get_display_name(&onet, &stash, None).await?;
+                v.name = get_display_name(&onet, &stash).await?;
                 //
                 v.para_epochs = para_epochs;
                 v.explicit_votes = explicit_votes;
@@ -1191,12 +1198,21 @@ async fn get_own_stake(onet: &Onet, stash: &AccountId32) -> Result<u128, OnetErr
     return Ok(0);
 }
 
+async fn get_display_name(onet: &Onet, stash: &AccountId32) -> Result<String, OnetError> {
+    if let Some(identity) = get_identity(&onet, &stash, None).await? {
+        return Ok(identity);
+    } else {
+        let s = &stash.to_string();
+        Ok(format!("{}...{}", &s[..6], &s[s.len() - 6..]))
+    }
+}
+
 #[async_recursion]
-async fn get_display_name(
+async fn get_identity(
     onet: &Onet,
     stash: &AccountId32,
     sub_account_name: Option<String>,
-) -> Result<String, OnetError> {
+) -> Result<Option<String>, OnetError> {
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
 
@@ -1208,22 +1224,17 @@ async fn get_display_name(
                 Some(child) => format!("{}/{}", parent, child),
                 None => parent,
             };
-            Ok(name)
+            Ok(Some(name))
         }
         None => {
             if let Some((parent_account, data)) =
                 api.storage().identity().super_of(stash, None).await?
             {
                 let sub_account_name = parse_identity_data(data);
-                return get_display_name(
-                    &onet,
-                    &parent_account,
-                    Some(sub_account_name.to_string()),
-                )
-                .await;
+                return get_identity(&onet, &parent_account, Some(sub_account_name.to_string()))
+                    .await;
             } else {
-                let s = &stash.to_string();
-                Ok(format!("{}...{}", &s[..6], &s[s.len() - 6..]))
+                Ok(None)
             }
         }
     }

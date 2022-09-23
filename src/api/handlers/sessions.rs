@@ -21,9 +21,9 @@
 
 use crate::api::{
     helpers::respond_json,
-    responses::{CacheMap, SessionResult, SessionsResult},
+    responses::{CacheMap, SessionResult, SessionStats, SessionsResult, ValidatorResult},
 };
-use crate::cache::{get_conn, CacheKey, Index, RedisPool};
+use crate::cache::{get_conn, CacheKey, Index, RedisPool, Verbosity};
 use crate::errors::{ApiError, CacheError};
 use crate::records::EpochIndex;
 use actix_web::web::{Data, Json, Path, Query};
@@ -35,10 +35,61 @@ use serde::Deserialize;
 pub struct Params {
     #[serde(default = "default_number_last_sessions")]
     number_last_sessions: u32,
+    // show_stats indicates whether session stats should be retrieved or not, default false
+    #[serde(default)]
+    show_stats: bool,
 }
 
 fn default_number_last_sessions() -> u32 {
     48
+}
+
+/// Pull, Compile and cache stats result
+async fn pull_and_cache_stats(
+    index: EpochIndex,
+    cache: Data<RedisPool>,
+) -> Result<CacheMap, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+
+    let authority_keys: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(CacheKey::AuthorityKeysBySession(index))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    let mut data: Vec<ValidatorResult> = Vec::new();
+    for key in authority_keys.iter() {
+        let mut auth_data: CacheMap = redis::cmd("HGETALL")
+            .arg(key)
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+
+        let summary: CacheMap = redis::cmd("HGETALL")
+            .arg(CacheKey::AuthorityRecordVerbose(
+                key.to_string(),
+                Verbosity::Summary,
+            ))
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+        auth_data.extend(summary);
+
+        data.push(auth_data.into());
+    }
+
+    let stats: SessionStats = data.into();
+    let serialized = serde_json::to_string(&stats)?;
+    let result = CacheMap::from([(String::from("stats"), serialized)]);
+
+    redis::cmd("HSET")
+        .arg(CacheKey::SessionByIndexStats(Index::Num(index)))
+        .arg(result.clone())
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(result)
 }
 
 /// Get a sessions filtered by query params
@@ -48,34 +99,47 @@ pub async fn get_sessions(
 ) -> Result<Json<SessionsResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
-    let current: EpochIndex = redis::cmd("GET")
+    let current_session: EpochIndex = redis::cmd("GET")
         .arg(CacheKey::SessionByIndex(Index::Current))
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
     let mut data: Vec<SessionResult> = Vec::new();
-    let mut last = Some(params.number_last_sessions);
-    while let Some(i) = last {
-        if i == 0 {
+    let mut last = Some(current_session - params.number_last_sessions);
+    while let Some(session_index) = last {
+        if session_index > current_session {
             last = None;
         } else {
-            let index = current - i + 1;
-
             let mut session_data: CacheMap = redis::cmd("HGETALL")
-                .arg(CacheKey::SessionByIndex(Index::Num(index)))
+                .arg(CacheKey::SessionByIndex(Index::Num(session_index)))
                 .query_async(&mut conn as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
 
             if session_data.is_empty() || session_data.get("session").is_none() {
-                session_data.insert(String::from("session"), index.to_string());
+                session_data.insert(String::from("session"), session_index.to_string());
                 session_data.insert(String::from("is_empty"), (true).to_string());
+            }
+
+            if params.show_stats {
+                let mut session_stats_data: CacheMap = redis::cmd("HGETALL")
+                    .arg(CacheKey::SessionByIndexStats(Index::Num(session_index)))
+                    .query_async(&mut conn as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?;
+
+                if session_stats_data.is_empty() {
+                    let mut latest = pull_and_cache_stats(session_index, cache.clone()).await?;
+                    session_stats_data.append(&mut latest);
+                }
+
+                session_data.append(&mut session_stats_data);
             }
 
             data.push(session_data.into());
 
-            last = Some(i - 1);
+            last = Some(session_index + 1);
         }
     }
 
