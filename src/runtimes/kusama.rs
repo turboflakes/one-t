@@ -381,16 +381,18 @@ pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(),
                     .await
                     .map_err(CacheError::RedisCMDError)?;
 
-                // set previous session as full if it was not the first one
-                redis::cmd("HSET")
-                    .arg(CacheKey::SessionByIndex(Index::Num(
-                        records.current_epoch() - 1,
-                    )))
-                    .arg(String::from("is_full"))
-                    .arg((!records.is_first_epoch(current_epoch - 1)).to_string())
-                    .query_async(&mut cache as &mut Connection)
-                    .await
-                    .map_err(CacheError::RedisCMDError)?;
+                if !records.is_first_epoch(current_epoch) {
+                    // set previous session as full if it was not the first one
+                    redis::cmd("HSET")
+                        .arg(CacheKey::SessionByIndex(Index::Num(
+                            records.current_epoch() - 1,
+                        )))
+                        .arg(String::from("is_full"))
+                        .arg((!records.is_first_epoch(current_epoch - 1)).to_string())
+                        .query_async(&mut cache as &mut Connection)
+                        .await
+                        .map_err(CacheError::RedisCMDError)?;
+                }
             }
         }
         // ---
