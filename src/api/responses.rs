@@ -23,7 +23,6 @@ use crate::records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, ParaId, ParaStats,
     ParachainRecord, Validity,
 };
-use log::warn;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;

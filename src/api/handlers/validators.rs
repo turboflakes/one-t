@@ -284,7 +284,7 @@ pub async fn get_validators(
 ) -> Result<Json<ValidatorsResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
-    let first_session_index: EpochIndex = match &params.session {
+    let requested_session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
             if String::from("current") == *index {
                 redis::cmd("GET")
@@ -307,10 +307,10 @@ pub async fn get_validators(
         let stash = AccountId32::from_str(&params.address)?;
         let mut data: Vec<ValidatorResult> = Vec::new();
 
-        let mut last = Some(first_session_index);
+        let mut last = Some(requested_session_index - params.number_last_sessions);
 
         while let Some(session_index) = last {
-            if session_index <= first_session_index - params.number_last_sessions {
+            if session_index >= requested_session_index {
                 last = None;
             } else {
                 let (validator_data, mut authority_key) = get_validator_by_stash_and_index(
@@ -356,7 +356,7 @@ pub async fn get_validators(
                     }
                 }
 
-                last = Some(session_index - 1);
+                last = Some(session_index + 1);
             }
         }
 
@@ -367,10 +367,10 @@ pub async fn get_validators(
     }
 
     match params.role {
-        Role::Authority => get_session_authorities(first_session_index, cache).await,
+        Role::Authority => get_session_authorities(requested_session_index, cache).await,
         Role::ParaAuthority => {
             get_session_para_authorities(
-                first_session_index,
+                requested_session_index,
                 params.show_stats,
                 params.show_summary,
                 cache,
