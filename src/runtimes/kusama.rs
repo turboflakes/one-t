@@ -361,11 +361,15 @@ pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(),
                     String::from("era_session_index"),
                     era_session_index.to_string(),
                 );
-                // assume session will be fully recorded if not the first one on the records
-                data.insert(
-                    String::from("is_partial"),
-                    (records.is_first_epoch(current_epoch)).to_string(),
-                );
+                // by `epoch_index`
+                redis::cmd("HSET")
+                    .arg(CacheKey::SessionByIndex(Index::Num(
+                        records.current_epoch(),
+                    )))
+                    .arg(data)
+                    .query_async(&mut cache as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?;
 
                 // by `current`
                 redis::cmd("SET")
@@ -377,12 +381,13 @@ pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(),
                     .await
                     .map_err(CacheError::RedisCMDError)?;
 
-                // by `epoch_index`
+                // set previous session as full if it was not the first one
                 redis::cmd("HSET")
                     .arg(CacheKey::SessionByIndex(Index::Num(
-                        records.current_epoch(),
+                        records.current_epoch() - 1,
                     )))
-                    .arg(data)
+                    .arg(String::from("is_full"))
+                    .arg((!records.is_first_epoch(current_epoch - 1)).to_string())
                     .query_async(&mut cache as &mut Connection)
                     .await
                     .map_err(CacheError::RedisCMDError)?;

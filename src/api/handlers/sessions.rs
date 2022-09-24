@@ -108,7 +108,7 @@ pub async fn get_sessions(
     let mut data: Vec<SessionResult> = Vec::new();
     let mut last = Some(current_session - params.number_last_sessions);
     while let Some(session_index) = last {
-        if session_index > current_session {
+        if session_index >= current_session {
             last = None;
         } else {
             let mut session_data: CacheMap = redis::cmd("HGETALL")
@@ -119,7 +119,6 @@ pub async fn get_sessions(
 
             if session_data.is_empty() || session_data.get("session").is_none() {
                 session_data.insert(String::from("session"), session_index.to_string());
-                session_data.insert(String::from("is_empty"), (true).to_string());
             }
 
             if params.show_stats {

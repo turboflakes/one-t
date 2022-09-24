@@ -23,6 +23,7 @@ use crate::records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, ParaId, ParaStats,
     ParachainRecord, Validity,
 };
+use log::warn;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -88,12 +89,15 @@ pub struct SessionResult {
     sbix: BlockNumber,
     ebix: BlockNumber,
     esix: u8,
-    is_partial: bool,
+    is_full: bool,
+    #[serde(skip_serializing_if = "default")]
     is_current: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    is_empty: Option<bool>,
     #[serde(skip_serializing_if = "SessionStats::is_empty")]
     stats: SessionStats,
+}
+
+fn default<T: Default + PartialEq>(t: &T) -> bool {
+    *t == Default::default()
 }
 
 impl From<CacheMap> for SessionResult {
@@ -127,8 +131,8 @@ impl From<CacheMap> for SessionResult {
                 .unwrap_or(&zero)
                 .parse::<u8>()
                 .unwrap_or_default(),
-            is_partial: data
-                .get("is_partial")
+            is_full: data
+                .get("is_full")
                 .unwrap_or(&zero)
                 .parse::<bool>()
                 .unwrap_or_default(),
@@ -137,11 +141,6 @@ impl From<CacheMap> for SessionResult {
                 .unwrap_or(&zero)
                 .parse::<bool>()
                 .unwrap_or_default(),
-            is_empty: if data.get("is_empty").is_some() {
-                Some(true)
-            } else {
-                None
-            },
             stats,
         }
     }
