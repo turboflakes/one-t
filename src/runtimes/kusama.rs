@@ -22,15 +22,15 @@ use crate::cache::{CacheKey, Index, Verbosity};
 use crate::config::CONFIG;
 use crate::errors::{CacheError, OnetError};
 use crate::matrix::FileInfo;
-use crate::onet::ReportType;
 use crate::onet::{
     get_account_id_from_storage_key, get_from_seed, get_subscribers, get_subscribers_by_epoch,
-    try_fetch_stashes_from_remote_url, Onet, EPOCH_FILENAME,
+    try_fetch_stashes_from_remote_url, Onet, ReportType, EPOCH_FILENAME,
 };
 use crate::pools::{Nominee, Pool, PoolNomination, PoolNominees, PoolsEra};
 use crate::records::{
     decode_authority_index, AuthorityIndex, AuthorityRecord, EpochIndex, EpochKey, EraIndex,
-    ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records, Subscribers, Votes,
+    Identity, ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records, Subscribers,
+    ValidatorProfileRecord, Votes,
 };
 use crate::report::{
     Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara, RawDataParachains,
@@ -48,7 +48,7 @@ use std::{
     iter::FromIterator,
     result::Result,
     thread, time,
-    time::SystemTime,
+    time::{Instant, SystemTime},
 };
 use subxt::{
     sp_core::sr25519, sp_runtime::AccountId32, DefaultConfig, PairSigner, PolkadotExtrinsicParams,
@@ -123,7 +123,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     initialize_records(&onet, &mut records).await?;
 
     // Initialize cache
-    cache_session_records(&onet, &records).await?;
+    cache_session_records(&records).await?;
     cache_track_records(&onet, &records).await?;
 
     // Subscribe to any events that occur:
@@ -137,7 +137,8 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
             if let Some(authority_index) = decode_authority_index(&signed_block) {
                 // Note: just a safeguard so that records are not tracked again if block was already received
                 if signed_block.block.header.number > block_number {
-                    info!("Block #{} received", signed_block.block.header.number);
+                    let start = Instant::now();
+                    debug!("Block #{} received", signed_block.block.header.number);
                     block_number = signed_block.block.header.number;
 
                     // Update records
@@ -159,7 +160,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                         try_run_network_report(new_session_event.session_index, &records).await?;
 
                         // Cache records every new session
-                        cache_session_records(&onet, &records).await?;
+                        try_run_cache_session_records(&records).await?;
                     }
                     // Update current block number
                     records.set_current_block_number(block_number.into());
@@ -169,9 +170,12 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
                     // Cache records at every block
                     cache_track_records(&onet, &records).await?;
+
+                    // log block processed duration time
+                    info!("Block #{} processed ({:?})", block_number, start.elapsed());
                 } else {
-                    warn!(
-                        "Block #{} already received!",
+                    debug!(
+                        "Skip block #{}. Already received.",
                         signed_block.block.header.number
                     );
                 }
@@ -322,9 +326,24 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
     Ok(())
 }
 
-pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(), OnetError> {
+pub async fn try_run_cache_session_records(records: &Records) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if config.api_enabled {
+        let records_cloned = records.clone();
+        async_std::task::spawn(async move {
+            if let Err(e) = cache_session_records(&records_cloned).await {
+                error!("try_run_cache_session_records error: {:?}", e);
+            }
+        });
+    }
+
+    Ok(())
+}
+
+pub async fn cache_session_records(records: &Records) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if config.api_enabled {
+        let onet: Onet = Onet::new().await;
         let client = onet.client();
         let api = client.clone().to_runtime_api::<Api>();
         let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
@@ -396,6 +415,56 @@ pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(),
             }
         }
         // ---
+        // cache all validators profile every new session
+        // Load TVP stashes
+        let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url().await?;
+        // Fetch all validators
+        let mut all_validators = api.storage().staking().validators_iter(None).await?;
+
+        while let Some((key, validator_prefs)) = all_validators.next().await? {
+            // validator stash address
+            let stash = get_account_id_from_storage_key(key);
+            // validator controller address
+            if let Some(controller) = api.storage().staking().bonded(&stash, None).await? {
+                // deconstruct commission
+                let Perbill(commission) = validator_prefs.commission;
+                // get own stake
+                let own_stake = get_own_stake_via_controller(&onet, &controller).await?;
+                // verify subset (1_000_000_000 = 100% commission)
+                let subset: Subset = if commission != 1_000_000_000 {
+                    if !tvp_stashes.contains(&stash) {
+                        Subset::NONTVP
+                    } else {
+                        Subset::TVP
+                    }
+                } else {
+                    Subset::C100
+                };
+
+                let is_oversubscribed = verify_oversubscribed(&onet, current_era, &stash).await?;
+
+                let identity = get_identity(&onet, &stash, None).await?;
+
+                let data = ValidatorProfileRecord {
+                    stash: Some(stash.clone()),
+                    controller: Some(controller),
+                    identity,
+                    commission,
+                    own_stake,
+                    subset,
+                    is_oversubscribed,
+                };
+
+                let serialized = serde_json::to_string(&data)?;
+                redis::cmd("SET")
+                    .arg(CacheKey::ValidatorProfileByAccount(stash))
+                    .arg(serialized)
+                    .query_async(&mut cache as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?;
+            }
+        }
+        // ---
         // cache authorities every new session
         if let Some(authorities) = records.get_authorities(None) {
             for authority_idx in authorities.iter() {
@@ -404,9 +473,6 @@ pub async fn cache_session_records(onet: &Onet, records: &Records) -> Result<(),
                         // cache authority key for the current era and session
                         // along with data_type and identity
                         let mut data: BTreeMap<String, String> = BTreeMap::new();
-                        if let Some(identity) = get_identity(&onet, &stash, None).await? {
-                            data.insert(String::from("identity"), identity);
-                        };
                         data.insert(String::from("address"), stash.to_string());
                         redis::cmd("HSET")
                             .arg(CacheKey::AuthorityRecord(
@@ -1289,7 +1355,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         v.is_active = active_validators.contains(&stash);
 
         // Fetch own stake
-        v.own_stake = get_own_stake(&onet, &stash).await?;
+        v.own_stake = get_own_stake_via_stash(&onet, &stash).await?;
 
         // Get performance data from all eras available
         if let Some(((active_epochs, authored_blocks, mut pattern), para_data)) =
@@ -2074,7 +2140,20 @@ async fn verify_oversubscribed(
     Ok(exposure.others.len() > 256)
 }
 
-async fn get_own_stake(onet: &Onet, stash: &AccountId32) -> Result<u128, OnetError> {
+async fn get_own_stake_via_controller(
+    onet: &Onet,
+    controller: &AccountId32,
+) -> Result<u128, OnetError> {
+    let client = onet.client();
+    let api = client.clone().to_runtime_api::<Api>();
+
+    if let Some(ledger) = api.storage().staking().ledger(controller, None).await? {
+        return Ok(ledger.active);
+    }
+    return Ok(0);
+}
+
+async fn get_own_stake_via_stash(onet: &Onet, stash: &AccountId32) -> Result<u128, OnetError> {
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
 
@@ -2088,7 +2167,7 @@ async fn get_own_stake(onet: &Onet, stash: &AccountId32) -> Result<u128, OnetErr
 
 async fn get_display_name(onet: &Onet, stash: &AccountId32) -> Result<String, OnetError> {
     if let Some(identity) = get_identity(&onet, &stash, None).await? {
-        return Ok(identity);
+        return Ok(identity.to_string());
     } else {
         let s = &stash.to_string();
         Ok(format!("{}...{}", &s[..6], &s[s.len() - 6..]))
@@ -2100,7 +2179,7 @@ async fn get_identity(
     onet: &Onet,
     stash: &AccountId32,
     sub_account_name: Option<String>,
-) -> Result<Option<String>, OnetError> {
+) -> Result<Option<Identity>, OnetError> {
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
 
@@ -2108,11 +2187,11 @@ async fn get_identity(
         Some(identity) => {
             debug!("identity {:?}", identity);
             let parent = parse_identity_data(identity.info.display);
-            let name = match sub_account_name {
-                Some(child) => format!("{}/{}", parent, child),
-                None => parent,
+            let identity = match sub_account_name {
+                Some(child) => Identity::with_name_and_sub(parent, child),
+                None => Identity::with_name(parent),
             };
-            Ok(Some(name))
+            Ok(Some(identity))
         }
         None => {
             if let Some((parent_account, data)) =

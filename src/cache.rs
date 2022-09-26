@@ -87,6 +87,7 @@ pub enum CacheKey {
     AuthorityKeysBySession(EpochIndex),
     AuthorityKeysBySessionParaOnly(EpochIndex),
     ParachainsBySession(EpochIndex),
+    ValidatorProfileByAccount(AccountId32),
 }
 
 impl std::fmt::Display for CacheKey {
@@ -112,7 +113,10 @@ impl std::fmt::Display for CacheKey {
                 write!(f, "aks:{}:p", session_index)
             }
             Self::ParachainsBySession(session_index) => {
-                write!(f, "p:{}", session_index)
+                write!(f, "ps:{}", session_index)
+            }
+            Self::ValidatorProfileByAccount(account) => {
+                write!(f, "vpa:{}", account)
             }
         }
     }

@@ -21,7 +21,7 @@
 
 use crate::records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, ParaId, ParaStats,
-    ParachainRecord, Validity,
+    ParachainRecord, ValidatorProfileRecord, Validity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -159,8 +159,6 @@ impl From<Vec<SessionResult>> for SessionsResult {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ValidatorResult {
     pub address: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub identity: String,
     #[serde(skip_serializing_if = "EpochIndex::is_empty")]
     pub session: EpochIndex,
     pub is_auth: bool,
@@ -202,7 +200,6 @@ impl From<CacheMap> for ValidatorResult {
         ValidatorResult {
             is_auth: !auth.is_empty(),
             is_para: !para.is_empty(),
-            identity: data.get("identity").unwrap_or(&"".to_string()).to_string(),
             address: data.get("address").unwrap_or(&"".to_string()).to_string(),
             session: data
                 .get("session")
@@ -317,5 +314,13 @@ impl From<Vec<ValidatorResult>> for SessionStats {
             implicit_votes,
             missed_votes,
         }
+    }
+}
+
+pub type ValidatorProfileResult = ValidatorProfileRecord;
+
+impl From<String> for ValidatorProfileResult {
+    fn from(serialized_data: String) -> Self {
+        serde_json::from_str(&serialized_data).unwrap_or_default()
     }
 }

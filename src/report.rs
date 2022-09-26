@@ -27,6 +27,7 @@ use crate::records::{
 use log::info;
 use rand::Rng;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::{
     convert::{TryFrom, TryInto},
     result::Result,
@@ -107,7 +108,7 @@ impl Validator {
 
 pub type Validators = Vec<Validator>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Subset {
     TVP,
     NONTVP,
@@ -121,6 +122,12 @@ impl std::fmt::Display for Subset {
             Self::NONTVP => write!(f, "OTH"),
             Self::C100 => write!(f, "100C"),
         }
+    }
+}
+
+impl Default for Subset {
+    fn default() -> Subset {
+        Subset::NONTVP
     }
 }
 

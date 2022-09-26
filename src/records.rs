@@ -21,6 +21,7 @@
 #![allow(dead_code)]
 use crate::config::CONFIG;
 use crate::matrix::UserID;
+use crate::report::Subset;
 use codec::Decode;
 use log::info;
 use serde::{Deserialize, Serialize};
@@ -1228,6 +1229,48 @@ pub struct ParachainRecord {
     #[serde(rename = "auths")]
     pub current_authorities: Vec<AuthorityIndex>,
     pub stats: ParaStats,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Identity {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    sub: Option<String>,
+}
+
+impl Identity {
+    pub fn with_name(name: String) -> Self {
+        Self { name, sub: None }
+    }
+    pub fn with_name_and_sub(name: String, sub: String) -> Self {
+        Self {
+            name,
+            sub: Some(sub),
+        }
+    }
+}
+
+impl std::fmt::Display for Identity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(sub) = &self.sub {
+            write!(f, "{}/{}", self.name, sub)
+        } else {
+            write!(f, "{}", self.name)
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct ValidatorProfileRecord {
+    pub stash: Option<AccountId32>,
+    pub controller: Option<AccountId32>,
+    pub identity: Option<Identity>,
+    // Note: commission max value = Perbill(1000000000) => 100%
+    pub commission: u32,
+    pub own_stake: u128,
+    pub subset: Subset,
+    pub is_oversubscribed: bool,
 }
 
 #[cfg(test)]

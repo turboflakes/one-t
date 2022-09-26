@@ -21,7 +21,10 @@
 
 use crate::api::{
     helpers::respond_json,
-    responses::{AuthorityKey, AuthorityKeyCache, CacheMap, ValidatorResult, ValidatorsResult},
+    responses::{
+        AuthorityKey, AuthorityKeyCache, CacheMap, ValidatorProfileResult, ValidatorResult,
+        ValidatorsResult,
+    },
 };
 use crate::cache::{get_conn, CacheKey, Index, RedisPool, Verbosity};
 use crate::errors::{ApiError, CacheError};
@@ -417,7 +420,7 @@ pub async fn get_validator_by_stash(
     };
 
     let (data, _) = get_validator_by_stash_and_index(
-        stash,
+        stash.clone(),
         session_index,
         params.show_stats,
         params.show_summary,
@@ -489,4 +492,21 @@ pub async fn get_peer_by_authority(
     .await?;
 
     respond_json(data.into())
+}
+
+/// Get a validator profile by stash
+pub async fn get_validator_profile_by_stash(
+    stash: Path<String>,
+    cache: Data<RedisPool>,
+) -> Result<Json<ValidatorProfileResult>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+    let stash = AccountId32::from_str(&*stash.to_string())?;
+
+    let serialized_data: String = redis::cmd("GET")
+        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    respond_json(serialized_data.into())
 }

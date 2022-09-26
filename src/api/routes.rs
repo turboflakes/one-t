@@ -26,7 +26,10 @@ use crate::api::handlers::{
     parachains::get_parachains,
     pool::{get_pool, get_pool_nomination, get_pool_nominees, get_pools_stats},
     sessions::{get_session_by_index, get_sessions},
-    validators::{get_peer_by_authority, get_validator_by_stash, get_validators},
+    validators::{
+        get_peer_by_authority, get_validator_by_stash, get_validator_profile_by_stash,
+        get_validators,
+    },
     ws::init,
 };
 use actix_web::web;
@@ -57,6 +60,10 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
                 .service(
                     web::scope("/validators")
                         .route("/{stash}", web::get().to(get_validator_by_stash))
+                        .route(
+                            "/{stash}/profile",
+                            web::get().to(get_validator_profile_by_stash),
+                        )
                         .route(
                             "/{stash}/peers/{peer}",
                             web::get().to(get_peer_by_authority),
