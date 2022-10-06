@@ -42,7 +42,7 @@ const BLOCK_INTERVAL: Duration = Duration::from_secs(6);
 
 #[derive(Clone, Eq, Hash, PartialEq, Debug)]
 pub enum Topic {
-    BestBlock,
+    FinalizedBlock,
     NewSession,
     Validator(AccountId32),
     ParaAuthorities(EpochIndex, Verbosity),
@@ -52,7 +52,7 @@ pub enum Topic {
 impl std::fmt::Display for Topic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::BestBlock => write!(f, "best_block"),
+            Self::FinalizedBlock => write!(f, "finalized_block"),
             Self::NewSession => write!(f, "new_session"),
             Self::Validator(account) => write!(f, "v:{}", account),
             Self::ParaAuthorities(index, verbosity) => write!(f, "pas:{}:{}", index, verbosity),
@@ -110,16 +110,16 @@ impl Channel {
 
             // TODO handle all topics here
             match &act.topic {
-                Topic::BestBlock => {
+                Topic::FinalizedBlock => {
                     let future = async {
                         if let Ok(mut conn) = get_conn(&act.cache).await {
                             if let Ok(data) = redis::cmd("GET")
-                                .arg(CacheKey::BestBlock)
+                                .arg(CacheKey::FinalizedBlock)
                                 .query_async::<Connection, BlockNumber>(&mut conn)
                                 .await
                             {
                                 let resp = WsResponseMessage {
-                                    r#type: String::from("best_block"),
+                                    r#type: String::from("finalized_block"),
                                     result: BlockResult::from(data),
                                 };
                                 let serialized = serde_json::to_string(&resp).unwrap();

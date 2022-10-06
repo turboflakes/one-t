@@ -52,7 +52,7 @@ async fn main() -> std::io::Result<()> {
             "onet=debug,subxt=debug,actix_cors=debug,actix_web=debug,actix_server=debug",
         );
     } else {
-        env::set_var("RUST_LOG", "onet=info");
+        env::set_var("RUST_LOG", "onet=info,subxt=info");
     }
     env_logger::try_init().unwrap_or_default();
 

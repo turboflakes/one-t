@@ -139,10 +139,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                 // TODO handle all methods
                 match req.method {
                     Methods::SubscribeBlock => {
-                        if &req.params[0] == "best" {
+                        if &req.params[0] == "finalized" {
                             self.server_addr.do_send(server::Subscribe {
                                 id: self.id,
-                                topic: Topic::BestBlock,
+                                topic: Topic::FinalizedBlock,
                             });
                         }
                     }
@@ -195,10 +195,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                         }
                     }
                     Methods::UnsubscribeBlock => {
-                        if &req.params[0] == "best" {
+                        if &req.params[0] == "finalized" {
                             self.server_addr.do_send(server::Unsubscribe {
                                 id: self.id,
-                                topic: Topic::BestBlock,
+                                topic: Topic::FinalizedBlock,
                             });
                         }
                     }

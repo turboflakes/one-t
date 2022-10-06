@@ -83,6 +83,9 @@ pub struct Params {
     // show_summary indicates whether parachain summary should be retrieved or not, default false
     #[serde(default)]
     show_summary: bool,
+    // show_identity indicates whether validator identity should be retrieved or not, default false
+    #[serde(default)]
+    show_identity: bool,
     // fetch_peers indicates whether peers should be also retrieved and included in the response, default false
     #[serde(default)]
     fetch_peers: bool,
@@ -195,6 +198,7 @@ async fn get_validator_by_authority_key(
     auth_key: AuthorityKey,
     show_stats: bool,
     show_summary: bool,
+    show_identity: bool,
     cache: Data<RedisPool>,
 ) -> Result<ValidatorResult, ApiError> {
     let mut conn = get_conn(&cache).await?;
@@ -228,6 +232,24 @@ async fn get_validator_by_authority_key(
             .map_err(CacheError::RedisCMDError)?;
         data.extend(summary);
     }
+
+    // if show_identity {
+    //     let serialized_data: String = redis::cmd("GET")
+    //     .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+    //     .query_async(&mut conn as &mut Connection)
+    //     .await
+    //     .map_err(CacheError::RedisCMDError)?;
+
+    //     let summary: CacheMap = redis::cmd("HGETALL")
+    //         .arg(CacheKey::AuthorityRecordVerbose(
+    //             auth_key.to_string(),
+    //             Verbosity::Summary,
+    //         ))
+    //         .query_async(&mut conn as &mut Connection)
+    //         .await
+    //         .map_err(CacheError::RedisCMDError)?;
+    //     data.extend(summary);
+    // }
 
     data.insert(String::from("session"), auth_key.epoch_index.to_string());
 
@@ -274,6 +296,7 @@ async fn get_validator_by_stash_and_index(
         authority_key_data.clone().into(),
         show_stats,
         show_summary,
+        false,
         cache,
     )
     .await?;
@@ -340,6 +363,7 @@ pub async fn get_validators(
                                             authority_key.clone(),
                                             params.show_stats,
                                             params.show_summary,
+                                            params.show_identity,
                                             cache.clone(),
                                         )
                                         .await?;
@@ -487,6 +511,7 @@ pub async fn get_peer_by_authority(
         authority_key,
         params.show_stats,
         params.show_summary,
+        params.show_identity,
         cache,
     )
     .await?;

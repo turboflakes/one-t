@@ -20,8 +20,8 @@
 // SOFTWARE.
 
 use crate::records::{
-    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, ParaId, ParaStats,
-    ParachainRecord, ValidatorProfileRecord, Validity,
+    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, Identity, ParaId,
+    ParaStats, ParachainRecord, ValidatorProfileRecord, Validity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -159,6 +159,8 @@ impl From<Vec<SessionResult>> for SessionsResult {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ValidatorResult {
     pub address: String,
+    // #[serde(skip_serializing_if = "Option::is_none")]
+    // pub identity: Option<Identity>,
     #[serde(skip_serializing_if = "EpochIndex::is_empty")]
     pub session: EpochIndex,
     pub is_auth: bool,
@@ -201,6 +203,7 @@ impl From<CacheMap> for ValidatorResult {
             is_auth: !auth.is_empty(),
             is_para: !para.is_empty(),
             address: data.get("address").unwrap_or(&"".to_string()).to_string(),
+            // identity: data.get("identity").unwrap_or_default(), //TODO
             session: data
                 .get("session")
                 .unwrap_or(&zero)
@@ -295,7 +298,7 @@ impl From<Vec<ValidatorResult>> for SessionStats {
         let authored_blocks: u32 = data
             .iter()
             .filter(|v| v.is_auth)
-            .map(|v| v.auth.authored_blocks())
+            .map(|v| v.auth.total_authored_blocks())
             .reduce(|a, b| a + b)
             .unwrap_or_default();
 

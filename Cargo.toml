@@ -37,7 +37,9 @@ mobc-redis = { version = "0.7", default-features = false, features = ["async-std
 
 # subxt dependencies
 # subxt = { version = "0.21.0", git = "https://github.com/paritytech/subxt" }
-subxt = { rev = "6d731725", git = "https://github.com/paritytech/subxt" }
+# subxt = { rev = "6d731725", git = "https://github.com/paritytech/subxt" }
+subxt = "0.22.0"
+#subxt = { path = "/Users/paulo/Development/github.com/paritytech/subxt/subxt", branch="pm-teste"}
 # NOTE: sp-consensus-babe is needed to be able to decode the authority index in the block header logs
 sp-consensus-babe = {version = "0.10.0-dev", git = "https://github.com/paritytech/substrate" }
 

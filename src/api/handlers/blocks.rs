@@ -27,18 +27,18 @@ use actix_web::web::{Data, Json};
 use log::warn;
 use redis::aio::Connection;
 
-/// Get best block
-pub async fn get_best_block(cache: Data<RedisPool>) -> Result<Json<BlockResult>, ApiError> {
+/// Get finalized block
+pub async fn get_finalized_block(cache: Data<RedisPool>) -> Result<Json<BlockResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
     let data: BlockNumber = redis::cmd("GET")
-        .arg(CacheKey::BestBlock)
+        .arg(CacheKey::FinalizedBlock)
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
     if data == 0 {
-        let msg = format!("Best block not found");
+        let msg = format!("Finalized block not found");
         warn!("{}", msg);
         return Err(ApiError::NotFound(msg));
     }

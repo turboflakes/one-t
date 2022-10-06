@@ -25,9 +25,10 @@ use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
 use crate::records::EpochIndex;
 use crate::report::Network;
 use crate::runtimes::{
-    kusama, polkadot,
+    kusama,
+    // polkadot,
     support::{ChainPrefix, SupportedRuntime},
-    westend,
+    // westend,
 };
 use log::{debug, error, info, warn};
 use redis::aio::Connection;
@@ -48,10 +49,11 @@ use std::{
 use subxt::{
     sp_core::{crypto, sr25519, storage::StorageKey, Pair},
     sp_runtime::AccountId32,
-    Client, ClientBuilder, DefaultConfig,
+    BlockNumber, Client, ClientBuilder, DefaultConfig,
 };
 
 const TVP_VALIDATORS_FILENAME: &str = ".tvp";
+pub const BLOCK_FILENAME: &str = ".block";
 pub const EPOCH_FILENAME: &str = ".epoch";
 
 type Message = Vec<String>;
@@ -223,10 +225,10 @@ impl Onet {
         self.cache_network().await?;
 
         match self.runtime {
-            SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
+            // SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
-            SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
-            // _ => unreachable!(),
+            // SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
+            _ => unreachable!(),
         }
     }
     // cache methods
@@ -445,4 +447,22 @@ pub fn get_from_seed(seed: &str, pass: Option<&str>) -> sr25519::Pair {
     let clean_seed = re.replace_all(&seed.trim(), "");
     sr25519::Pair::from_string(&clean_seed, pass)
         .expect("constructed from known-good static value; qed")
+}
+
+pub fn get_latest_block_number_processed() -> Result<Option<u64>, OnetError> {
+    let config = CONFIG.clone();
+    let filename = format!("{}{}", config.data_path, BLOCK_FILENAME);
+    if let Ok(number) = fs::read_to_string(&filename) {
+        Ok(Some(number.parse().unwrap_or(config.initial_block_number)))
+    } else {
+        fs::write(&filename, config.initial_block_number.to_string())?;
+        Ok(Some(config.initial_block_number))
+    }
+}
+
+pub fn write_latest_block_number_processed(block_number: u64) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    let filename = format!("{}{}", config.data_path, BLOCK_FILENAME);
+    fs::write(&filename, block_number.to_string())?;
+    Ok(())
 }

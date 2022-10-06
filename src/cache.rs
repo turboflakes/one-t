@@ -78,7 +78,7 @@ impl std::fmt::Display for Verbosity {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CacheKey {
     Network,
-    BestBlock,
+    FinalizedBlock,
     SessionByIndex(Index),
     SessionByIndexStats(Index),
     AuthorityRecord(EraIndex, EpochIndex, AuthorityIndex),
@@ -94,7 +94,7 @@ impl std::fmt::Display for CacheKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Network => write!(f, "network"),
-            Self::BestBlock => write!(f, "best"),
+            Self::FinalizedBlock => write!(f, "finalized"),
             Self::SessionByIndex(index) => write!(f, "s:{}", index),
             Self::SessionByIndexStats(index) => write!(f, "s:{}:s", index),
             Self::AuthorityRecord(era_index, session_index, authority_index) => write!(

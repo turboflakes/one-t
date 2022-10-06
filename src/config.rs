@@ -196,6 +196,8 @@ pub struct Config {
     pub mvr_level_4: u32,
     #[serde(default)]
     pub is_debug: bool,
+    #[serde(default)]
+    pub initial_block_number: u64,
     // ranking
     #[serde(default = "default_maximum_top_ranking")]
     pub maximum_top_ranking: u32,
