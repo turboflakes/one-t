@@ -1277,7 +1277,7 @@ pub struct ParachainRecord {
     pub stats: ParaStats,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Identity {
     #[serde(default)]
     name: String,
@@ -1307,7 +1307,7 @@ impl std::fmt::Display for Identity {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ValidatorProfileRecord {
     pub stash: Option<AccountId32>,
     pub controller: Option<AccountId32>,
@@ -1318,6 +1318,12 @@ pub struct ValidatorProfileRecord {
     pub own_stake: u128,
     pub subset: Subset,
     pub is_oversubscribed: bool,
+}
+
+impl Validity for ValidatorProfileRecord {
+    fn is_empty(&self) -> bool {
+        self.stash.is_none()
+    }
 }
 
 #[cfg(test)]

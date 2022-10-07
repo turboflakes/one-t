@@ -20,7 +20,7 @@
 // SOFTWARE.
 
 use crate::records::{
-    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, Identity, ParaId,
+    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, ParaId,
     ParaStats, ParachainRecord, ValidatorProfileRecord, Validity,
 };
 use serde::{Deserialize, Serialize};
@@ -88,7 +88,6 @@ pub struct SessionResult {
     sbix: BlockNumber,
     ebix: BlockNumber,
     esix: u8,
-    is_full: bool,
     #[serde(skip_serializing_if = "default")]
     is_current: bool,
     #[serde(skip_serializing_if = "SessionStats::is_empty")]
@@ -130,11 +129,6 @@ impl From<CacheMap> for SessionResult {
                 .unwrap_or(&zero)
                 .parse::<u8>()
                 .unwrap_or_default(),
-            is_full: data
-                .get("is_full")
-                .unwrap_or(&zero)
-                .parse::<bool>()
-                .unwrap_or_default(),
             is_current: data
                 .get("is_current")
                 .unwrap_or(&zero)
@@ -159,8 +153,8 @@ impl From<Vec<SessionResult>> for SessionsResult {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ValidatorResult {
     pub address: String,
-    // #[serde(skip_serializing_if = "Option::is_none")]
-    // pub identity: Option<Identity>,
+    #[serde(skip_serializing_if = "ValidatorProfileResult::is_empty")]
+    pub profile: ValidatorProfileResult,
     #[serde(skip_serializing_if = "EpochIndex::is_empty")]
     pub session: EpochIndex,
     pub is_auth: bool,
@@ -185,13 +179,14 @@ impl From<CacheMap> for ValidatorResult {
         let serialized = data.get("para").unwrap_or(&"{}".to_string()).to_string();
         let para: BTreeMap<String, Value> = serde_json::from_str(&serialized).unwrap();
 
+        // para_summary
         let serialized = data
             .get("para_summary")
             .unwrap_or(&"{}".to_string())
             .to_string();
-
         let para_summary: ParaStats = serde_json::from_str(&serialized).unwrap_or_default();
 
+        // para_stats
         let serialized = data
             .get("para_stats")
             .unwrap_or(&"{}".to_string())
@@ -199,11 +194,15 @@ impl From<CacheMap> for ValidatorResult {
         let para_stats: BTreeMap<ParaId, ParaStats> =
             serde_json::from_str(&serialized).unwrap_or_default();
 
+        // profile
+        let serialized = data.get("profile").unwrap_or(&"{}".to_string()).to_string();
+        let profile: ValidatorProfileResult = serialized.into();
+
         ValidatorResult {
             is_auth: !auth.is_empty(),
             is_para: !para.is_empty(),
             address: data.get("address").unwrap_or(&"".to_string()).to_string(),
-            // identity: data.get("identity").unwrap_or_default(), //TODO
+            profile,
             session: data
                 .get("session")
                 .unwrap_or(&zero)

@@ -25,7 +25,7 @@ use crate::matrix::FileInfo;
 use crate::onet::{
     get_account_id_from_storage_key, get_from_seed, get_latest_block_number_processed,
     get_subscribers, get_subscribers_by_epoch, try_fetch_stashes_from_remote_url,
-    write_latest_block_number_processed, Onet, ReportType, BLOCK_FILENAME, EPOCH_FILENAME,
+    write_latest_block_number_processed, Onet, ReportType, EPOCH_FILENAME,
 };
 use crate::pools::{Nominee, Pool, PoolNomination, PoolNominees, PoolsEra};
 use crate::records::{
@@ -71,7 +71,6 @@ use node_runtime::{
         polkadot_primitives::v2::ValidityAttestation, sp_arithmetic::per_things::Perbill,
         sp_runtime::bounded::bounded_vec::BoundedVec,
     },
-    session::events::NewSession,
     system::events::ExtrinsicFailed,
 };
 
@@ -441,19 +440,6 @@ pub async fn cache_session_records(
                     .query_async(&mut cache as &mut Connection)
                     .await
                     .map_err(CacheError::RedisCMDError)?;
-
-                if !records.is_first_epoch(current_epoch) {
-                    // set previous session as full if it was not the first one
-                    redis::cmd("HSET")
-                        .arg(CacheKey::SessionByIndex(Index::Num(
-                            records.current_epoch() - 1,
-                        )))
-                        .arg(String::from("is_full"))
-                        .arg((!records.is_first_epoch(current_epoch - 1)).to_string())
-                        .query_async(&mut cache as &mut Connection)
-                        .await
-                        .map_err(CacheError::RedisCMDError)?;
-                }
             }
         }
         // ---

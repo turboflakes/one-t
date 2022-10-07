@@ -49,7 +49,7 @@ use std::{
 use subxt::{
     sp_core::{crypto, sr25519, storage::StorageKey, Pair},
     sp_runtime::AccountId32,
-    BlockNumber, Client, ClientBuilder, DefaultConfig,
+    Client, ClientBuilder, DefaultConfig,
 };
 
 const TVP_VALIDATORS_FILENAME: &str = ".tvp";
