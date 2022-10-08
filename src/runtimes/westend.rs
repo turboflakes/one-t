@@ -365,11 +365,11 @@ pub async fn switch_new_session(
 
     // Remove older keys, default is maximum_history_eras + 1
     records.remove(EpochKey(
-        records.current_era() - config.maximum_history_eras + 1,
+        records.current_era() - (config.maximum_history_eras + 1),
         records.current_epoch() - ((config.maximum_history_eras + 1) * 6),
     ));
     subscribers.remove(EpochKey(
-        records.current_era() - config.maximum_history_eras + 1,
+        records.current_era() - (config.maximum_history_eras + 1),
         records.current_epoch() - ((config.maximum_history_eras + 1) * 6),
     ));
 
