@@ -21,11 +21,11 @@
 
 use crate::api::{
     helpers::respond_json,
-    responses::{CacheMap, SessionResult, SessionStats, SessionsResult, ValidatorResult},
+    responses::{CacheMap, SessionResult, SessionsResult, ValidatorResult},
 };
 use crate::cache::{get_conn, CacheKey, Index, RedisPool, Verbosity};
 use crate::errors::{ApiError, CacheError};
-use crate::records::EpochIndex;
+use crate::records::{EpochIndex, SessionStats};
 use actix_web::web::{Data, Json, Path, Query};
 use log::warn;
 use redis::aio::Connection;
@@ -42,54 +42,6 @@ pub struct Params {
 
 fn default_number_last_sessions() -> u32 {
     48
-}
-
-/// Pull, Compile and cache stats result
-async fn pull_and_cache_stats(
-    index: EpochIndex,
-    cache: Data<RedisPool>,
-) -> Result<CacheMap, ApiError> {
-    let mut conn = get_conn(&cache).await?;
-
-    let authority_keys: Vec<String> = redis::cmd("SMEMBERS")
-        .arg(CacheKey::AuthorityKeysBySession(index))
-        .query_async(&mut conn as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?;
-
-    let mut data: Vec<ValidatorResult> = Vec::new();
-    for key in authority_keys.iter() {
-        let mut auth_data: CacheMap = redis::cmd("HGETALL")
-            .arg(key)
-            .query_async(&mut conn as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?;
-
-        let summary: CacheMap = redis::cmd("HGETALL")
-            .arg(CacheKey::AuthorityRecordVerbose(
-                key.to_string(),
-                Verbosity::Summary,
-            ))
-            .query_async(&mut conn as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?;
-        auth_data.extend(summary);
-
-        data.push(auth_data.into());
-    }
-
-    let stats: SessionStats = data.into();
-    let serialized = serde_json::to_string(&stats)?;
-    let result = CacheMap::from([(String::from("stats"), serialized)]);
-
-    redis::cmd("HSET")
-        .arg(CacheKey::SessionByIndexStats(Index::Num(index)))
-        .arg(result.clone())
-        .query_async(&mut conn as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?;
-
-    Ok(result)
 }
 
 /// Get a sessions filtered by query params
@@ -112,7 +64,7 @@ pub async fn get_sessions(
             last = None;
         } else {
             let mut session_data: CacheMap = redis::cmd("HGETALL")
-                .arg(CacheKey::SessionByIndex(Index::Num(session_index)))
+                .arg(CacheKey::SessionByIndex(Index::Num(session_index.into())))
                 .query_async(&mut conn as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
@@ -122,18 +74,15 @@ pub async fn get_sessions(
             }
 
             if params.show_stats {
-                let mut session_stats_data: CacheMap = redis::cmd("HGETALL")
-                    .arg(CacheKey::SessionByIndexStats(Index::Num(session_index)))
+                let serialized_data: String = redis::cmd("GET")
+                    .arg(CacheKey::SessionByIndexStats(Index::Num(
+                        session_index.into(),
+                    )))
                     .query_async(&mut conn as &mut Connection)
                     .await
                     .map_err(CacheError::RedisCMDError)?;
 
-                if session_stats_data.is_empty() {
-                    let mut latest = pull_and_cache_stats(session_index, cache.clone()).await?;
-                    session_stats_data.append(&mut latest);
-                }
-
-                session_data.append(&mut session_stats_data);
+                session_data.insert(String::from("stats"), serialized_data);
             }
 
             data.push(session_data.into());

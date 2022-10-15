@@ -19,29 +19,73 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::api::responses::{CacheMap, SessionResult, SessionsResult, ValidatorResult};
 use crate::api::{helpers::respond_json, responses::BlockResult};
-use crate::cache::{get_conn, CacheKey, RedisPool};
+use crate::cache::{get_conn, CacheKey, Index, RedisPool};
 use crate::errors::{ApiError, CacheError};
 use crate::records::BlockNumber;
-use actix_web::web::{Data, Json};
-use log::warn;
+use actix_web::web::{Data, Json, Query};
+use log::{info, warn};
 use redis::aio::Connection;
+use serde::Deserialize;
+use std::convert::TryInto;
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+pub struct Params {
+    // show_stats indicates whether session stats should be retrieved or not, default false
+    #[serde(default)]
+    show_stats: bool,
+}
 
 /// Get finalized block
-pub async fn get_finalized_block(cache: Data<RedisPool>) -> Result<Json<BlockResult>, ApiError> {
+pub async fn get_finalized_block(
+    params: Query<Params>,
+    cache: Data<RedisPool>,
+) -> Result<Json<BlockResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
-    let data: BlockNumber = redis::cmd("GET")
+    if let Ok(block_number) = redis::cmd("GET")
         .arg(CacheKey::FinalizedBlock)
-        .query_async(&mut conn as &mut Connection)
+        .query_async::<Connection, BlockNumber>(&mut conn)
         .await
-        .map_err(CacheError::RedisCMDError)?;
+    {
+        // let block_number = String::from_utf8(block_number).unwrap_or("0".to_string());
+        let mut data = CacheMap::new();
+        data.insert(String::from("finalized_block"), block_number.to_string());
 
-    if data == 0 {
-        let msg = format!("Finalized block not found");
-        warn!("{}", msg);
-        return Err(ApiError::NotFound(msg));
+        if params.show_stats {
+            if let Ok(stats) = redis::cmd("GET")
+                .arg(CacheKey::BlockByIndexStats(Index::Num(block_number)))
+                .query_async::<Connection, String>(&mut conn)
+                .await
+            {
+                data.insert(String::from("stats"), stats);
+            }
+        }
+
+        return respond_json(data.into());
     }
 
-    respond_json(data.into())
+    let msg = format!("Finalized block not found");
+    warn!("{}", msg);
+    Err(ApiError::NotFound(msg))
+}
+
+/// Get best block
+pub async fn get_best_block(cache: Data<RedisPool>) -> Result<Json<BlockResult>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+
+    if let Ok(block_number) = redis::cmd("GET")
+        .arg(CacheKey::BestBlock)
+        .query_async::<Connection, BlockNumber>(&mut conn)
+        .await
+    {
+        let mut data = CacheMap::new();
+        data.insert(String::from("best_block"), block_number.to_string());
+        return respond_json(data.into());
+    }
+
+    let msg = format!("Best block not found");
+    warn!("{}", msg);
+    Err(ApiError::NotFound(msg))
 }

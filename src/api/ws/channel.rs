@@ -43,6 +43,7 @@ const BLOCK_INTERVAL: Duration = Duration::from_secs(6);
 #[derive(Clone, Eq, Hash, PartialEq, Debug)]
 pub enum Topic {
     FinalizedBlock,
+    BestBlock,
     NewSession,
     Validator(AccountId32),
     ParaAuthorities(EpochIndex, Verbosity),
@@ -53,6 +54,7 @@ impl std::fmt::Display for Topic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::FinalizedBlock => write!(f, "finalized_block"),
+            Self::BestBlock => write!(f, "best_block"),
             Self::NewSession => write!(f, "new_session"),
             Self::Validator(account) => write!(f, "v:{}", account),
             Self::ParaAuthorities(index, verbosity) => write!(f, "pas:{}:{}", index, verbosity),
@@ -113,13 +115,50 @@ impl Channel {
                 Topic::FinalizedBlock => {
                     let future = async {
                         if let Ok(mut conn) = get_conn(&act.cache).await {
-                            if let Ok(data) = redis::cmd("GET")
+                            if let Ok(block_number) = redis::cmd("GET")
                                 .arg(CacheKey::FinalizedBlock)
                                 .query_async::<Connection, BlockNumber>(&mut conn)
                                 .await
                             {
+                                if let Ok(serialized_data) = redis::cmd("GET")
+                                    .arg(CacheKey::BlockByIndexStats(Index::Num(
+                                        block_number.into(),
+                                    )))
+                                    .query_async::<Connection, String>(&mut conn)
+                                    .await
+                                {
+                                    let mut data = CacheMap::new();
+                                    data.insert(
+                                        String::from("finalized_block"),
+                                        block_number.to_string(),
+                                    );
+                                    data.insert(String::from("stats"), serialized_data);
+
+                                    let resp = WsResponseMessage {
+                                        r#type: String::from("finalized_block"),
+                                        result: BlockResult::from(data),
+                                    };
+                                    let serialized = serde_json::to_string(&resp).unwrap();
+                                    act.publish_message(&serialized, 0);
+                                }
+                            }
+                        }
+                    };
+                    block_on(future);
+                }
+                Topic::BestBlock => {
+                    let future = async {
+                        if let Ok(mut conn) = get_conn(&act.cache).await {
+                            if let Ok(block_number) = redis::cmd("GET")
+                                .arg(CacheKey::BestBlock)
+                                .query_async::<Connection, BlockNumber>(&mut conn)
+                                .await
+                            {
+                                let mut data = CacheMap::new();
+                                data.insert(String::from("best_block"), block_number.to_string());
+
                                 let resp = WsResponseMessage {
-                                    r#type: String::from("finalized_block"),
+                                    r#type: String::from("best_block"),
                                     result: BlockResult::from(data),
                                 };
                                 let serialized = serde_json::to_string(&resp).unwrap();
@@ -141,7 +180,7 @@ impl Channel {
                                 .await
                             {
                                 if let Ok(mut current_data) = redis::cmd("HGETALL")
-                                    .arg(CacheKey::SessionByIndex(Index::Num(current)))
+                                    .arg(CacheKey::SessionByIndex(Index::Num(current.into())))
                                     .query_async::<Connection, CacheMap>(&mut conn)
                                     .await
                                 {
@@ -164,7 +203,9 @@ impl Channel {
                                         // send previous session (clients might find it useful
                                         // since is no longer the current session)
                                         if let Ok(mut previous_data) = redis::cmd("HGETALL")
-                                            .arg(CacheKey::SessionByIndex(Index::Num(current - 1)))
+                                            .arg(CacheKey::SessionByIndex(Index::Num(
+                                                (current - 1).into(),
+                                            )))
                                             .query_async::<Connection, CacheMap>(&mut conn)
                                             .await
                                         {

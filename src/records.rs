@@ -35,13 +35,20 @@ use subxt::{
     DefaultConfig,
 };
 
-pub type BlockNumber = u64;
-pub type EraIndex = u32;
-pub type EpochIndex = u32;
-
 pub trait Validity {
     fn is_empty(&self) -> bool;
 }
+
+pub type BlockNumber = u64;
+
+impl Validity for BlockNumber {
+    fn is_empty(&self) -> bool {
+        *self == 0
+    }
+}
+
+pub type EraIndex = u32;
+pub type EpochIndex = u32;
 
 impl Validity for EpochIndex {
     fn is_empty(&self) -> bool {
@@ -87,6 +94,7 @@ pub struct BlockKey(EpochKey, BlockKind);
 enum BlockKind {
     Start,
     End,
+    Best,
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd)]
@@ -272,12 +280,26 @@ impl Records {
         }
     }
 
+    // deprecated: use finalized_block
     pub fn current_block(&self) -> Option<&BlockNumber> {
         let block = self.end_block(Some(EpochKey(self.current_era, self.current_epoch)));
         if block.is_none() {
             return self.start_block(Some(EpochKey(self.current_era, self.current_epoch)));
         }
         block
+    }
+
+    pub fn finalized_block(&self) -> Option<&BlockNumber> {
+        let block = self.end_block(Some(EpochKey(self.current_era, self.current_epoch)));
+        if block.is_none() {
+            return self.start_block(Some(EpochKey(self.current_era, self.current_epoch)));
+        }
+        block
+    }
+
+    pub fn best_block(&self) -> Option<&BlockNumber> {
+        let epoch_key = EpochKey(self.current_era, self.current_epoch);
+        return self.blocks.get(&BlockKey(epoch_key, BlockKind::Best));
     }
 
     pub fn start_new_epoch(&mut self, era: EraIndex, epoch: EpochIndex) {
@@ -300,6 +322,16 @@ impl Records {
             BlockKey(
                 EpochKey(self.current_era, self.current_epoch),
                 BlockKind::End,
+            ),
+            block_number,
+        );
+    }
+
+    pub fn set_best_block_number(&mut self, block_number: BlockNumber) {
+        self.blocks.insert(
+            BlockKey(
+                EpochKey(self.current_era, self.current_epoch),
+                BlockKind::Best,
             ),
             block_number,
         );
@@ -1307,6 +1339,7 @@ impl std::fmt::Display for Identity {
     }
 }
 
+// Note: the following structs are useful for api/cache support
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ValidatorProfileRecord {
     pub stash: Option<AccountId32>,
@@ -1323,6 +1356,32 @@ pub struct ValidatorProfileRecord {
 impl Validity for ValidatorProfileRecord {
     fn is_empty(&self) -> bool {
         self.stash.is_none()
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct SessionStats {
+    #[serde(rename = "na")]
+    pub authorities: u32,
+    #[serde(rename = "npa")]
+    pub para_authorities: u32,
+    #[serde(rename = "pt")]
+    pub points: Points,
+    #[serde(rename = "ab")]
+    pub authored_blocks: u32,
+    #[serde(rename = "ca")]
+    pub core_assignments: u32,
+    #[serde(rename = "ev")]
+    pub explicit_votes: u32,
+    #[serde(rename = "iv")]
+    pub implicit_votes: u32,
+    #[serde(rename = "mv")]
+    pub missed_votes: u32,
+}
+
+impl Validity for SessionStats {
+    fn is_empty(&self) -> bool {
+        self.authorities == 0
     }
 }
 

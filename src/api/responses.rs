@@ -20,12 +20,12 @@
 // SOFTWARE.
 
 use crate::records::{
-    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, ParaId,
-    ParaStats, ParachainRecord, ValidatorProfileRecord, Validity,
+    AuthoredBlocks, AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, ParaId,
+    ParaStats, ParachainRecord, Points, SessionStats, ValidatorProfileRecord, Validity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, convert::TryInto};
 pub type AuthorityKeyCache = BTreeMap<String, String>;
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
@@ -70,12 +70,35 @@ impl std::fmt::Display for AuthorityKey {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BlockResult {
-    bix: BlockNumber,
+    // finalized_block
+    #[serde(skip_serializing_if = "BlockNumber::is_empty")]
+    fbix: BlockNumber,
+    // best_block
+    #[serde(skip_serializing_if = "BlockNumber::is_empty")]
+    bbix: BlockNumber,
+    // session stats
+    #[serde(skip_serializing_if = "SessionStats::is_empty")]
+    stats: SessionStats,
 }
 
-impl From<BlockNumber> for BlockResult {
-    fn from(bix: BlockNumber) -> Self {
-        BlockResult { bix }
+impl From<CacheMap> for BlockResult {
+    fn from(data: CacheMap) -> Self {
+        let zero = "0".to_string();
+        let serialized = data.get("stats").unwrap_or(&"{}".to_string()).to_string();
+        let stats: SessionStats = serde_json::from_str(&serialized).unwrap_or_default();
+        BlockResult {
+            fbix: data
+                .get("finalized_block")
+                .unwrap_or(&zero)
+                .parse::<BlockNumber>()
+                .unwrap_or_default(),
+            bbix: data
+                .get("best_block")
+                .unwrap_or(&zero)
+                .parse::<BlockNumber>()
+                .unwrap_or_default(),
+            stats,
+        }
     }
 }
 
@@ -258,63 +281,6 @@ impl From<CacheMap> for ParachainsResult {
                 .parse::<EpochIndex>()
                 .unwrap_or_default(),
             data: out,
-        }
-    }
-}
-
-pub type SessionStats = ParaStats;
-
-impl From<Vec<ValidatorResult>> for SessionStats {
-    fn from(data: Vec<ValidatorResult>) -> Self {
-        let core_assignments: u32 = data
-            .iter()
-            .filter(|v| v.is_para)
-            .map(|v| v.para_summary.core_assignments())
-            .reduce(|a, b| a + b)
-            .unwrap_or_default();
-
-        let explicit_votes: u32 = data
-            .iter()
-            .filter(|v| v.is_para)
-            .map(|v| v.para_summary.explicit_votes())
-            .reduce(|a, b| a + b)
-            .unwrap_or_default();
-
-        let implicit_votes: u32 = data
-            .iter()
-            .filter(|v| v.is_para)
-            .map(|v| v.para_summary.implicit_votes())
-            .reduce(|a, b| a + b)
-            .unwrap_or_default();
-
-        let missed_votes: u32 = data
-            .iter()
-            .filter(|v| v.is_para)
-            .map(|v| v.para_summary.missed_votes())
-            .reduce(|a, b| a + b)
-            .unwrap_or_default();
-
-        let authored_blocks: u32 = data
-            .iter()
-            .filter(|v| v.is_auth)
-            .map(|v| v.auth.total_authored_blocks())
-            .reduce(|a, b| a + b)
-            .unwrap_or_default();
-
-        let points: u32 = data
-            .iter()
-            .filter(|v| v.is_auth)
-            .map(|v| v.auth.points())
-            .reduce(|a, b| a + b)
-            .unwrap_or_default();
-
-        SessionStats {
-            points,
-            core_assignments,
-            authored_blocks,
-            explicit_votes,
-            implicit_votes,
-            missed_votes,
         }
     }
 }

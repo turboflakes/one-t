@@ -31,7 +31,7 @@ use crate::pools::{Nominee, Pool, PoolNomination, PoolNominees, PoolsEra};
 use crate::records::{
     decode_authority_index, AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EpochKey,
     EraIndex, Identity, ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records,
-    Subscribers, ValidatorProfileRecord, Votes,
+    SessionStats, Subscribers, ValidatorProfileRecord, Votes,
 };
 use crate::report::{
     Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara, RawDataParachains,
@@ -65,15 +65,23 @@ mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        pallet_identity::types::Data, polkadot_parachain::primitives::Id,
-        polkadot_primitives::v2::CoreIndex, polkadot_primitives::v2::DisputeStatement,
-        polkadot_primitives::v2::GroupIndex, polkadot_primitives::v2::ValidatorIndex,
-        polkadot_primitives::v2::ValidityAttestation, sp_arithmetic::per_things::Perbill,
+        frame_system::{EventRecord, Phase},
+        // kusama_runtime::Event,
+        pallet_identity::types::Data,
+        polkadot_parachain::primitives::Id,
+        polkadot_primitives::v2::CoreIndex,
+        polkadot_primitives::v2::DisputeStatement,
+        polkadot_primitives::v2::GroupIndex,
+        polkadot_primitives::v2::ValidatorIndex,
+        polkadot_primitives::v2::ValidityAttestation,
+        sp_arithmetic::per_things::Perbill,
         sp_runtime::bounded::bounded_vec::BoundedVec,
+        // pallet_session::pallet::Event
     },
+    session::events::NewSession,
+    // Event,
     system::events::ExtrinsicFailed,
 };
-
 type Api = node_runtime::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>;
 type Call = node_runtime::runtime_types::kusama_runtime::Call;
 type NominationPoolsCall = node_runtime::runtime_types::pallet_nomination_pools::pallet::Call;
@@ -143,75 +151,57 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
         // Start indexing from the start_block_number
         let mut latest_block_number_processed: Option<u64> = Some(start_block_number.into());
 
-        // Subscribe to finalized head:
-        let mut sub = api.client.rpc().subscribe_finalized_blocks().await?;
-        while let Some(Ok(block)) = sub.next().await {
-            // Process older blocks that have not been processed
-            while let Some(processed_block_number) = latest_block_number_processed {
-                if block.number as u64 == processed_block_number {
-                    latest_block_number_processed = None;
-                } else {
-                    let start = Instant::now();
-                    // process the next block
-                    let block_number = processed_block_number + 1;
-                    // fetch block_hash if not the finalized head
-                    let block_hash = if block.number as u64 == block_number {
-                        Some(block.hash())
+        // Subscribe head
+        // NOTE: the reason why we subscribe head and not finalized_head,
+        // is just because head is in sync more frequently.
+        // finalized_head can always be queried so as soon as it changes we process th repective block_hash
+        let mut sub = api.client.rpc().subscribe_blocks().await?;
+        while let Some(Ok(best_block)) = sub.next().await {
+            debug!("block head {:?} received", best_block.number);
+            // update records best_block number
+            process_best_block(&onet, &mut records, best_block.number.into()).await?;
+
+            // fetch latest finalized block
+            let finalized_block_hash = api.client.rpc().finalized_head().await?;
+            if let Some(block) = api.client.rpc().header(Some(finalized_block_hash)).await? {
+                debug!("finalized block head {:?} in storage", block.number);
+                // process older blocks that have not been processed first
+                while let Some(processed_block_number) = latest_block_number_processed {
+                    if block.number as u64 == processed_block_number {
+                        latest_block_number_processed = None;
                     } else {
-                        api.client
-                            .rpc()
-                            .block_hash(Some(block_number.into()))
-                            .await?
-                    };
-                    // fetch block_header
-                    if let Some(block) = api.client.rpc().header(block_hash).await? {
-                        // Update current block number
-                        records.set_current_block_number(block_number.into());
+                        // process the next block
+                        let block_number = processed_block_number + 1;
 
-                        // Update records
-                        track_records(&onet, &mut records, block_number, block_hash).await?;
-
-                        let current_index =
-                            api.storage().session().current_index(block_hash).await?;
-                        let parent_index = api
-                            .storage()
-                            .session()
-                            .current_index(Some(block.parent_hash))
-                            .await?;
-                        // Update new session records
-                        if current_index != parent_index {
-                            switch_new_session(
+                        // if finalized_head process block otherwise fetch block_hash and process the pending block
+                        if block.number as u64 == block_number {
+                            process_finalized_block(
                                 &onet,
-                                block_number,
-                                current_index,
                                 &mut subscribers,
                                 &mut records,
+                                block_number,
+                                Some(block.hash()),
+                            )
+                            .await?;
+                        } else {
+                            // fetch block_hash if not the finalized head
+                            let block_hash = api
+                                .client
+                                .rpc()
+                                .block_hash(Some(block_number.into()))
+                                .await?;
+                            process_finalized_block(
+                                &onet,
+                                &mut subscribers,
+                                &mut records,
+                                block_number,
                                 block_hash,
                             )
                             .await?;
+                        };
 
-                            // Network public report
-                            // try_run_network_report(new_session_event.session_index, &records).await?;
-
-                            // Cache records every new session
-                            try_run_cache_session_records(&records, block_hash).await?;
-                        }
-
-                        // TODO: include block_hash
-                        // Cache pools every minute
-                        // try_run_cache_pools_data(&onet, block_number).await?;
-
-                        // TODO: include block_hash
-                        // Cache records at every block
-                        cache_track_records(&onet, &records).await?;
-
-                        // Cache block processed
-                        write_latest_block_number_processed(block_number)?;
                         //
                         latest_block_number_processed = Some(block_number);
-
-                        // Log block processed duration time
-                        info!("Block #{} processed ({:?})", block_number, start.elapsed());
                     }
                 }
             }
@@ -221,6 +211,88 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     Err(OnetError::SubscriptionFinished)
 }
 
+pub async fn process_best_block(
+    onet: &Onet,
+    records: &mut Records,
+    block_number: BlockNumber,
+) -> Result<(), OnetError> {
+    // update best block number
+    records.set_best_block_number(block_number.into());
+
+    // if api enabled cache best block
+    let config = CONFIG.clone();
+    if config.api_enabled {
+        let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+        redis::cmd("SET")
+            .arg(CacheKey::BestBlock)
+            .arg(block_number.to_string())
+            .query_async(&mut cache as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+    }
+
+    Ok(())
+}
+
+pub async fn process_finalized_block(
+    onet: &Onet,
+    subscribers: &mut Subscribers,
+    records: &mut Records,
+    block_number: BlockNumber,
+    block_hash: Option<H256>,
+) -> Result<(), OnetError> {
+    let start = Instant::now();
+    let client = onet.client();
+    let api = client.clone().to_runtime_api::<Api>();
+
+    // Update current block number
+    records.set_current_block_number(block_number.into());
+
+    // Update records
+    track_records(&onet, records, block_number, block_hash).await?;
+
+    // fetch block events
+    if let Some(ba) = block_hash {
+        let events = api.events().at(ba).await?;
+
+        if let Some(new_session_event) = events.find_first::<NewSession>()? {
+            info!("{:?}", new_session_event);
+
+            switch_new_session(
+                &onet,
+                block_number,
+                new_session_event.session_index,
+                subscribers,
+                records,
+                block_hash,
+            )
+            .await?;
+
+            // Network public report
+            // try_run_network_report(new_session_event.session_index, &records).await?;
+
+            // Cache records every new session
+            try_run_cache_session_records(&records, block_hash).await?;
+        }
+    }
+
+    // TODO: include block_hash
+    // Cache pools every minute
+    // try_run_cache_pools_data(&onet, block_number).await?;
+
+    // Cache records at every block
+    cache_track_records(&onet, &records).await?;
+
+    // Cache block processed
+    write_latest_block_number_processed(block_number)?;
+
+    // Log block processed duration time
+    info!("Block #{} processed ({:?})", block_number, start.elapsed());
+
+    Ok(())
+}
+
+// cache_track_records is called once at every block
 pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if config.api_enabled {
@@ -228,6 +300,7 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
 
         // cache records every new block
         if let Some(current_block) = records.current_block() {
+            // cache current_block / finalized block
             redis::cmd("SET")
                 .arg(CacheKey::FinalizedBlock)
                 .arg(*current_block)
@@ -237,17 +310,35 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
 
             let current_era = records.current_era();
             let current_epoch = records.current_epoch();
+
             let mut parachains_map: BTreeMap<ParaId, ParachainRecord> = BTreeMap::new();
+            let mut session_stats = SessionStats::default();
 
             if let Some(authorities) = records.get_authorities(None) {
                 for authority_idx in authorities.iter() {
                     if let Some(authority_record) =
                         records.get_authority_record(*authority_idx, None)
                     {
+                        // aggregate authority session_stats counters
+                        session_stats.authorities += 1;
+                        session_stats.points += authority_record.points();
+                        session_stats.authored_blocks += authority_record.total_authored_blocks();
+
+                        //
                         let authority_key =
                             CacheKey::AuthorityRecord(current_era, current_epoch, *authority_idx);
+
                         let mut data: BTreeMap<String, String> = BTreeMap::new();
                         if let Some(para_record) = records.get_para_record(*authority_idx, None) {
+                            // aggregate para_authority session_stats counters
+                            session_stats.para_authorities += 1;
+                            session_stats.core_assignments += para_record.total_core_assignments();
+                            session_stats.explicit_votes += para_record.total_explicit_votes();
+                            session_stats.implicit_votes += para_record.total_implicit_votes();
+                            session_stats.missed_votes += para_record.total_missed_votes();
+                            session_stats.explicit_votes += para_record.total_explicit_votes();
+
+                            //
                             let serialized = serde_json::to_string(&para_record)?;
                             data.insert(String::from("para"), serialized);
 
@@ -327,6 +418,15 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                 }
             }
 
+            // cache session_stats every block
+            let serialized = serde_json::to_string(&session_stats)?;
+            redis::cmd("SET")
+                .arg(CacheKey::BlockByIndexStats(Index::Num(*current_block)))
+                .arg(serialized)
+                .query_async(&mut cache as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+
             // cache parachains stats
             for (para_id, records) in parachains_map.iter() {
                 let serialized = serde_json::to_string(&records)?;
@@ -347,7 +447,7 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                     // by `epoch_index`
                     redis::cmd("HSET")
                         .arg(CacheKey::SessionByIndex(Index::Num(
-                            records.current_epoch(),
+                            records.current_epoch().into(),
                         )))
                         .arg(data)
                         .query_async(&mut cache as &mut Connection)
@@ -378,6 +478,7 @@ pub async fn try_run_cache_session_records(
     Ok(())
 }
 
+// cache_session_records is called once at every new session
 pub async fn cache_session_records(
     records: &Records,
     block_hash: Option<H256>,
@@ -424,7 +525,7 @@ pub async fn cache_session_records(
                 // by `epoch_index`
                 redis::cmd("HSET")
                     .arg(CacheKey::SessionByIndex(Index::Num(
-                        records.current_epoch(),
+                        records.current_epoch().into(),
                     )))
                     .arg(data)
                     .query_async(&mut cache as &mut Connection)
@@ -437,6 +538,16 @@ pub async fn cache_session_records(
                         "current",
                     ))))
                     .arg(records.current_epoch().to_string())
+                    .query_async(&mut cache as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?;
+
+                //NOTE: make session_stats available to previous session by copying stats from previous block
+                redis::cmd("COPY")
+                    .arg(CacheKey::BlockByIndexStats(Index::Num(*current_block - 1)))
+                    .arg(CacheKey::SessionByIndexStats(Index::Num(
+                        (current_epoch - 1).into(),
+                    )))
                     .query_async(&mut cache as &mut Connection)
                     .await
                     .map_err(CacheError::RedisCMDError)?;

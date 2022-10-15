@@ -43,7 +43,7 @@ pub type RedisConn = Connection<RedisConnectionManager>;
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum Index {
-    Num(u32),
+    Num(u64),
     Str(String),
     Current,
 }
@@ -79,6 +79,8 @@ impl std::fmt::Display for Verbosity {
 pub enum CacheKey {
     Network,
     FinalizedBlock,
+    BestBlock,
+    BlockByIndexStats(Index),
     SessionByIndex(Index),
     SessionByIndexStats(Index),
     AuthorityRecord(EraIndex, EpochIndex, AuthorityIndex),
@@ -95,6 +97,8 @@ impl std::fmt::Display for CacheKey {
         match self {
             Self::Network => write!(f, "network"),
             Self::FinalizedBlock => write!(f, "finalized"),
+            Self::BestBlock => write!(f, "best"),
+            Self::BlockByIndexStats(index) => write!(f, "b:{}:s", index),
             Self::SessionByIndex(index) => write!(f, "s:{}", index),
             Self::SessionByIndexStats(index) => write!(f, "s:{}:s", index),
             Self::AuthorityRecord(era_index, session_index, authority_index) => write!(
