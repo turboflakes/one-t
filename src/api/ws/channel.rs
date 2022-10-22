@@ -43,6 +43,7 @@ const BLOCK_INTERVAL: Duration = Duration::from_secs(6);
 #[derive(Clone, Eq, Hash, PartialEq, Debug)]
 pub enum Topic {
     FinalizedBlock,
+    FinalizedBlockAtPreviousSession,
     BestBlock,
     NewSession,
     Validator(AccountId32),
@@ -54,6 +55,9 @@ impl std::fmt::Display for Topic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::FinalizedBlock => write!(f, "finalized_block"),
+            Self::FinalizedBlockAtPreviousSession => {
+                write!(f, "finalized_block_at_previous_session")
+            }
             Self::BestBlock => write!(f, "best_block"),
             Self::NewSession => write!(f, "new_session"),
             Self::Validator(account) => write!(f, "v:{}", account),
@@ -229,6 +233,60 @@ impl Channel {
                                                     CacheKey::PushedBlockByClientId(*client_id),
                                                     e
                                                 );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        };
+                        block_on(future);
+                    }
+                    Topic::FinalizedBlockAtPreviousSession => {
+                        let future = async {
+                            if let Ok(mut conn) = get_conn(&act.cache).await {
+                                if let Ok(finalized_block_number) = redis::cmd("GET")
+                                    .arg(CacheKey::FinalizedBlock)
+                                    .query_async::<Connection, BlockNumber>(&mut conn)
+                                    .await
+                                {
+                                    if let Ok(pushed_block_number) = redis::cmd("GET")
+                                        .arg(CacheKey::PushedBlockByClientId(*client_id))
+                                        .query_async::<Connection, BlockNumber>(&mut conn)
+                                        .await
+                                    {
+                                        // Note: if latest pushed block equals finalized block in cache
+                                        // just send latest cached data.
+                                        if pushed_block_number == finalized_block_number {
+                                            // get block from previous session
+                                            let config = CONFIG.clone();
+                                            let block_number = finalized_block_number
+                                                - config.blocks_per_session as u64;
+                                            if let Ok(serialized_data) = redis::cmd("GET")
+                                                .arg(CacheKey::BlockByIndexStats(Index::Num(
+                                                    block_number.into(),
+                                                )))
+                                                .query_async::<Connection, String>(&mut conn)
+                                                .await
+                                            {
+                                                let mut block_data = CacheMap::new();
+                                                block_data.insert(
+                                                    String::from("block_number"),
+                                                    block_number.to_string(),
+                                                );
+                                                block_data.insert(
+                                                    String::from("is_finalized"),
+                                                    (true).to_string(),
+                                                );
+                                                block_data
+                                                    .insert(String::from("stats"), serialized_data);
+
+                                                let resp = WsResponseMessage {
+                                                    r#type: String::from("block"),
+                                                    result: BlockResult::from(block_data),
+                                                };
+                                                let serialized =
+                                                    serde_json::to_string(&resp).unwrap();
+                                                act.publish_message(&serialized, 0);
                                             }
                                         }
                                     }

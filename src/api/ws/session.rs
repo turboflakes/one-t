@@ -147,6 +147,11 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                             id: self.id,
                             topic: Topic::FinalizedBlock,
                         }),
+                        // finalized_at_previous_session
+                        "finalized_aps" => self.server_addr.do_send(server::Subscribe {
+                            id: self.id,
+                            topic: Topic::FinalizedBlockAtPreviousSession,
+                        }),
                         _ => (),
                     },
                     Methods::SubscribeSession => {
@@ -205,6 +210,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                         "finalized" => self.server_addr.do_send(server::Unsubscribe {
                             id: self.id,
                             topic: Topic::FinalizedBlock,
+                        }),
+                        "finalized_aps" => self.server_addr.do_send(server::Unsubscribe {
+                            id: self.id,
+                            topic: Topic::FinalizedBlockAtPreviousSession,
                         }),
                         _ => (),
                     },

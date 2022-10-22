@@ -57,6 +57,13 @@ fn default_eras_per_day() -> u32 {
     1
 }
 
+/// provides default value for blocks per session target if ONET_BLOCKS_PER_SESSION var is not set
+/// kusama = 600
+/// polkadot = 4 * 600 = 2400
+fn default_blocks_per_session() -> u32 {
+    2400
+}
+
 /// provides default value in seconds for error interval if ONET_ERROR_INTERVAL env var is not set
 fn default_error_interval() -> u64 {
     30
@@ -175,6 +182,8 @@ pub struct Config {
     pub interval: u64,
     #[serde(default = "default_eras_per_day")]
     pub eras_per_day: u32,
+    #[serde(default = "default_blocks_per_session")]
+    pub blocks_per_session: u32,
     #[serde(default = "default_error_interval")]
     pub error_interval: u64,
     pub substrate_ws_url: String,
