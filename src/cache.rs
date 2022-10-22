@@ -46,6 +46,8 @@ pub enum Index {
     Num(u64),
     Str(String),
     Current,
+    Best,
+    Finalized,
 }
 
 impl std::fmt::Display for Index {
@@ -54,6 +56,8 @@ impl std::fmt::Display for Index {
             Self::Num(index) => write!(f, "{}", index),
             Self::Str(name) => write!(f, "{}", name),
             Self::Current => write!(f, "current"),
+            Self::Best => write!(f, "best"),
+            Self::Finalized => write!(f, "finalized"),
         }
     }
 }
@@ -80,7 +84,7 @@ pub enum CacheKey {
     Network,
     FinalizedBlock,
     BestBlock,
-    PushedBlock,
+    PushedBlockByClientId(usize),
     BlockByIndexStats(Index),
     BlocksBySession(Index),
     SessionByIndex(Index),
@@ -100,7 +104,7 @@ impl std::fmt::Display for CacheKey {
             Self::Network => write!(f, "network"),
             Self::BestBlock => write!(f, "best"),
             Self::FinalizedBlock => write!(f, "finalized"),
-            Self::PushedBlock => write!(f, "pushed"),
+            Self::PushedBlockByClientId(client_id) => write!(f, "pushed:{}", client_id),
             Self::BlockByIndexStats(block_index) => write!(f, "b:{}:s", block_index),
             Self::BlocksBySession(session_index) => write!(f, "bs:{}", session_index),
             Self::SessionByIndex(session_index) => write!(f, "s:{}", session_index),
