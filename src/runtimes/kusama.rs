@@ -93,7 +93,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
     // Initialize from the first block of the session of last block processed
     if let Some(latest_block_number) = get_latest_block_number_processed()? {
-        let block_hash = api
+        let latest_block_hash = api
             .client
             .rpc()
             .block_hash(Some(latest_block_number.into()))
@@ -103,9 +103,15 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
         let mut start_block_number = api
             .storage()
             .para_scheduler()
-            .session_start_block(block_hash)
+            .session_start_block(latest_block_hash)
             .await?;
 
+        // get block hash from the start block
+        let block_hash = api
+            .client
+            .rpc()
+            .block_hash(Some(start_block_number.into()))
+            .await?;
         // Note: We want to start sync in the first block of a session.
         // For that we get the first block of a ParaSession and remove 1 blocks,
         // since ParaSession starts always at the the second block of a new session

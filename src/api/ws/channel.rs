@@ -42,9 +42,9 @@ const BLOCK_INTERVAL: Duration = Duration::from_secs(6);
 
 #[derive(Clone, Eq, Hash, PartialEq, Debug)]
 pub enum Topic {
-    FinalizedBlock,
-    FinalizedBlockAtPreviousSession,
+    FinalizedBlock(u8),
     BestBlock,
+    Block(BlockNumber),
     NewSession,
     Validator(AccountId32),
     ParaAuthorities(EpochIndex, Verbosity),
@@ -54,11 +54,11 @@ pub enum Topic {
 impl std::fmt::Display for Topic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::FinalizedBlock => write!(f, "finalized_block"),
-            Self::FinalizedBlockAtPreviousSession => {
-                write!(f, "finalized_block_at_previous_session")
+            Self::FinalizedBlock(previous_sessions) => {
+                write!(f, "finalized_block:{}", previous_sessions)
             }
             Self::BestBlock => write!(f, "best_block"),
+            Self::Block(block_number) => write!(f, "block:{}", block_number),
             Self::NewSession => write!(f, "new_session"),
             Self::Validator(account) => write!(f, "v:{}", account),
             Self::ParaAuthorities(index, verbosity) => write!(f, "pas:{}:{}", index, verbosity),
@@ -108,6 +108,7 @@ impl Channel {
     /// helper method that fetches data from cache and send it to subscribers at every block rate.
     fn run(&self, ctx: &mut Context<Self>) {
         ctx.run_interval(BLOCK_INTERVAL, |act, ctx| {
+            let config = CONFIG.clone();
             // stop actor if no registered sessions
             if act.sessions.len() == 0 {
                 ctx.stop();
@@ -117,7 +118,7 @@ impl Channel {
             for (client_id, _) in act.sessions.iter() {
                 // TODO handle all topics here
                 match &act.topic {
-                    Topic::FinalizedBlock => {
+                    Topic::FinalizedBlock(number_previous_sessions) => {
                         let future = async {
                             if let Ok(mut conn) = get_conn(&act.cache).await {
                                 if let Ok(finalized_block_number) = redis::cmd("GET")
@@ -135,13 +136,17 @@ impl Channel {
                                         if pushed_block_number != finalized_block_number {
                                             let mut data: Vec<BlockResult> = Vec::new();
 
-                                            let mut latest_block_pushed: Option<BlockNumber> =
-                                                Some(pushed_block_number);
+                                            let mut latest_block_number_pushed: Option<
+                                                BlockNumber,
+                                            > = Some(pushed_block_number);
 
-                                            while let Some(block_number) = latest_block_pushed {
-                                                if finalized_block_number == block_number {
-                                                    latest_block_pushed = None;
+                                            while let Some(pushed_block_number) =
+                                                latest_block_number_pushed
+                                            {
+                                                if finalized_block_number == pushed_block_number {
+                                                    latest_block_number_pushed = None;
                                                 } else {
+                                                    let block_number = pushed_block_number + 1;
                                                     if let Ok(serialized_data) = redis::cmd("GET")
                                                         .arg(CacheKey::BlockByIndexStats(
                                                             Index::Num(block_number.into()),
@@ -169,7 +174,37 @@ impl Channel {
                                                         data.push(block_data.into());
                                                     }
                                                     //
-                                                    latest_block_pushed = Some(block_number + 1);
+                                                    latest_block_number_pushed = Some(block_number);
+                                                }
+                                            }
+                                            // add blocks from previous sessions
+                                            for i in 0..(*number_previous_sessions) {
+                                                let previous_session_block_number =
+                                                    finalized_block_number
+                                                        - (config.blocks_per_session
+                                                            * (i as u32 + 1))
+                                                            as u64;
+                                                if let Ok(serialized_data) = redis::cmd("GET")
+                                                    .arg(CacheKey::BlockByIndexStats(Index::Num(
+                                                        (previous_session_block_number).into(),
+                                                    )))
+                                                    .query_async::<Connection, String>(&mut conn)
+                                                    .await
+                                                {
+                                                    let mut block_data = CacheMap::new();
+                                                    block_data.insert(
+                                                        String::from("block_number"),
+                                                        previous_session_block_number.to_string(),
+                                                    );
+                                                    block_data.insert(
+                                                        String::from("is_finalized"),
+                                                        (true).to_string(),
+                                                    );
+                                                    block_data.insert(
+                                                        String::from("stats"),
+                                                        serialized_data,
+                                                    );
+                                                    data.push(block_data.into());
                                                 }
                                             }
 
@@ -177,8 +212,9 @@ impl Channel {
                                                 r#type: String::from("blocks"),
                                                 result: BlocksResult::from(data),
                                             };
-                                            let serialized = serde_json::to_string(&resp).unwrap();
-                                            act.publish_message(&serialized, 0);
+                                            if let Ok(serialized) = serde_json::to_string(&resp) {
+                                                act.publish_message(&serialized, 0);
+                                            }
 
                                             // cache latest pushed block
                                             if let Err(e) = redis::cmd("SET")
@@ -233,60 +269,6 @@ impl Channel {
                                                     CacheKey::PushedBlockByClientId(*client_id),
                                                     e
                                                 );
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        };
-                        block_on(future);
-                    }
-                    Topic::FinalizedBlockAtPreviousSession => {
-                        let future = async {
-                            if let Ok(mut conn) = get_conn(&act.cache).await {
-                                if let Ok(finalized_block_number) = redis::cmd("GET")
-                                    .arg(CacheKey::FinalizedBlock)
-                                    .query_async::<Connection, BlockNumber>(&mut conn)
-                                    .await
-                                {
-                                    if let Ok(pushed_block_number) = redis::cmd("GET")
-                                        .arg(CacheKey::PushedBlockByClientId(*client_id))
-                                        .query_async::<Connection, BlockNumber>(&mut conn)
-                                        .await
-                                    {
-                                        // Note: if latest pushed block equals finalized block in cache
-                                        // just send latest cached data.
-                                        if pushed_block_number == finalized_block_number {
-                                            // get block from previous session
-                                            let config = CONFIG.clone();
-                                            let block_number = finalized_block_number
-                                                - config.blocks_per_session as u64;
-                                            if let Ok(serialized_data) = redis::cmd("GET")
-                                                .arg(CacheKey::BlockByIndexStats(Index::Num(
-                                                    block_number.into(),
-                                                )))
-                                                .query_async::<Connection, String>(&mut conn)
-                                                .await
-                                            {
-                                                let mut block_data = CacheMap::new();
-                                                block_data.insert(
-                                                    String::from("block_number"),
-                                                    block_number.to_string(),
-                                                );
-                                                block_data.insert(
-                                                    String::from("is_finalized"),
-                                                    (true).to_string(),
-                                                );
-                                                block_data
-                                                    .insert(String::from("stats"), serialized_data);
-
-                                                let resp = WsResponseMessage {
-                                                    r#type: String::from("block"),
-                                                    result: BlockResult::from(block_data),
-                                                };
-                                                let serialized =
-                                                    serde_json::to_string(&resp).unwrap();
-                                                act.publish_message(&serialized, 0);
                                             }
                                         }
                                     }
@@ -588,7 +570,8 @@ impl Channel {
                             }
                         };
                         block_on(future);
-                    } // _ => (),
+                    }
+                    _ => (),
                 }
             }
         });
@@ -613,6 +596,73 @@ impl Actor for Channel {
             topic: self.topic.clone(),
         });
         Running::Stop
+    }
+}
+
+/// Get to a topic, if channel for the topic does not exists create new channel.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct Get {
+    /// Client ID
+    pub id: usize,
+
+    /// Client Addr
+    pub addr: Recipient<Message>,
+
+    /// Topic
+    pub topic: Topic,
+}
+
+/// Get to a topic, remove client from old subscription with the same type
+/// send successful subscription to the client
+impl Handler<Get> for Channel {
+    type Result = ();
+
+    fn handle(&mut self, msg: Get, _ctx: &mut Context<Self>) {
+        let Get { id, addr, topic } = msg;
+
+        info!("channel {} requested by session {}", topic, id);
+
+        // add session to this channel
+        self.sessions.entry(id).or_insert(addr);
+
+        // TODO handle all topics here
+        match &topic {
+            Topic::Block(block_number) => {
+                let future = async {
+                    if let Ok(mut conn) = get_conn(&self.cache).await {
+                        if let Ok(serialized_data) = redis::cmd("GET")
+                            .arg(CacheKey::BlockByIndexStats(Index::Num(
+                                (*block_number).into(),
+                            )))
+                            .query_async::<Connection, String>(&mut conn)
+                            .await
+                        {
+                            let mut block_data = CacheMap::new();
+                            block_data
+                                .insert(String::from("block_number"), block_number.to_string());
+                            block_data.insert(String::from("is_finalized"), (true).to_string());
+                            block_data.insert(String::from("stats"), serialized_data);
+
+                            let resp = WsResponseMessage {
+                                r#type: String::from("block"),
+                                result: BlockResult::from(block_data),
+                            };
+                            if let Ok(serialized) = serde_json::to_string(&resp) {
+                                self.reply_message(id, &serialized);
+                            }
+                        }
+                    }
+                };
+                block_on(future);
+            }
+            _ => (),
+        }
+
+        // remove address
+        if self.sessions.remove(&id).is_some() {
+            info!("session {} removed from channel {}", id, topic);
+        }
     }
 }
 
@@ -675,7 +725,7 @@ impl Handler<Unsubscribe> for Channel {
         if self.sessions.remove(&msg.id).is_some() {
             info!("session {} unsubscribed from channel {}", id, self.topic);
             // delete unsubscribed clientes from cache
-            if self.topic == Topic::FinalizedBlock {
+            if let Topic::FinalizedBlock(_) = self.topic {
                 let future = async {
                     if let Ok(mut conn) = get_conn(&self.cache).await {
                         if let Err(e) = redis::cmd("DEL")

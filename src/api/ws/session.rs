@@ -9,7 +9,7 @@ use crate::api::ws::{
     server::{Methods, WsRequestMessage},
 };
 use crate::cache::Verbosity;
-use crate::records::EpochIndex;
+use crate::records::{BlockNumber, EpochIndex};
 use actix::prelude::*;
 use actix_web_actors::ws;
 use log::{debug, warn};
@@ -138,20 +138,34 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                 let req: WsRequestMessage = serde_json::from_str(&m).unwrap_or_default();
                 // TODO handle all methods
                 match req.method {
+                    Methods::GetBlock => {
+                        for block_number_str in req.params.iter() {
+                            if let Ok(block_number) = block_number_str.parse::<BlockNumber>() {
+                                self.server_addr.do_send(server::Get {
+                                    id: self.id,
+                                    topic: Topic::Block(block_number),
+                                })
+                            }
+                        }
+                    }
                     Methods::SubscribeBlock => match req.params[0].as_str() {
                         "best" => self.server_addr.do_send(server::Subscribe {
                             id: self.id,
                             topic: Topic::BestBlock,
                         }),
-                        "finalized" => self.server_addr.do_send(server::Subscribe {
-                            id: self.id,
-                            topic: Topic::FinalizedBlock,
-                        }),
-                        // finalized_at_previous_session
-                        "finalized_aps" => self.server_addr.do_send(server::Subscribe {
-                            id: self.id,
-                            topic: Topic::FinalizedBlockAtPreviousSession,
-                        }),
+                        "finalized" => {
+                            if let Ok(previous_sessions) = req.params[1].as_str().parse::<u8>() {
+                                self.server_addr.do_send(server::Subscribe {
+                                    id: self.id,
+                                    topic: Topic::FinalizedBlock(previous_sessions),
+                                })
+                            } else {
+                                self.server_addr.do_send(server::Subscribe {
+                                    id: self.id,
+                                    topic: Topic::FinalizedBlock(0),
+                                })
+                            }
+                        }
                         _ => (),
                     },
                     Methods::SubscribeSession => {
@@ -207,14 +221,19 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                             id: self.id,
                             topic: Topic::BestBlock,
                         }),
-                        "finalized" => self.server_addr.do_send(server::Unsubscribe {
-                            id: self.id,
-                            topic: Topic::FinalizedBlock,
-                        }),
-                        "finalized_aps" => self.server_addr.do_send(server::Unsubscribe {
-                            id: self.id,
-                            topic: Topic::FinalizedBlockAtPreviousSession,
-                        }),
+                        "finalized" => {
+                            if let Ok(previous_sessions) = req.params[1].as_str().parse::<u8>() {
+                                self.server_addr.do_send(server::Unsubscribe {
+                                    id: self.id,
+                                    topic: Topic::FinalizedBlock(previous_sessions),
+                                })
+                            } else {
+                                self.server_addr.do_send(server::Unsubscribe {
+                                    id: self.id,
+                                    topic: Topic::FinalizedBlock(0),
+                                })
+                            }
+                        }
                         _ => (),
                     },
                     Methods::UnsubscribeSession => {
