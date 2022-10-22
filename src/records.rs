@@ -862,6 +862,7 @@ impl AuthorityRecord {
             index: Some(index),
             address: Some(address),
             start_points,
+            end_points: Some(start_points),
             ..Default::default()
         }
     }

@@ -138,14 +138,17 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                 let req: WsRequestMessage = serde_json::from_str(&m).unwrap_or_default();
                 // TODO handle all methods
                 match req.method {
-                    Methods::SubscribeBlock => {
-                        if &req.params[0] == "finalized" {
-                            self.server_addr.do_send(server::Subscribe {
-                                id: self.id,
-                                topic: Topic::FinalizedBlock,
-                            });
-                        }
-                    }
+                    Methods::SubscribeBlock => match req.params[0].as_str() {
+                        "best" => self.server_addr.do_send(server::Subscribe {
+                            id: self.id,
+                            topic: Topic::BestBlock,
+                        }),
+                        "finalized" => self.server_addr.do_send(server::Subscribe {
+                            id: self.id,
+                            topic: Topic::FinalizedBlock,
+                        }),
+                        _ => (),
+                    },
                     Methods::SubscribeSession => {
                         if &req.params[0] == "new" {
                             self.server_addr.do_send(server::Subscribe {
@@ -194,14 +197,17 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                             }
                         }
                     }
-                    Methods::UnsubscribeBlock => {
-                        if &req.params[0] == "finalized" {
-                            self.server_addr.do_send(server::Unsubscribe {
-                                id: self.id,
-                                topic: Topic::FinalizedBlock,
-                            });
-                        }
-                    }
+                    Methods::UnsubscribeBlock => match req.params[0].as_str() {
+                        "best" => self.server_addr.do_send(server::Unsubscribe {
+                            id: self.id,
+                            topic: Topic::BestBlock,
+                        }),
+                        "finalized" => self.server_addr.do_send(server::Unsubscribe {
+                            id: self.id,
+                            topic: Topic::FinalizedBlock,
+                        }),
+                        _ => (),
+                    },
                     Methods::UnsubscribeSession => {
                         if &req.params[0] == "new" {
                             self.server_addr.do_send(server::Unsubscribe {

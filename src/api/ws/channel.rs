@@ -21,8 +21,8 @@
 
 use crate::api::{
     responses::{
-        AuthorityKey, AuthorityKeyCache, BlockResult, CacheMap, ParachainsResult, SessionResult,
-        ValidatorResult, ValidatorsResult,
+        AuthorityKey, AuthorityKeyCache, BlockResult, BlocksResult, CacheMap, ParachainsResult,
+        SessionResult, ValidatorResult, ValidatorsResult,
     },
     ws::server::{Message, Remove, Server, WsResponseMessage},
 };
@@ -33,7 +33,7 @@ use crate::records::{BlockNumber, EpochIndex};
 use actix::prelude::*;
 
 use futures::executor::block_on;
-use log::info;
+use log::{info, warn};
 use redis::aio::Connection;
 use std::{collections::HashMap, time::Duration};
 use subxt::sp_runtime::AccountId32;
@@ -115,31 +115,111 @@ impl Channel {
                 Topic::FinalizedBlock => {
                     let future = async {
                         if let Ok(mut conn) = get_conn(&act.cache).await {
-                            if let Ok(block_number) = redis::cmd("GET")
+                            if let Ok(finalized_block_number) = redis::cmd("GET")
                                 .arg(CacheKey::FinalizedBlock)
                                 .query_async::<Connection, BlockNumber>(&mut conn)
                                 .await
                             {
-                                if let Ok(serialized_data) = redis::cmd("GET")
-                                    .arg(CacheKey::BlockByIndexStats(Index::Num(
-                                        block_number.into(),
-                                    )))
-                                    .query_async::<Connection, String>(&mut conn)
+                                if let Ok(pushed_block_number) = redis::cmd("GET")
+                                    .arg(CacheKey::PushedBlock)
+                                    .query_async::<Connection, BlockNumber>(&mut conn)
                                     .await
                                 {
-                                    let mut data = CacheMap::new();
-                                    data.insert(
-                                        String::from("finalized_block"),
-                                        block_number.to_string(),
-                                    );
-                                    data.insert(String::from("stats"), serialized_data);
+                                    // Note: if latest pushed block is different thant the finalized block oin cache
+                                    // just send all finalized blocks not pushed to clinets yet.
+                                    if pushed_block_number != finalized_block_number {
+                                        let mut data: Vec<BlockResult> = Vec::new();
 
-                                    let resp = WsResponseMessage {
-                                        r#type: String::from("finalized_block"),
-                                        result: BlockResult::from(data),
-                                    };
-                                    let serialized = serde_json::to_string(&resp).unwrap();
-                                    act.publish_message(&serialized, 0);
+                                        let mut latest_block_pushed: Option<BlockNumber> =
+                                            Some(pushed_block_number);
+
+                                        while let Some(block_number) = latest_block_pushed {
+                                            if finalized_block_number == block_number {
+                                                latest_block_pushed = None;
+                                            } else {
+                                                if let Ok(serialized_data) = redis::cmd("GET")
+                                                    .arg(CacheKey::BlockByIndexStats(Index::Num(
+                                                        block_number.into(),
+                                                    )))
+                                                    .query_async::<Connection, String>(&mut conn)
+                                                    .await
+                                                {
+                                                    let mut block_data = CacheMap::new();
+                                                    block_data.insert(
+                                                        String::from("block_number"),
+                                                        block_number.to_string(),
+                                                    );
+                                                    block_data.insert(
+                                                        String::from("is_finalized"),
+                                                        (true).to_string(),
+                                                    );
+                                                    block_data.insert(
+                                                        String::from("stats"),
+                                                        serialized_data,
+                                                    );
+
+                                                    //
+                                                    data.push(block_data.into());
+                                                }
+                                                //
+                                                latest_block_pushed = Some(block_number + 1);
+                                            }
+                                        }
+
+                                        let resp = WsResponseMessage {
+                                            r#type: String::from("blocks"),
+                                            result: BlocksResult::from(data),
+                                        };
+                                        let serialized = serde_json::to_string(&resp).unwrap();
+                                        act.publish_message(&serialized, 0);
+
+                                        // cache latest pushed block
+                                        if let Err(e) = redis::cmd("SET")
+                                            .arg(CacheKey::PushedBlock)
+                                            .arg(finalized_block_number)
+                                            .query_async::<Connection, String>(&mut conn)
+                                            .await
+                                        {
+                                            warn!("Cache PushedBlock failed with error: {:?}", e);
+                                        }
+                                    }
+                                } else {
+                                    // first time just push to clients the last finalized block
+                                    if let Ok(serialized_data) = redis::cmd("GET")
+                                        .arg(CacheKey::BlockByIndexStats(Index::Num(
+                                            finalized_block_number.into(),
+                                        )))
+                                        .query_async::<Connection, String>(&mut conn)
+                                        .await
+                                    {
+                                        let mut block_data = CacheMap::new();
+                                        block_data.insert(
+                                            String::from("block_number"),
+                                            finalized_block_number.to_string(),
+                                        );
+                                        block_data.insert(
+                                            String::from("is_finalized"),
+                                            (true).to_string(),
+                                        );
+                                        block_data.insert(String::from("stats"), serialized_data);
+
+                                        let resp = WsResponseMessage {
+                                            r#type: String::from("block"),
+                                            result: BlockResult::from(block_data),
+                                        };
+                                        let serialized = serde_json::to_string(&resp).unwrap();
+                                        act.publish_message(&serialized, 0);
+
+                                        // cache pushed block
+                                        if let Err(e) = redis::cmd("SET")
+                                            .arg(CacheKey::PushedBlock)
+                                            .arg(finalized_block_number)
+                                            .query_async::<Connection, String>(&mut conn)
+                                            .await
+                                        {
+                                            warn!("Cache PushedBlock failed with error: {:?}", e);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -154,12 +234,15 @@ impl Channel {
                                 .query_async::<Connection, BlockNumber>(&mut conn)
                                 .await
                             {
-                                let mut data = CacheMap::new();
-                                data.insert(String::from("best_block"), block_number.to_string());
+                                let mut block_data = CacheMap::new();
+                                block_data
+                                    .insert(String::from("block_number"), block_number.to_string());
+                                block_data
+                                    .insert(String::from("is_finalized"), (false).to_string());
 
                                 let resp = WsResponseMessage {
-                                    r#type: String::from("best_block"),
-                                    result: BlockResult::from(data),
+                                    r#type: String::from("block"),
+                                    result: BlockResult::from(block_data),
                                 };
                                 let serialized = serde_json::to_string(&resp).unwrap();
                                 act.publish_message(&serialized, 0);
@@ -238,32 +321,50 @@ impl Channel {
                     block_on(future);
                 }
                 Topic::Validator(account) => {
-                    let future = async {
-                        if let Ok(mut conn) = get_conn(&act.cache).await {
-                            if let Ok(current_session) = redis::cmd("GET")
-                                .arg(CacheKey::SessionByIndex(Index::Str(String::from(
-                                    "current",
-                                ))))
-                                .query_async::<Connection, EpochIndex>(&mut conn)
-                                .await
-                            {
-                                if let Ok(data) = redis::cmd("HGETALL")
-                                    .arg(CacheKey::AuthorityKeyByAccountAndSession(
-                                        account.clone(),
-                                        current_session,
-                                    ))
-                                    .query_async::<Connection, AuthorityKeyCache>(&mut conn)
+                    let future =
+                        async {
+                            if let Ok(mut conn) = get_conn(&act.cache).await {
+                                if let Ok(finalized_block_number) = redis::cmd("GET")
+                                    .arg(CacheKey::FinalizedBlock)
+                                    .query_async::<Connection, BlockNumber>(&mut conn)
                                     .await
                                 {
-                                    if !data.is_empty() {
-                                        let key: AuthorityKey = data.into();
+                                    if let Ok(pushed_block_number) = redis::cmd("GET")
+                                        .arg(CacheKey::PushedBlock)
+                                        .query_async::<Connection, BlockNumber>(&mut conn)
+                                        .await
+                                    {
+                                        // Note: if latest pushed block equals finalized block in cache
+                                        // just send latest cached data.
+                                        if pushed_block_number == finalized_block_number {
+                                            if let Ok(current_session) = redis::cmd("GET")
+                                                .arg(CacheKey::SessionByIndex(Index::Str(
+                                                    String::from("current"),
+                                                )))
+                                                .query_async::<Connection, EpochIndex>(&mut conn)
+                                                .await
+                                            {
+                                                if let Ok(data) = redis::cmd("HGETALL")
+                                                    .arg(CacheKey::AuthorityKeyByAccountAndSession(
+                                                        account.clone(),
+                                                        current_session,
+                                                    ))
+                                                    .query_async::<Connection, AuthorityKeyCache>(
+                                                        &mut conn,
+                                                    )
+                                                    .await
+                                                {
+                                                    if !data.is_empty() {
+                                                        let key: AuthorityKey = data.into();
 
-                                        if let Ok(mut data) = redis::cmd("HGETALL")
-                                            .arg(key.to_string())
-                                            .query_async::<Connection, CacheMap>(&mut conn)
-                                            .await
-                                        {
-                                            if let Ok(tmp) = redis::cmd("HGETALL")
+                                                        if let Ok(mut data) = redis::cmd("HGETALL")
+                                                            .arg(key.to_string())
+                                                            .query_async::<Connection, CacheMap>(
+                                                                &mut conn,
+                                                            )
+                                                            .await
+                                                        {
+                                                            if let Ok(tmp) = redis::cmd("HGETALL")
                                                 .arg(CacheKey::AuthorityRecordVerbose(
                                                     key.to_string(),
                                                     Verbosity::Stats,
@@ -273,7 +374,7 @@ impl Channel {
                                             {
                                                 data.extend(tmp);
                                             }
-                                            if let Ok(tmp) = redis::cmd("HGETALL")
+                                                            if let Ok(tmp) = redis::cmd("HGETALL")
                                                 .arg(CacheKey::AuthorityRecordVerbose(
                                                     key.to_string(),
                                                     Verbosity::Summary,
@@ -283,62 +384,88 @@ impl Channel {
                                             {
                                                 data.extend(tmp);
                                             }
-                                            data.insert(
-                                                String::from("session"),
-                                                current_session.to_string(),
-                                            );
-                                            let resp = WsResponseMessage {
-                                                r#type: String::from("validator"),
-                                                result: ValidatorResult::from(data),
-                                            };
-                                            let serialized = serde_json::to_string(&resp).unwrap();
-                                            act.publish_message(&serialized, 0);
+                                                            data.insert(
+                                                                String::from("session"),
+                                                                current_session.to_string(),
+                                                            );
+                                                            let resp = WsResponseMessage {
+                                                                r#type: String::from("validator"),
+                                                                result: ValidatorResult::from(data),
+                                                            };
+                                                            let serialized =
+                                                                serde_json::to_string(&resp)
+                                                                    .unwrap();
+                                                            act.publish_message(&serialized, 0);
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
-                    };
+                        };
                     block_on(future);
                 }
                 Topic::ParaAuthorities(index, verbosity) => {
                     let future = async {
                         if let Ok(mut conn) = get_conn(&act.cache).await {
-                            if let Ok(authority_keys) = redis::cmd("SMEMBERS")
-                                .arg(CacheKey::AuthorityKeysBySessionParaOnly(*index))
-                                .query_async::<Connection, Vec<String>>(&mut conn)
+                            if let Ok(finalized_block_number) = redis::cmd("GET")
+                                .arg(CacheKey::FinalizedBlock)
+                                .query_async::<Connection, BlockNumber>(&mut conn)
                                 .await
                             {
-                                if !authority_keys.is_empty() {
-                                    let mut data: Vec<ValidatorResult> = Vec::new();
-                                    for key in authority_keys.iter() {
-                                        if let Ok(mut auth) = redis::cmd("HGETALL")
-                                            .arg(key)
-                                            .query_async::<Connection, CacheMap>(&mut conn)
+                                if let Ok(pushed_block_number) = redis::cmd("GET")
+                                    .arg(CacheKey::PushedBlock)
+                                    .query_async::<Connection, BlockNumber>(&mut conn)
+                                    .await
+                                {
+                                    // Note: if latest pushed block equals finalized block in cache
+                                    // just send latest cached data.
+                                    if pushed_block_number == finalized_block_number {
+                                        if let Ok(authority_keys) = redis::cmd("SMEMBERS")
+                                            .arg(CacheKey::AuthorityKeysBySessionParaOnly(*index))
+                                            .query_async::<Connection, Vec<String>>(&mut conn)
                                             .await
                                         {
-                                            if let Ok(tmp) = redis::cmd("HGETALL")
-                                                .arg(CacheKey::AuthorityRecordVerbose(
-                                                    key.to_string(),
-                                                    verbosity.clone(),
-                                                ))
-                                                .query_async::<Connection, CacheMap>(&mut conn)
-                                                .await
-                                            {
-                                                auth.extend(tmp);
+                                            if !authority_keys.is_empty() {
+                                                let mut data: Vec<ValidatorResult> = Vec::new();
+                                                for key in authority_keys.iter() {
+                                                    if let Ok(mut auth) = redis::cmd("HGETALL")
+                                                        .arg(key)
+                                                        .query_async::<Connection, CacheMap>(
+                                                            &mut conn,
+                                                        )
+                                                        .await
+                                                    {
+                                                        if let Ok(tmp) = redis::cmd("HGETALL")
+                                                            .arg(CacheKey::AuthorityRecordVerbose(
+                                                                key.to_string(),
+                                                                verbosity.clone(),
+                                                            ))
+                                                            .query_async::<Connection, CacheMap>(
+                                                                &mut conn,
+                                                            )
+                                                            .await
+                                                        {
+                                                            auth.extend(tmp);
+                                                        }
+                                                        data.push(auth.into());
+                                                    }
+                                                }
+                                                let resp = WsResponseMessage {
+                                                    r#type: String::from("validators"),
+                                                    result: ValidatorsResult {
+                                                        session: *index,
+                                                        data,
+                                                    },
+                                                };
+                                                let serialized =
+                                                    serde_json::to_string(&resp).unwrap();
+                                                act.publish_message(&serialized, 0);
                                             }
-                                            data.push(auth.into());
                                         }
                                     }
-                                    let resp = WsResponseMessage {
-                                        r#type: String::from("validators"),
-                                        result: ValidatorsResult {
-                                            session: *index,
-                                            data,
-                                        },
-                                    };
-                                    let serialized = serde_json::to_string(&resp).unwrap();
-                                    act.publish_message(&serialized, 0);
                                 }
                             }
                         }
@@ -348,19 +475,39 @@ impl Channel {
                 Topic::Parachains(index) => {
                     let future = async {
                         if let Ok(mut conn) = get_conn(&act.cache).await {
-                            if let Ok(mut data) = redis::cmd("HGETALL")
-                                .arg(CacheKey::ParachainsBySession(*index))
-                                .query_async::<Connection, CacheMap>(&mut conn)
+                            if let Ok(finalized_block_number) = redis::cmd("GET")
+                                .arg(CacheKey::FinalizedBlock)
+                                .query_async::<Connection, BlockNumber>(&mut conn)
                                 .await
                             {
-                                if !data.is_empty() {
-                                    data.insert(String::from("session"), index.to_string());
-                                    let resp = WsResponseMessage {
-                                        r#type: String::from("parachains"),
-                                        result: ParachainsResult::from(data),
-                                    };
-                                    let serialized = serde_json::to_string(&resp).unwrap();
-                                    act.publish_message(&serialized, 0);
+                                if let Ok(pushed_block_number) = redis::cmd("GET")
+                                    .arg(CacheKey::PushedBlock)
+                                    .query_async::<Connection, BlockNumber>(&mut conn)
+                                    .await
+                                {
+                                    // Note: if latest pushed block equals finalized block in cache
+                                    // just send latest cached data.
+                                    if pushed_block_number == finalized_block_number {
+                                        if let Ok(mut data) = redis::cmd("HGETALL")
+                                            .arg(CacheKey::ParachainsBySession(*index))
+                                            .query_async::<Connection, CacheMap>(&mut conn)
+                                            .await
+                                        {
+                                            if !data.is_empty() {
+                                                data.insert(
+                                                    String::from("session"),
+                                                    index.to_string(),
+                                                );
+                                                let resp = WsResponseMessage {
+                                                    r#type: String::from("parachains"),
+                                                    result: ParachainsResult::from(data),
+                                                };
+                                                let serialized =
+                                                    serde_json::to_string(&resp).unwrap();
+                                                act.publish_message(&serialized, 0);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

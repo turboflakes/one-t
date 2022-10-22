@@ -106,7 +106,9 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
             .session_start_block(block_hash)
             .await?;
 
-        // Note: ParaSession starts in the second block of a new session
+        // Note: We want to start sync in the first block of a session.
+        // For that we get the first block of a ParaSession and remove 1 blocks,
+        // since ParaSession starts always at the the second block of a new session
         start_block_number -= 1;
         info!(
             "start_block_number: {} latest_block_number: {}",
@@ -245,12 +247,6 @@ pub async fn process_finalized_block(
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
 
-    // Update current block number
-    records.set_current_block_number(block_number.into());
-
-    // Update records
-    track_records(&onet, records, block_number, block_hash).await?;
-
     // fetch block events
     if let Some(ba) = block_hash {
         let events = api.events().at(ba).await?;
@@ -268,13 +264,17 @@ pub async fn process_finalized_block(
             )
             .await?;
 
-            // Network public report
+            // TODO: Network public report
             // try_run_network_report(new_session_event.session_index, &records).await?;
 
             // Cache records every new session
             try_run_cache_session_records(&records, block_hash).await?;
         }
     }
+
+    // Update records
+    // Note: this recordes should be updated after the switch of session
+    track_records(&onet, records, block_number, block_hash).await?;
 
     // TODO: include block_hash
     // Cache pools every minute
@@ -300,14 +300,6 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
 
         // cache records every new block
         if let Some(current_block) = records.current_block() {
-            // cache current_block / finalized block
-            redis::cmd("SET")
-                .arg(CacheKey::FinalizedBlock)
-                .arg(*current_block)
-                .query_async(&mut cache as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
-
             let current_era = records.current_era();
             let current_epoch = records.current_epoch();
 
@@ -322,6 +314,7 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                         // aggregate authority session_stats counters
                         session_stats.authorities += 1;
                         session_stats.points += authority_record.points();
+                        // info!("___block: {} points: {}", current_block, session_stats.points);
                         session_stats.authored_blocks += authority_record.total_authored_blocks();
 
                         //
@@ -417,8 +410,24 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                     }
                 }
             }
+            // cache current_block / finalized block
+            redis::cmd("SET")
+                .arg(CacheKey::FinalizedBlock)
+                .arg(*current_block)
+                .query_async(&mut cache as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
 
-            // cache session_stats every block
+            // cache current_block / finalized block into a sorted set by session
+            redis::cmd("ZADD")
+                .arg(CacheKey::BlocksBySession(Index::Num(current_epoch.into())))
+                .arg(0)
+                .arg(*current_block)
+                .query_async(&mut cache as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+
+            // cache session_stats at every block
             let serialized = serde_json::to_string(&session_stats)?;
             redis::cmd("SET")
                 .arg(CacheKey::BlockByIndexStats(Index::Num(*current_block)))
@@ -754,13 +763,6 @@ pub async fn initialize_records(
                                     0
                                 };
 
-                                // Get the number of authored_blocks already authored for the current session
-                                let authored_blocks = api
-                                    .storage()
-                                    .im_online()
-                                    .authored_blocks(&records.current_epoch(), &address, block_hash)
-                                    .await?;
-
                                 // Define AuthorityRecord
                                 let authority_record =
                                     AuthorityRecord::with_index_address_and_points(
@@ -923,6 +925,9 @@ pub async fn track_records(
     let client = onet.client();
     let api = client.clone().to_runtime_api::<Api>();
 
+    // Update records current block number
+    records.set_current_block_number(block_number.into());
+
     // Extract authority from the block
     if let Some(signed_block) = api.client.rpc().block(block_hash).await? {
         if let Some(authority_index) = decode_authority_index(&signed_block) {
@@ -989,7 +994,6 @@ pub async fn track_records(
                         for authority_idx in authorities.iter() {
                             let mut latest_points_collected: u32 = 0;
 
-                            // TODO: Get authority_record for the same on chain votes session
                             if let Some(authority_record) = records.get_mut_authority_record(
                                 *authority_idx,
                                 Some(backing_votes.session),
@@ -1015,10 +1019,14 @@ pub async fn track_records(
                             if let Some(para_record) = records
                                 .get_mut_para_record(*authority_idx, Some(backing_votes.session))
                             {
-                                // Increment current para_id latest_points_collected and authored blocks if the author of the finalized block
+                                // Increment current para_id latest_points_collected
+                                // and authored blocks if is the author of the finalized block
+                                // and the backing_votes session is teh same as the current session
+                                // NOTE: At the first block of a session the backing_votes.session still references session().current_index - 1
                                 para_record.update_points(
                                     latest_points_collected,
-                                    authority_index == *authority_idx,
+                                    authority_index == *authority_idx
+                                        && backing_votes.session == session_index,
                                 );
 
                                 for (candidate_receipt, group_authorities) in

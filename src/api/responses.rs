@@ -26,7 +26,9 @@ use crate::records::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, convert::TryInto};
+
 pub type AuthorityKeyCache = BTreeMap<String, String>;
+pub type CacheMap = BTreeMap<String, String>;
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct AuthorityKey {
@@ -70,12 +72,12 @@ impl std::fmt::Display for AuthorityKey {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BlockResult {
-    // finalized_block
+    // block_number
     #[serde(skip_serializing_if = "BlockNumber::is_empty")]
-    fbix: BlockNumber,
-    // best_block
-    #[serde(skip_serializing_if = "BlockNumber::is_empty")]
-    bbix: BlockNumber,
+    block_number: BlockNumber,
+    // is_finalized
+    #[serde(skip_serializing_if = "default")]
+    is_finalized: bool,
     // session stats
     #[serde(skip_serializing_if = "SessionStats::is_empty")]
     stats: SessionStats,
@@ -87,22 +89,31 @@ impl From<CacheMap> for BlockResult {
         let serialized = data.get("stats").unwrap_or(&"{}".to_string()).to_string();
         let stats: SessionStats = serde_json::from_str(&serialized).unwrap_or_default();
         BlockResult {
-            fbix: data
-                .get("finalized_block")
+            block_number: data
+                .get("block_number")
                 .unwrap_or(&zero)
                 .parse::<BlockNumber>()
                 .unwrap_or_default(),
-            bbix: data
-                .get("best_block")
+            is_finalized: data
+                .get("is_finalized")
                 .unwrap_or(&zero)
-                .parse::<BlockNumber>()
+                .parse::<bool>()
                 .unwrap_or_default(),
             stats,
         }
     }
 }
 
-pub type CacheMap = BTreeMap<String, String>;
+#[derive(Debug, Serialize)]
+pub struct BlocksResult {
+    pub data: Vec<BlockResult>,
+}
+
+impl From<Vec<BlockResult>> for BlocksResult {
+    fn from(data: Vec<BlockResult>) -> Self {
+        BlocksResult { data }
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SessionResult {

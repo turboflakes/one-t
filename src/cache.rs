@@ -80,7 +80,9 @@ pub enum CacheKey {
     Network,
     FinalizedBlock,
     BestBlock,
+    PushedBlock,
     BlockByIndexStats(Index),
+    BlocksBySession(Index),
     SessionByIndex(Index),
     SessionByIndexStats(Index),
     AuthorityRecord(EraIndex, EpochIndex, AuthorityIndex),
@@ -96,11 +98,13 @@ impl std::fmt::Display for CacheKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Network => write!(f, "network"),
-            Self::FinalizedBlock => write!(f, "finalized"),
             Self::BestBlock => write!(f, "best"),
-            Self::BlockByIndexStats(index) => write!(f, "b:{}:s", index),
-            Self::SessionByIndex(index) => write!(f, "s:{}", index),
-            Self::SessionByIndexStats(index) => write!(f, "s:{}:s", index),
+            Self::FinalizedBlock => write!(f, "finalized"),
+            Self::PushedBlock => write!(f, "pushed"),
+            Self::BlockByIndexStats(block_index) => write!(f, "b:{}:s", block_index),
+            Self::BlocksBySession(session_index) => write!(f, "bs:{}", session_index),
+            Self::SessionByIndex(session_index) => write!(f, "s:{}", session_index),
+            Self::SessionByIndexStats(session_index) => write!(f, "s:{}:s", session_index),
             Self::AuthorityRecord(era_index, session_index, authority_index) => write!(
                 f,
                 "e:{}:s:{}:a:{}",
