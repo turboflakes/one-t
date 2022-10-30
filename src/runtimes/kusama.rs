@@ -65,14 +65,14 @@ use node_runtime::{
         pallet_identity::types::Data, polkadot_parachain::primitives::Id,
         polkadot_primitives::v2::CoreIndex, polkadot_primitives::v2::GroupIndex,
         polkadot_primitives::v2::ValidatorIndex, polkadot_primitives::v2::ValidityAttestation,
-        sp_arithmetic::per_things::Perbill, sp_runtime::bounded::bounded_vec::BoundedVec,
+        sp_arithmetic::per_things::Perbill, sp_core::bounded::bounded_vec::BoundedVec,
     },
     session::events::NewSession,
     system::events::ExtrinsicFailed,
 };
 
 type Api = node_runtime::RuntimeApi<DefaultConfig, PolkadotExtrinsicParams<DefaultConfig>>;
-type Call = node_runtime::runtime_types::kusama_runtime::Call;
+type Call = node_runtime::runtime_types::kusama_runtime::RuntimeCall;
 type NominationPoolsCall = node_runtime::runtime_types::pallet_nomination_pools::pallet::Call;
 
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
