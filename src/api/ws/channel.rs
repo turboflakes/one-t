@@ -36,7 +36,7 @@ use futures::executor::block_on;
 use log::{info, warn};
 use redis::aio::Connection;
 use std::{collections::HashMap, time::Duration};
-use subxt::sp_runtime::AccountId32;
+use subxt::ext::sp_runtime::AccountId32;
 
 const BLOCK_INTERVAL: Duration = Duration::from_secs(6);
 

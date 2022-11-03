@@ -25,14 +25,14 @@ use crate::report::Subset;
 use codec::Decode;
 use log::info;
 use serde::{Deserialize, Serialize};
-use sp_consensus_babe::digests::PreDigest;
+// use sp_consensus_babe::digests::PreDigest;
 use std::{
     collections::BTreeMap, collections::HashMap, collections::HashSet, convert::TryInto, hash::Hash,
 };
 use subxt::{
+    ext::sp_runtime::{traits::Header as HeaderT, AccountId32, Digest, DigestItem},
     rpc::ChainBlock,
-    sp_runtime::{traits::Header as HeaderT, AccountId32, Digest, DigestItem},
-    DefaultConfig,
+    PolkadotConfig,
 };
 
 pub trait Validity {
@@ -166,17 +166,19 @@ pub fn grade(ratio: f64) -> String {
     }
 }
 
-pub fn decode_authority_index(chain_block: &ChainBlock<DefaultConfig>) -> Option<AuthorityIndex> {
+pub fn decode_authority_index(chain_block: &ChainBlock<PolkadotConfig>) -> Option<AuthorityIndex> {
     match chain_block.block.header.digest() {
         Digest { logs } => {
             for digests in logs.iter() {
                 match digests {
                     DigestItem::PreRuntime(_, data) => {
-                        if let Some(pre) = PreDigest::decode(&mut &data[..]).ok() {
-                            return Some(pre.authority_index());
-                        } else {
-                            return None;
-                        }
+                        // TODO: decode PreDigest
+                        return None;
+                        // if let Some(pre) = PreDigest::decode(&mut &data[..]).ok() {
+                        //     return Some(pre.authority_index());
+                        // } else {
+                        //     return None;
+                        // }
                     }
                     _ => (),
                 }

@@ -30,7 +30,7 @@ use mobc_redis::RedisConnectionManager;
 use serde::Deserialize;
 use std::time::Duration;
 use std::{thread, time};
-use subxt::sp_runtime::AccountId32;
+use subxt::ext::sp_runtime::AccountId32;
 
 const CACHE_POOL_MAX_OPEN: u64 = 20;
 const CACHE_POOL_MAX_IDLE: u64 = 8;

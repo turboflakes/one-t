@@ -47,9 +47,11 @@ use std::{
     thread, time,
 };
 use subxt::{
-    sp_core::{crypto, sr25519, storage::StorageKey, Pair},
-    sp_runtime::AccountId32,
-    Client, ClientBuilder, DefaultConfig,
+    ext::{
+        sp_core::{crypto, sr25519, storage::StorageKey, Pair},
+        sp_runtime::AccountId32,
+    },
+    OnlineClient, PolkadotConfig,
 };
 
 const TVP_VALIDATORS_FILENAME: &str = ".tvp";
@@ -118,38 +120,37 @@ impl std::fmt::Display for ReportType {
 
 pub async fn create_substrate_node_client(
     config: Config,
-) -> Result<Client<DefaultConfig>, subxt::BasicError> {
-    ClientBuilder::new()
-        .set_url(config.substrate_ws_url)
-        .build::<DefaultConfig>()
-        .await
+) -> Result<OnlineClient<PolkadotConfig>, subxt::Error> {
+    OnlineClient::<PolkadotConfig>::from_url(config.substrate_ws_url).await
 }
 
-pub async fn create_or_await_substrate_node_client(config: Config) -> Client<DefaultConfig> {
+pub async fn create_or_await_substrate_node_client(
+    config: Config,
+) -> (OnlineClient<PolkadotConfig>, SupportedRuntime) {
     loop {
         match create_substrate_node_client(config.clone()).await {
             Ok(client) => {
-                let chain = client
-                    .rpc()
-                    .system_chain()
-                    .await
-                    .unwrap_or_else(|_| "Chain undefined".to_string());
-                let name = client
-                    .rpc()
-                    .system_name()
-                    .await
-                    .unwrap_or_else(|_| "Node name undefined".to_string());
-                let version = client
-                    .rpc()
-                    .system_version()
-                    .await
-                    .unwrap_or_else(|_| "Node version undefined".to_string());
+                let chain = client.rpc().system_chain().await.unwrap_or_default();
+                let name = client.rpc().system_name().await.unwrap_or_default();
+                let version = client.rpc().system_version().await.unwrap_or_default();
+                let properties = client.rpc().system_properties().await.unwrap_or_default();
+
+                // Display SS58 addresses based on the connected chain
+                let chain_prefix: ChainPrefix =
+                    if let Some(ss58_format) = properties.get("ss58Format") {
+                        ss58_format.as_u64().unwrap_or_default().try_into().unwrap()
+                    } else {
+                        0
+                    };
+
+                crypto::set_default_ss58_version(crypto::Ss58AddressFormat::custom(chain_prefix));
 
                 info!(
                     "Connected to {} network using {} * Substrate node {} v{}",
                     chain, config.substrate_ws_url, name, version
                 );
-                break client;
+
+                break (client, SupportedRuntime::from(chain_prefix));
             }
             Err(e) => {
                 error!("{}", e);
@@ -162,36 +163,21 @@ pub async fn create_or_await_substrate_node_client(config: Config) -> Client<Def
 
 pub struct Onet {
     runtime: SupportedRuntime,
-    client: Client<DefaultConfig>,
+    client: OnlineClient<PolkadotConfig>,
     matrix: Matrix,
     pub cache: RedisPool,
 }
 
 impl Onet {
     pub async fn new() -> Onet {
-        let client = create_or_await_substrate_node_client(CONFIG.clone()).await;
-
-        let properties = client.properties();
-        // Display SS58 addresses based on the connected chain
-        let chain_prefix: ChainPrefix = if let Some(ss58_format) = properties.get("ss58Format") {
-            ss58_format.as_u64().unwrap_or_default().try_into().unwrap()
-        } else {
-            0
-        };
-        crypto::set_default_ss58_version(crypto::Ss58AddressFormat::custom(chain_prefix));
-
-        // Check for supported runtime
-        let runtime = SupportedRuntime::from(chain_prefix);
+        let (client, runtime) = create_or_await_substrate_node_client(CONFIG.clone()).await;
 
         // Initialize matrix client
         let mut matrix: Matrix = Matrix::new();
-        matrix
-            .authenticate(chain_prefix.into())
-            .await
-            .unwrap_or_else(|e| {
-                error!("{}", e);
-                Default::default()
-            });
+        matrix.authenticate(runtime).await.unwrap_or_else(|e| {
+            error!("{}", e);
+            Default::default()
+        });
 
         Onet {
             runtime,
@@ -201,7 +187,7 @@ impl Onet {
         }
     }
 
-    pub fn client(&self) -> &Client<DefaultConfig> {
+    pub fn client(&self) -> &OnlineClient<PolkadotConfig> {
         &self.client
     }
 

@@ -35,7 +35,7 @@ use redis::aio::Connection;
 use serde::Deserialize;
 use serde_json::Value;
 use std::str::FromStr;
-use subxt::sp_runtime::AccountId32;
+use subxt::ext::sp_runtime::AccountId32;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]

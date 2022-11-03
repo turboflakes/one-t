@@ -24,7 +24,7 @@ use crate::errors::OnetError;
 use crate::records::EraIndex;
 use serde::{Deserialize, Serialize};
 use std::{fs, result::Result, time::SystemTime};
-use subxt::sp_core::H256;
+use subxt::ext::sp_core::H256;
 
 pub const POOL_FILENAME: &str = ".pool";
 

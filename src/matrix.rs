@@ -37,7 +37,7 @@ use std::{
     str::FromStr,
     thread, time,
 };
-use subxt::sp_runtime::AccountId32;
+use subxt::ext::sp_runtime::AccountId32;
 use url::form_urlencoded::byte_serialize;
 const MATRIX_URL: &str = "https://matrix.org/_matrix/client/r0";
 const MATRIX_MEDIA_URL: &str = "https://matrix.org/_matrix/media/r0";

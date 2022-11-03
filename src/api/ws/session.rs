@@ -13,7 +13,7 @@ use crate::records::{BlockNumber, EpochIndex};
 use actix::prelude::*;
 use actix_web_actors::ws;
 use log::{debug, warn};
-use subxt::sp_runtime::AccountId32;
+use subxt::ext::sp_runtime::AccountId32;
 
 /// How often heartbeat pings are sent
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
