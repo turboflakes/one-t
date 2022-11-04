@@ -25,7 +25,6 @@ use crate::report::Subset;
 use codec::Decode;
 use log::info;
 use serde::{Deserialize, Serialize};
-// use sp_consensus_babe::digests::PreDigest;
 use std::{
     collections::BTreeMap, collections::HashMap, collections::HashSet, convert::TryInto, hash::Hash,
 };
@@ -164,28 +163,6 @@ pub fn grade(ratio: f64) -> String {
         4001..=5000 => "D".to_string(),
         _ => "F".to_string(),
     }
-}
-
-pub fn decode_authority_index(chain_block: &ChainBlock<PolkadotConfig>) -> Option<AuthorityIndex> {
-    match chain_block.block.header.digest() {
-        Digest { logs } => {
-            for digests in logs.iter() {
-                match digests {
-                    DigestItem::PreRuntime(_, data) => {
-                        // TODO: decode PreDigest
-                        return None;
-                        // if let Some(pre) = PreDigest::decode(&mut &data[..]).ok() {
-                        //     return Some(pre.authority_index());
-                        // } else {
-                        //     return None;
-                        // }
-                    }
-                    _ => (),
-                }
-            }
-        }
-    }
-    None
 }
 
 #[derive(Debug, Clone)]
