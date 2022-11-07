@@ -79,6 +79,11 @@ fn default_maximum_subscribers() -> u32 {
     1000
 }
 
+/// provides default value for minimum_initial_eras if ONET_MINIMUM_INITIAL_ERAS env var is not set
+fn default_minimum_initial_eras() -> u32 {
+    0
+}
+
 /// provides default value for maximum_eras if ONET_MAXIMUM_HISTORY_ERAS env var is not set
 fn default_maximum_history_eras() -> u32 {
     8
@@ -191,6 +196,8 @@ pub struct Config {
     pub data_path: String,
     #[serde(default = "default_maximum_subscribers")]
     pub maximum_subscribers: u32,
+    #[serde(default = "default_minimum_initial_eras")]
+    pub minimum_initial_eras: u32,
     #[serde(default = "default_maximum_history_eras")]
     pub maximum_history_eras: u32,
     #[serde(default = "default_maximum_reports")]
