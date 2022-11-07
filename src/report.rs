@@ -812,21 +812,27 @@ impl From<RawDataPara> for Report {
                         }
                     }
 
-                    clode_block.push_str("\nPARACHAINS BREAKDOWN\n");
                     // Print out parachains breakdown
-                    clode_block.push_str(&format!(
-                        "{:<12}{:>13}{:>13}{:>13}{:>13}{:>13}\n",
-                        "",
-                        "┌──── * ────┐",
-                        "┌──── A ────┐",
-                        "┌──── B ────┐",
-                        "┌──── C ────┐",
-                        "┌──── D ────┐",
-                    ));
-                    clode_block.push_str(&format!(
-                    "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}\n",
-                    "#", "❒", "↻", "✓", "✗", "p", "✓", "✗", "p", "✓", "✗", "p", "✓", "✗", "p", "✓", "✗", "p",
-                ));
+                    clode_block.push_str("\nPARACHAINS BREAKDOWN\n");
+                    // Print title line based on the number of peers
+                    let header_chr = vec!["A", "B", "C", "D", "E", "F", "G", "H"];
+                    let mut line = String::from("            ┌──── * ────┐");
+                    for (i, _) in data.peers.iter().enumerate() {
+                        line.push_str(&format!("{:>13}", format!("┌──── {} ────┐", header_chr[i])));
+                    }
+                    clode_block.push_str(&format!("{line}\n"));
+
+                    // Print subtitle line based on the number of peers
+                    let mut line: String = format!(
+                        "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}",
+                        "#", "❒", "↻", "✓", "✗", "p"
+                    );
+                    for (i, _) in data.peers.iter().enumerate() {
+                        line.push_str(&format!("{:>4}{:>4}{:>5}", "✓", "✗", "p"));
+                    }
+                    clode_block.push_str(&format!("{line}\n"));
+
+                    // Print parachains data
                     for para_id in data.parachains.iter() {
                         // Print out votes per para id
                         if let Some(stats) = para_record.get_para_id_stats(*para_id) {
