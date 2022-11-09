@@ -109,8 +109,8 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     let mut subscribers = Subscribers::with_era_and_epoch(era_index, session_index);
     // Initialized subscribers
     if let Ok(subs) = get_subscribers() {
-        for (account, user_id) in subs.iter() {
-            subscribers.subscribe(account.clone(), user_id.to_string());
+        for (account, user_id, param) in subs.iter() {
+            subscribers.subscribe(account.clone(), user_id.to_string(), param.clone());
         }
     }
 
@@ -355,8 +355,8 @@ pub async fn switch_new_session(
     subscribers.start_new_epoch(current_era_index, new_session_index);
 
     if let Ok(subs) = get_subscribers() {
-        for (account, user_id) in subs.iter() {
-            subscribers.subscribe(account.clone(), user_id.to_string());
+        for (account, user_id, param) in subs.iter() {
+            subscribers.subscribe(account.clone(), user_id.to_string(), param.clone());
         }
     }
 
@@ -608,9 +608,10 @@ pub async fn run_val_perf_report(
         parachains.push(para_id);
     }
 
-    // Populate some maps to get ranks
-    let mut group_authorities_map: BTreeMap<u32, Vec<(AuthorityRecord, ParaRecord)>> =
-        BTreeMap::new();
+    // Populate map to get group authority ranks
+    let mut group_authorities_by_points_map: BTreeMap<u32, Points> = BTreeMap::new();
+    // Populate vec to get all para authority ranks
+    let mut para_authorities_by_points = Vec::<(AuthorityIndex, Points)>::new();
 
     if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
         for authority_idx in authorities.iter() {
@@ -622,33 +623,33 @@ pub async fn run_val_perf_report(
                         *authority_idx,
                         Some(EpochKey(era_index, epoch_index)),
                     ) {
-                        let auths = group_authorities_map.entry(group_idx).or_insert(Vec::new());
-                        auths.push((authority_record.clone(), para_record.clone()));
-                        auths.sort_by(|(_, a), (_, b)| b.total_votes().cmp(&a.total_votes()));
+                        let ga = group_authorities_by_points_map
+                            .entry(group_idx)
+                            .or_insert(authority_record.points());
+                        *ga += authority_record.points();
+                        // push into para_authorities_by_points
+                        para_authorities_by_points.push((
+                            authority_record.authority_index().unwrap(),
+                            authority_record.points(),
+                        ));
                     }
                 }
             }
         }
     }
 
-    // Convert map to vec and sort group by points
-    let mut group_authorities_sorted = Vec::from_iter(group_authorities_map);
-    group_authorities_sorted.sort_by(|(_, a), (_, b)| {
-        b.iter()
-            .map(|x| x.1.total_votes())
-            .sum::<Votes>()
-            .cmp(&a.iter().map(|x| x.1.total_votes()).sum::<Votes>())
-    });
+    // Convert map to vec
+    let group_authorities_by_points = Vec::from_iter(group_authorities_by_points_map);
 
     // Prepare data for each validator subscriber
     if let Some(subs) = subscribers.get(Some(EpochKey(era_index, epoch_index))) {
-        for (stash, user_id) in subs.iter() {
+        for (stash, user_id, param) in subs.iter() {
             let mut validator = Validator::new(stash.clone());
             validator.name = get_display_name(&onet, &stash).await?;
             let mut data = RawDataPara {
                 network: network.clone(),
                 meta: metadata.clone(),
-                report_type: ReportType::Validator,
+                report_type: ReportType::Validator(param.clone()),
                 is_first_record: records.is_first_epoch(epoch_index),
                 parachains: parachains.clone(),
                 validator,
@@ -669,22 +670,25 @@ pub async fn run_val_perf_report(
                 {
                     data.para_record = Some(para_record.clone());
 
-                    // Get group rank
-                    if let Some(group_idx) = para_record.group() {
-                        if let Some(group_rank) = group_authorities_sorted
-                            .iter()
-                            .position(|&(g, _)| g == group_idx)
-                        {
-                            data.group_rank = Some(group_rank.clone());
-                            // Get para validator rank
-                            let (_, authorities) = &group_authorities_sorted[group_rank];
-                            if let Some(validator_rank) = authorities.iter().position(|(a, _)| {
-                                a.authority_index() == authority_record.authority_index()
-                            }) {
-                                data.para_validator_rank = Some((group_rank * 5) + validator_rank);
-                            }
-                        }
-                    }
+                    // Get para validator rank position
+                    data.para_validator_rank = Some((
+                        position(
+                            authority_record.authority_index().unwrap(),
+                            group_by_points(para_authorities_by_points.clone()),
+                        )
+                        .unwrap_or_default(),
+                        para_authorities_by_points.iter().count(),
+                    ));
+
+                    // Get group_rank position
+                    data.group_rank = Some((
+                        position(
+                            para_record.group().unwrap(),
+                            group_by_points(group_authorities_by_points.clone()),
+                        )
+                        .unwrap_or_default(),
+                        group_authorities_by_points.iter().count(),
+                    ));
 
                     // Collect peers information
                     for peer_authority_index in para_record.peers().iter() {
@@ -775,9 +779,10 @@ pub async fn run_groups_report(
                             let auths =
                                 group_authorities_map.entry(group_idx).or_insert(Vec::new());
                             auths.push((authority_record.clone(), para_record.clone(), name));
-                            auths.sort_by(|(a, _, _), (b, _, _)| {
-                                b.para_points().cmp(&a.para_points())
-                            });
+                            auths.sort_by(|(a, _, _), (b, _, _)| b.points().cmp(&a.points()));
+                            // auths.sort_by(|(a, _, _), (b, _, _)| {
+                            //     b.para_points().cmp(&a.para_points())
+                            // });
                         }
                     }
                 }

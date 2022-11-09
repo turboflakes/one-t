@@ -213,8 +213,8 @@ pub struct RawDataPara {
     pub authority_record: Option<AuthorityRecord>,
     pub para_record: Option<ParaRecord>,
     pub parachains: Vec<ParaId>,
-    pub para_validator_rank: Option<usize>,
-    pub group_rank: Option<usize>,
+    pub para_validator_rank: Option<(usize, usize)>, // Option<(rank, total)>
+    pub group_rank: Option<(usize, usize)>,          // Option<(rank, total)>
 }
 
 #[derive(Debug)]
@@ -700,16 +700,22 @@ impl From<RawDataPara> for Report {
                     report.add_break();
                     // Print Rankings
                     report.add_raw_text(format!("<i>Rankings</i>"));
-                    report.add_raw_text(format!(
-                        "✨ All Stars: {} // 200 {}",
-                        data.para_validator_rank.unwrap_or_default() + 1,
-                        position_emoji(data.para_validator_rank.unwrap_or_default())
-                    ));
-                    report.add_raw_text(format!(
-                        "🏀 Groups: {} // 40 {}",
-                        data.group_rank.unwrap_or_default() + 1,
-                        position_emoji(data.group_rank.unwrap_or_default())
-                    ));
+                    if let Some((para_validator_rank, total)) = data.para_validator_rank {
+                        report.add_raw_text(format!(
+                            "✨ All Stars: {} // {} {}",
+                            para_validator_rank + 1,
+                            total,
+                            position_emoji(para_validator_rank)
+                        ));
+                    }
+                    if let Some((group_rank, total)) = data.group_rank {
+                        report.add_raw_text(format!(
+                            "🏀 Groups: {} // {} {}",
+                            group_rank + 1,
+                            total,
+                            position_emoji(group_rank)
+                        ));
+                    }
 
                     let para_validator_group_rank =
                         position(authority_index, group_by_points(v.clone()));
@@ -720,10 +726,12 @@ impl From<RawDataPara> for Report {
                         position_emoji(para_validator_group_rank.unwrap_or_default())
                     };
                     report.add_raw_text(format!(
-                        "⛹️ Sole: {} // 5 {}",
+                        "⛹️ Sole: {} // {} {}",
                         para_validator_group_rank.unwrap_or_default() + 1,
+                        v.iter().count(),
                         emoji
                     ));
+
                     report.add_break();
 
                     // Print breakdown points
@@ -1758,7 +1766,7 @@ pub fn replace_crln(text: &str, replacer: &str) -> String {
     r.replace_all(text, replacer).to_string()
 }
 
-fn group_by_points(v: Vec<(u32, u32)>) -> Vec<Vec<(u32, u32)>> {
+pub fn group_by_points(v: Vec<(u32, u32)>) -> Vec<Vec<(u32, u32)>> {
     let mut sorted = v.clone();
     sorted.sort_by(|(_, a), (_, b)| b.cmp(a));
 
@@ -1779,7 +1787,7 @@ fn group_by_points(v: Vec<(u32, u32)>) -> Vec<Vec<(u32, u32)>> {
     out
 }
 
-fn position(a: u32, v: Vec<Vec<(u32, u32)>>) -> Option<usize> {
+pub fn position(a: u32, v: Vec<Vec<(u32, u32)>>) -> Option<usize> {
     for (i, z) in v.into_iter().enumerate() {
         for (b, _) in z.into_iter() {
             if a == b {

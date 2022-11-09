@@ -34,8 +34,8 @@ use crate::records::{
     ValidatorProfileRecord, Votes,
 };
 use crate::report::{
-    Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara, RawDataParachains,
-    RawDataPools, RawDataRank, Report, Subset, Validator, Validators,
+    group_by_points, position, Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara,
+    RawDataParachains, RawDataPools, RawDataRank, Report, Subset, Validator, Validators,
 };
 use redis::aio::Connection;
 
@@ -117,19 +117,22 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
             0
         };
 
+        // Note: We want to start sync in the first block of a session.
+        // For that we get the first block of a ParaSession and remove 1 block,
+        // since ParaSession starts always at the the second block of a new session
+        start_block_number -= 1;
+        // Load into memory the minimum initial eras defined (default=0)
+        start_block_number -= config.minimum_initial_eras * 6 * config.blocks_per_session;
+        info!(
+            "Start loading blocks since block number: {}",
+            start_block_number
+        );
+
         // get block hash from the start block
         let block_hash = api
             .rpc()
             .block_hash(Some(start_block_number.into()))
             .await?;
-        // Note: We want to start sync in the first block of a session.
-        // For that we get the first block of a ParaSession and remove 1 blocks,
-        // since ParaSession starts always at the the second block of a new session
-        start_block_number -= 1;
-        info!(
-            "start_block_number: {} latest_block_number: {}",
-            start_block_number, latest_block_number
-        );
 
         // Fetch active era index
         let active_era_addr = node_runtime::storage().staking().active_era();
@@ -159,8 +162,8 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
         let mut subscribers = Subscribers::with_era_and_epoch(era_index, session_index);
         // Initialized subscribers
         if let Ok(subs) = get_subscribers() {
-            for (account, user_id) in subs.iter() {
-                subscribers.subscribe(account.clone(), user_id.to_string());
+            for (account, user_id, param) in subs.iter() {
+                subscribers.subscribe(account.clone(), user_id.to_string(), param.clone());
             }
         }
 
@@ -177,6 +180,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
         // Start indexing from the start_block_number
         let mut latest_block_number_processed: Option<u64> = Some(start_block_number.into());
+        let mut is_loading = true;
 
         // Subscribe head
         // NOTE: the reason why we subscribe head and not finalized_head,
@@ -197,6 +201,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                 while let Some(processed_block_number) = latest_block_number_processed {
                     if block.number as u64 == processed_block_number {
                         latest_block_number_processed = None;
+                        is_loading = false
                     } else {
                         // process the next block
                         let block_number = processed_block_number + 1;
@@ -209,6 +214,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                                 &mut records,
                                 block_number,
                                 Some(block.hash()),
+                                is_loading,
                             )
                             .await?;
                         } else {
@@ -221,6 +227,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                                 &mut records,
                                 block_number,
                                 block_hash,
+                                is_loading,
                             )
                             .await?;
                         };
@@ -265,6 +272,7 @@ pub async fn process_finalized_block(
     records: &mut Records,
     block_number: BlockNumber,
     block_hash: Option<H256>,
+    is_loading: bool,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
     let api = onet.client().clone();
@@ -282,18 +290,19 @@ pub async fn process_finalized_block(
             subscribers,
             records,
             block_hash,
+            is_loading,
         )
         .await?;
 
-        // TODO: Network public report
-        // try_run_network_report(new_session_event.session_index, &records).await?;
+        // Network public report
+        try_run_network_report(new_session_event.session_index, &records, is_loading).await?;
 
         // Cache records every new session
         try_run_cache_session_records(&records, block_hash).await?;
     }
 
     // Update records
-    // Note: this recordes should be updated after the switch of session
+    // Note: this records should be updated after the switch of session
     track_records(&onet, records, block_number, block_hash).await?;
 
     // TODO: include block_hash
@@ -881,6 +890,7 @@ pub async fn switch_new_session(
     subscribers: &mut Subscribers,
     records: &mut Records,
     block_hash: Option<H256>,
+    is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     let api = onet.client().clone();
@@ -904,8 +914,8 @@ pub async fn switch_new_session(
     subscribers.start_new_epoch(current_era_index, new_session_index);
 
     if let Ok(subs) = get_subscribers() {
-        for (account, user_id) in subs.iter() {
-            subscribers.subscribe(account.clone(), user_id.to_string());
+        for (account, user_id, param) in subs.iter() {
+            subscribers.subscribe(account.clone(), user_id.to_string(), param.clone());
         }
     }
 
@@ -923,7 +933,7 @@ pub async fn switch_new_session(
     ));
 
     // Try to run matrix reports
-    if !config.matrix_disabled {
+    if !config.matrix_disabled && !is_loading {
         // Send reports from previous session (verify if era_index is the same or previous)
         let era_index: u32 = if current_era_index != previous_era_index {
             previous_era_index
@@ -1256,9 +1266,10 @@ pub async fn run_val_perf_report(
         }
     }
 
-    // Populate some maps to get ranks
-    let mut group_authorities_map: BTreeMap<u32, Vec<(AuthorityRecord, ParaRecord)>> =
-        BTreeMap::new();
+    // Populate map to get group authority ranks
+    let mut group_authorities_by_points_map: BTreeMap<u32, Points> = BTreeMap::new();
+    // Populate vec to get all para authority ranks
+    let mut para_authorities_by_points = Vec::<(AuthorityIndex, Points)>::new();
 
     if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
         for authority_idx in authorities.iter() {
@@ -1270,33 +1281,33 @@ pub async fn run_val_perf_report(
                         *authority_idx,
                         Some(EpochKey(era_index, epoch_index)),
                     ) {
-                        let auths = group_authorities_map.entry(group_idx).or_insert(Vec::new());
-                        auths.push((authority_record.clone(), para_record.clone()));
-                        auths.sort_by(|(_, a), (_, b)| b.total_votes().cmp(&a.total_votes()));
+                        let ga = group_authorities_by_points_map
+                            .entry(group_idx)
+                            .or_insert(authority_record.points());
+                        *ga += authority_record.points();
+                        // push into para_authorities_by_points
+                        para_authorities_by_points.push((
+                            authority_record.authority_index().unwrap(),
+                            authority_record.points(),
+                        ));
                     }
                 }
             }
         }
     }
 
-    // Convert map to vec and sort group by points
-    let mut group_authorities_sorted = Vec::from_iter(group_authorities_map);
-    group_authorities_sorted.sort_by(|(_, a), (_, b)| {
-        b.iter()
-            .map(|x| x.1.total_votes())
-            .sum::<Votes>()
-            .cmp(&a.iter().map(|x| x.1.total_votes()).sum::<Votes>())
-    });
+    // Convert map to vec
+    let group_authorities_by_points = Vec::from_iter(group_authorities_by_points_map);
 
     // Prepare data for each validator subscriber
     if let Some(subs) = subscribers.get(Some(EpochKey(era_index, epoch_index))) {
-        for (stash, user_id) in subs.iter() {
+        for (stash, user_id, param) in subs.iter() {
             let mut validator = Validator::new(stash.clone());
             validator.name = get_display_name(&onet, &stash).await?;
             let mut data = RawDataPara {
                 network: network.clone(),
                 meta: metadata.clone(),
-                report_type: ReportType::Validator,
+                report_type: ReportType::Validator(param.clone()),
                 is_first_record: records.is_first_epoch(epoch_index),
                 parachains: parachains.clone(),
                 validator,
@@ -1317,22 +1328,25 @@ pub async fn run_val_perf_report(
                 {
                     data.para_record = Some(para_record.clone());
 
-                    // Get group rank
-                    if let Some(group_idx) = para_record.group() {
-                        if let Some(group_rank) = group_authorities_sorted
-                            .iter()
-                            .position(|&(g, _)| g == group_idx)
-                        {
-                            data.group_rank = Some(group_rank.clone());
-                            // Get para validator rank
-                            let (_, authorities) = &group_authorities_sorted[group_rank];
-                            if let Some(validator_rank) = authorities.iter().position(|(a, _)| {
-                                a.authority_index() == authority_record.authority_index()
-                            }) {
-                                data.para_validator_rank = Some((group_rank * 5) + validator_rank);
-                            }
-                        }
-                    }
+                    // Get para validator rank position
+                    data.para_validator_rank = Some((
+                        position(
+                            authority_record.authority_index().unwrap(),
+                            group_by_points(para_authorities_by_points.clone()),
+                        )
+                        .unwrap_or_default(),
+                        para_authorities_by_points.iter().count(),
+                    ));
+
+                    // Get group_rank position
+                    data.group_rank = Some((
+                        position(
+                            para_record.group().unwrap(),
+                            group_by_points(group_authorities_by_points.clone()),
+                        )
+                        .unwrap_or_default(),
+                        group_authorities_by_points.iter().count(),
+                    ));
 
                     // Collect peers information
                     for peer_authority_index in para_record.peers().iter() {
@@ -1423,9 +1437,10 @@ pub async fn run_groups_report(
                             let auths =
                                 group_authorities_map.entry(group_idx).or_insert(Vec::new());
                             auths.push((authority_record.clone(), para_record.clone(), name));
-                            auths.sort_by(|(a, _, _), (b, _, _)| {
-                                b.para_points().cmp(&a.para_points())
-                            });
+                            auths.sort_by(|(a, _, _), (b, _, _)| b.points().cmp(&a.points()));
+                            // auths.sort_by(|(a, _, _), (b, _, _)| {
+                            //     b.para_points().cmp(&a.para_points())
+                            // });
                         }
                     }
                 }
@@ -1551,9 +1566,10 @@ pub async fn run_parachains_report(
 pub async fn try_run_network_report(
     epoch_index: EpochIndex,
     records: &Records,
+    is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if !config.matrix_disabled {
+    if !config.matrix_disabled && !is_loading {
         if (epoch_index as f64 % config.matrix_network_report_epoch_rate as f64) == 0.0_f64 {
             if records.total_full_epochs() > 0 {
                 let records_cloned = records.clone();
@@ -2538,7 +2554,10 @@ fn str(bytes: Vec<u8>) -> String {
     format!("{}", String::from_utf8_lossy(&bytes))
 }
 
-async fn get_authority_index(onet: &Onet, block_hash: Option<H256>) -> Result<Option<AuthorityIndex>, OnetError> {
+async fn get_authority_index(
+    onet: &Onet,
+    block_hash: Option<H256>,
+) -> Result<Option<AuthorityIndex>, OnetError> {
     let api = onet.client().clone();
     if let Some(header) = api.rpc().header(block_hash).await? {
         match header.digest {
@@ -2549,8 +2568,12 @@ async fn get_authority_index(onet: &Onet, block_hash: Option<H256>) -> Result<Op
                             if let Some(pre) = PreDigest::decode(&mut &data[..]).ok() {
                                 match pre {
                                     PreDigest::Primary(e) => return Ok(Some(e.authority_index)),
-                                    PreDigest::SecondaryPlain(e) => return Ok(Some(e.authority_index)),
-                                    PreDigest::SecondaryVRF(e) => return Ok(Some(e.authority_index)),
+                                    PreDigest::SecondaryPlain(e) => {
+                                        return Ok(Some(e.authority_index))
+                                    }
+                                    PreDigest::SecondaryVRF(e) => {
+                                        return Ok(Some(e.authority_index))
+                                    }
                                 }
                             }
                         }
