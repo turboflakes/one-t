@@ -20,7 +20,7 @@
 // SOFTWARE.
 
 use crate::api::handlers::{
-    blocks::get_best_block,
+    blocks::{get_best_block, get_block_by_number, get_blocks, get_finalized_block},
     health::get_health,
     info::get_info,
     parachains::get_parachains,
@@ -55,7 +55,13 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
                         .route("", web::get().to(get_sessions)),
                 )
                 // BLOCKS routes
-                .service(web::scope("/blocks").route("/best", web::get().to(get_best_block)))
+                .service(
+                    web::scope("/blocks")
+                        .route("/finalized", web::get().to(get_finalized_block))
+                        .route("/best", web::get().to(get_best_block))
+                        .route("/{block_number}", web::get().to(get_block_by_number))
+                        .route("", web::get().to(get_blocks)),
+                )
                 // VALIDATOR routes
                 .service(
                     web::scope("/validators")

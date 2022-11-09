@@ -34,12 +34,8 @@ redis = { version = "0.19.0", features = ["async-std-comp"] }
 mobc = { version = "0.7", default-features = false, features = ["async-std"] }
 mobc-redis = { version = "0.7", default-features = false, features = ["async-std-comp"] }
 
-
 # subxt dependencies
-subxt = "0.22.0"
-# NOTE: sp-consensus-babe is needed to be able to decode the authority index in the block header logs
-sp-consensus-babe = {version = "0.10.0-dev", git = "https://github.com/paritytech/substrate" }
-
+subxt = "0.24.0"
 
 async-std = { version = "1.11.0", features = ["attributes", "tokio1"] }
 env_logger = "0.9.0"

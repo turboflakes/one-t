@@ -57,6 +57,13 @@ fn default_eras_per_day() -> u32 {
     1
 }
 
+/// provides default value for blocks per session target if ONET_BLOCKS_PER_SESSION var is not set
+/// kusama = 600
+/// polkadot = 4 * 600 = 2400
+fn default_blocks_per_session() -> u32 {
+    2400
+}
+
 /// provides default value in seconds for error interval if ONET_ERROR_INTERVAL env var is not set
 fn default_error_interval() -> u64 {
     30
@@ -70,6 +77,11 @@ fn default_data_path() -> String {
 /// provides default value for maximum_subscribers if ONET_MAXIMUM_SUBSCRIBERS env var is not set
 fn default_maximum_subscribers() -> u32 {
     1000
+}
+
+/// provides default value for minimum_initial_eras if ONET_MINIMUM_INITIAL_ERAS env var is not set
+fn default_minimum_initial_eras() -> u32 {
+    0
 }
 
 /// provides default value for maximum_eras if ONET_MAXIMUM_HISTORY_ERAS env var is not set
@@ -175,6 +187,8 @@ pub struct Config {
     pub interval: u64,
     #[serde(default = "default_eras_per_day")]
     pub eras_per_day: u32,
+    #[serde(default = "default_blocks_per_session")]
+    pub blocks_per_session: u32,
     #[serde(default = "default_error_interval")]
     pub error_interval: u64,
     pub substrate_ws_url: String,
@@ -182,6 +196,8 @@ pub struct Config {
     pub data_path: String,
     #[serde(default = "default_maximum_subscribers")]
     pub maximum_subscribers: u32,
+    #[serde(default = "default_minimum_initial_eras")]
+    pub minimum_initial_eras: u32,
     #[serde(default = "default_maximum_history_eras")]
     pub maximum_history_eras: u32,
     #[serde(default = "default_maximum_reports")]
@@ -196,6 +212,8 @@ pub struct Config {
     pub mvr_level_4: u32,
     #[serde(default)]
     pub is_debug: bool,
+    #[serde(default)]
+    pub initial_block_number: u64,
     // ranking
     #[serde(default = "default_maximum_top_ranking")]
     pub maximum_top_ranking: u32,

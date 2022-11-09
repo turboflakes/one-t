@@ -9,11 +9,11 @@ use crate::api::ws::{
     server::{Methods, WsRequestMessage},
 };
 use crate::cache::Verbosity;
-use crate::records::EpochIndex;
+use crate::records::{BlockNumber, EpochIndex};
 use actix::prelude::*;
 use actix_web_actors::ws;
 use log::{debug, warn};
-use subxt::sp_runtime::AccountId32;
+use subxt::ext::sp_runtime::AccountId32;
 
 /// How often heartbeat pings are sent
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -138,14 +138,36 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                 let req: WsRequestMessage = serde_json::from_str(&m).unwrap_or_default();
                 // TODO handle all methods
                 match req.method {
-                    Methods::SubscribeBlock => {
-                        if &req.params[0] == "best" {
-                            self.server_addr.do_send(server::Subscribe {
-                                id: self.id,
-                                topic: Topic::BestBlock,
-                            });
+                    Methods::GetBlock => {
+                        for block_number_str in req.params.iter() {
+                            if let Ok(block_number) = block_number_str.parse::<BlockNumber>() {
+                                self.server_addr.do_send(server::Get {
+                                    id: self.id,
+                                    topic: Topic::Block(block_number),
+                                })
+                            }
                         }
                     }
+                    Methods::SubscribeBlock => match req.params[0].as_str() {
+                        "best" => self.server_addr.do_send(server::Subscribe {
+                            id: self.id,
+                            topic: Topic::BestBlock,
+                        }),
+                        "finalized" => {
+                            if let Ok(previous_sessions) = req.params[1].as_str().parse::<u8>() {
+                                self.server_addr.do_send(server::Subscribe {
+                                    id: self.id,
+                                    topic: Topic::FinalizedBlock(previous_sessions),
+                                })
+                            } else {
+                                self.server_addr.do_send(server::Subscribe {
+                                    id: self.id,
+                                    topic: Topic::FinalizedBlock(0),
+                                })
+                            }
+                        }
+                        _ => (),
+                    },
                     Methods::SubscribeSession => {
                         if &req.params[0] == "new" {
                             self.server_addr.do_send(server::Subscribe {
@@ -194,14 +216,26 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                             }
                         }
                     }
-                    Methods::UnsubscribeBlock => {
-                        if &req.params[0] == "best" {
-                            self.server_addr.do_send(server::Unsubscribe {
-                                id: self.id,
-                                topic: Topic::BestBlock,
-                            });
+                    Methods::UnsubscribeBlock => match req.params[0].as_str() {
+                        "best" => self.server_addr.do_send(server::Unsubscribe {
+                            id: self.id,
+                            topic: Topic::BestBlock,
+                        }),
+                        "finalized" => {
+                            if let Ok(previous_sessions) = req.params[1].as_str().parse::<u8>() {
+                                self.server_addr.do_send(server::Unsubscribe {
+                                    id: self.id,
+                                    topic: Topic::FinalizedBlock(previous_sessions),
+                                })
+                            } else {
+                                self.server_addr.do_send(server::Unsubscribe {
+                                    id: self.id,
+                                    topic: Topic::FinalizedBlock(0),
+                                })
+                            }
                         }
-                    }
+                        _ => (),
+                    },
                     Methods::UnsubscribeSession => {
                         if &req.params[0] == "new" {
                             self.server_addr.do_send(server::Unsubscribe {

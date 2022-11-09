@@ -33,8 +33,8 @@ use std::{
     result::Result,
 };
 
-use subxt::sp_runtime::AccountId32;
-use subxt::{Client, DefaultConfig};
+use subxt::ext::sp_runtime::AccountId32;
+use subxt::{OnlineClient, PolkadotConfig};
 
 use flate2::write;
 use flate2::Compression;
@@ -140,11 +140,11 @@ pub struct Network {
 }
 
 impl Network {
-    pub async fn load(client: &Client<DefaultConfig>) -> Result<Network, OnetError> {
-        let properties = client.properties();
+    pub async fn load(api: &OnlineClient<PolkadotConfig>) -> Result<Network, OnetError> {
+        let properties = api.rpc().system_properties().await?;
 
         // Get Network name
-        let chain_name = client.rpc().system_chain().await?;
+        let chain_name = api.rpc().system_chain().await?;
 
         // Get Token symbol
         let token_symbol: String = if let Some(token_symbol) = properties.get("tokenSymbol") {
@@ -213,8 +213,8 @@ pub struct RawDataPara {
     pub authority_record: Option<AuthorityRecord>,
     pub para_record: Option<ParaRecord>,
     pub parachains: Vec<ParaId>,
-    pub para_validator_rank: Option<usize>,
-    pub group_rank: Option<usize>,
+    pub para_validator_rank: Option<(usize, usize)>, // Option<(rank, total)>
+    pub group_rank: Option<(usize, usize)>,          // Option<(rank, total)>
 }
 
 #[derive(Debug)]
@@ -501,7 +501,7 @@ impl From<RawDataGroup> for Report {
                     clode_block.push_str(&format!(
                         "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>6}{:>6}\n",
                         slice(&replace_emoji(&val_name, "_"), 24),
-                        authority_record.authored_blocks(),
+                        authority_record.total_authored_blocks(),
                         para_record.total_core_assignments(),
                         para_record.total_implicit_votes(),
                         para_record.total_explicit_votes(),
@@ -700,16 +700,22 @@ impl From<RawDataPara> for Report {
                     report.add_break();
                     // Print Rankings
                     report.add_raw_text(format!("<i>Rankings</i>"));
-                    report.add_raw_text(format!(
-                        "✨ All Stars: {} // 200 {}",
-                        data.para_validator_rank.unwrap_or_default() + 1,
-                        position_emoji(data.para_validator_rank.unwrap_or_default())
-                    ));
-                    report.add_raw_text(format!(
-                        "🏀 Groups: {} // 40 {}",
-                        data.group_rank.unwrap_or_default() + 1,
-                        position_emoji(data.group_rank.unwrap_or_default())
-                    ));
+                    if let Some((para_validator_rank, total)) = data.para_validator_rank {
+                        report.add_raw_text(format!(
+                            "✨ All Stars: {} // {} {}",
+                            para_validator_rank + 1,
+                            total,
+                            position_emoji(para_validator_rank)
+                        ));
+                    }
+                    if let Some((group_rank, total)) = data.group_rank {
+                        report.add_raw_text(format!(
+                            "🏀 Groups: {} // {} {}",
+                            group_rank + 1,
+                            total,
+                            position_emoji(group_rank)
+                        ));
+                    }
 
                     let para_validator_group_rank =
                         position(authority_index, group_by_points(v.clone()));
@@ -720,10 +726,12 @@ impl From<RawDataPara> for Report {
                         position_emoji(para_validator_group_rank.unwrap_or_default())
                     };
                     report.add_raw_text(format!(
-                        "⛹️ Sole: {} // 5 {}",
+                        "⛹️ Sole: {} // {} {}",
                         para_validator_group_rank.unwrap_or_default() + 1,
+                        v.iter().count(),
                         emoji
                     ));
+
                     report.add_break();
 
                     // Print breakdown points
@@ -750,7 +758,7 @@ impl From<RawDataPara> for Report {
                             "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
                             "*",
                             slice(&replace_emoji(&data.validator.name, "_"), 24),
-                            authority_record.authored_blocks(),
+                            authority_record.total_authored_blocks(),
                             para_record.total_core_assignments(),
                             para_record.total_implicit_votes(),
                             para_record.total_explicit_votes(),
@@ -777,14 +785,14 @@ impl From<RawDataPara> for Report {
                         ));
                     }
                     // Print out peers names
-                    let peers_letters = vec!["A", "B", "C", "D"];
+                    let peers_letters = vec!["A", "B", "C", "D", "E", "F", "G", "H"];
                     for (i, peer) in data.peers.iter().enumerate() {
                         if let Some(mvr) = peer.2.missed_votes_ratio() {
                             clode_block.push_str(&format!(
                                 "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
                                 peers_letters[i],
                                 slice(&replace_emoji(&peer.0.clone(), "_"), 24),
-                                peer.1.authored_blocks(),
+                                peer.1.total_authored_blocks(),
                                 peer.2.total_core_assignments(),
                                 peer.2.total_implicit_votes(),
                                 peer.2.total_explicit_votes(),
@@ -812,45 +820,67 @@ impl From<RawDataPara> for Report {
                         }
                     }
 
-                    clode_block.push_str("\nPARACHAINS BREAKDOWN\n");
-                    // Print out parachains breakdown
-                    clode_block.push_str(&format!(
-                        "{:<12}{:>13}{:>13}{:>13}{:>13}{:>13}\n",
-                        "",
-                        "┌──── * ────┐",
-                        "┌──── A ────┐",
-                        "┌──── B ────┐",
-                        "┌──── C ────┐",
-                        "┌──── D ────┐",
-                    ));
-                    clode_block.push_str(&format!(
-                    "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}{:>4}{:>4}{:>5}\n",
-                    "#", "❒", "↻", "✓", "✗", "p", "✓", "✗", "p", "✓", "✗", "p", "✓", "✗", "p", "✓", "✗", "p",
-                ));
-                    for para_id in data.parachains.iter() {
-                        // Print out votes per para id
-                        if let Some(stats) = para_record.get_para_id_stats(*para_id) {
-                            let mut line: String = format!(
-                                "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}",
-                                para_id,
-                                stats.authored_blocks(),
-                                stats.core_assignments(),
-                                stats.total_votes(),
-                                stats.missed_votes(),
-                                stats.para_points(),
-                            );
-                            for peer in data.peers.iter() {
-                                if let Some(peer_stats) = peer.2.get_para_id_stats(*para_id) {
+                    // NOTE: By default print the full report
+                    match data.report_type {
+                        ReportType::Validator(param) => match param {
+                            None => {
+                                // default print the full report
+                                // Print out parachains breakdown
+                                clode_block.push_str("\nPARACHAINS BREAKDOWN\n");
+                                // Print title line based on the number of peers
+                                let mut line = String::from("            ┌──── * ────┐");
+                                for (i, _) in data.peers.iter().enumerate() {
                                     line.push_str(&format!(
-                                        "{:>4}{:>4}{:>5}",
-                                        peer_stats.total_votes(),
-                                        peer_stats.missed_votes(),
-                                        peer_stats.para_points()
+                                        "{:>13}",
+                                        format!("┌──── {} ────┐", peers_letters[i])
                                     ));
                                 }
+                                clode_block.push_str(&format!("{line}\n"));
+
+                                // Print subtitle line based on the number of peers
+                                let mut line: String = format!(
+                                    "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}",
+                                    "#", "❒", "↻", "✓", "✗", "p"
+                                );
+                                for _ in data.peers.iter() {
+                                    line.push_str(&format!("{:>4}{:>4}{:>5}", "✓", "✗", "p"));
+                                }
+                                clode_block.push_str(&format!("{line}\n"));
+
+                                // Print parachains data
+                                for para_id in data.parachains.iter() {
+                                    // Print out votes per para id
+                                    if let Some(stats) = para_record.get_para_id_stats(*para_id) {
+                                        let mut line: String = format!(
+                                            "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}",
+                                            para_id,
+                                            stats.authored_blocks(),
+                                            stats.core_assignments(),
+                                            stats.total_votes(),
+                                            stats.missed_votes(),
+                                            stats.para_points(),
+                                        );
+                                        for peer in data.peers.iter() {
+                                            if let Some(peer_stats) =
+                                                peer.2.get_para_id_stats(*para_id)
+                                            {
+                                                line.push_str(&format!(
+                                                    "{:>4}{:>4}{:>5}",
+                                                    peer_stats.total_votes(),
+                                                    peer_stats.missed_votes(),
+                                                    peer_stats.para_points()
+                                                ));
+                                            }
+                                        }
+                                        clode_block.push_str(&format!("{line}\n"));
+                                    }
+                                }
                             }
-                            clode_block.push_str(&format!("{line}\n"));
-                        }
+                            Some(_) => {
+                                // Note: in the current version there is only one value possible 'short' -> do nothing here
+                            }
+                        },
+                        _ => unreachable!(),
                     }
                     clode_block.push_str("\n</code></pre>");
                     report.add_raw_text(clode_block);
@@ -1736,7 +1766,7 @@ pub fn replace_crln(text: &str, replacer: &str) -> String {
     r.replace_all(text, replacer).to_string()
 }
 
-fn group_by_points(v: Vec<(u32, u32)>) -> Vec<Vec<(u32, u32)>> {
+pub fn group_by_points(v: Vec<(u32, u32)>) -> Vec<Vec<(u32, u32)>> {
     let mut sorted = v.clone();
     sorted.sort_by(|(_, a), (_, b)| b.cmp(a));
 
@@ -1757,7 +1787,7 @@ fn group_by_points(v: Vec<(u32, u32)>) -> Vec<Vec<(u32, u32)>> {
     out
 }
 
-fn position(a: u32, v: Vec<Vec<(u32, u32)>>) -> Option<usize> {
+pub fn position(a: u32, v: Vec<Vec<(u32, u32)>>) -> Option<usize> {
     for (i, z) in v.into_iter().enumerate() {
         for (b, _) in z.into_iter() {
             if a == b {

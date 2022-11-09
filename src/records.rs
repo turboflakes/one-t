@@ -21,25 +21,29 @@
 #![allow(dead_code)]
 use crate::config::CONFIG;
 use crate::matrix::UserID;
+use crate::onet::Param;
 use crate::report::Subset;
-use codec::Decode;
 use log::info;
 use serde::{Deserialize, Serialize};
-use sp_consensus_babe::digests::PreDigest;
-use std::{collections::BTreeMap, collections::HashMap, collections::HashSet, hash::Hash};
-use subxt::{
-    rpc::ChainBlock,
-    sp_runtime::{traits::Header as HeaderT, AccountId32, Digest, DigestItem},
-    DefaultConfig,
+use std::{
+    collections::BTreeMap, collections::HashMap, collections::HashSet, convert::TryInto, hash::Hash,
 };
-
-pub type BlockNumber = u64;
-pub type EraIndex = u32;
-pub type EpochIndex = u32;
+use subxt::ext::sp_runtime::AccountId32;
 
 pub trait Validity {
     fn is_empty(&self) -> bool;
 }
+
+pub type BlockNumber = u64;
+
+impl Validity for BlockNumber {
+    fn is_empty(&self) -> bool {
+        *self == 0
+    }
+}
+
+pub type EraIndex = u32;
+pub type EpochIndex = u32;
 
 impl Validity for EpochIndex {
     fn is_empty(&self) -> bool {
@@ -69,6 +73,7 @@ pub type Pattern = Vec<Glyph>;
 pub type FlaggedEpochs = Vec<EpochIndex>;
 // pub type RecordKey = String;
 pub type SS58 = String;
+pub type DisputeKind = String;
 
 // Keys to be easily used in BTreeMap
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -84,6 +89,7 @@ pub struct BlockKey(EpochKey, BlockKind);
 enum BlockKind {
     Start,
     End,
+    Best,
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd)]
@@ -153,26 +159,6 @@ pub fn grade(ratio: f64) -> String {
         4001..=5000 => "D".to_string(),
         _ => "F".to_string(),
     }
-}
-
-pub fn decode_authority_index(chain_block: &ChainBlock<DefaultConfig>) -> Option<AuthorityIndex> {
-    match chain_block.block.header.digest() {
-        Digest { logs } => {
-            for digests in logs.iter() {
-                match digests {
-                    DigestItem::PreRuntime(_, data) => {
-                        if let Some(pre) = PreDigest::decode(&mut &data[..]).ok() {
-                            return Some(pre.authority_index());
-                        } else {
-                            return None;
-                        }
-                    }
-                    _ => (),
-                }
-            }
-        }
-    }
-    None
 }
 
 #[derive(Debug, Clone)]
@@ -269,12 +255,26 @@ impl Records {
         }
     }
 
+    // deprecated: use finalized_block
     pub fn current_block(&self) -> Option<&BlockNumber> {
         let block = self.end_block(Some(EpochKey(self.current_era, self.current_epoch)));
         if block.is_none() {
             return self.start_block(Some(EpochKey(self.current_era, self.current_epoch)));
         }
         block
+    }
+
+    pub fn finalized_block(&self) -> Option<&BlockNumber> {
+        let block = self.end_block(Some(EpochKey(self.current_era, self.current_epoch)));
+        if block.is_none() {
+            return self.start_block(Some(EpochKey(self.current_era, self.current_epoch)));
+        }
+        block
+    }
+
+    pub fn best_block(&self) -> Option<&BlockNumber> {
+        let epoch_key = EpochKey(self.current_era, self.current_epoch);
+        return self.blocks.get(&BlockKey(epoch_key, BlockKind::Best));
     }
 
     pub fn start_new_epoch(&mut self, era: EraIndex, epoch: EpochIndex) {
@@ -297,6 +297,16 @@ impl Records {
             BlockKey(
                 EpochKey(self.current_era, self.current_epoch),
                 BlockKind::End,
+            ),
+            block_number,
+        );
+    }
+
+    pub fn set_best_block_number(&mut self, block_number: BlockNumber) {
+        self.blocks.insert(
+            BlockKey(
+                EpochKey(self.current_era, self.current_epoch),
+                BlockKind::Best,
             ),
             block_number,
         );
@@ -416,7 +426,7 @@ impl Records {
                         .authority_records
                         .get(&RecordKey(key.clone(), auth_idx.clone()))
                     {
-                        authored_blocks += authority_record.authored_blocks();
+                        authored_blocks += authority_record.total_authored_blocks();
                         para_points += authority_record.para_points();
                         // Get para data
                         if let Some(para_record) = self
@@ -486,7 +496,13 @@ impl Records {
         }
     }
 
-    pub fn update_para_group(&mut self, para_id: ParaId, core: CoreIndex, group_idx: GroupIndex) {
+    pub fn update_para_group(
+        &mut self,
+        para_id: ParaId,
+        core: CoreIndex,
+        group_idx: GroupIndex,
+        epoch_idx: Option<EpochIndex>,
+    ) {
         if let Some(previous_group_idx) = self.para_group.insert(para_id, group_idx) {
             if previous_group_idx == group_idx {
                 return;
@@ -494,7 +510,7 @@ impl Records {
             // remove assignement from authorities assigned to the current group
             if let Some(authorities) = self.get_authorities_from_group(previous_group_idx) {
                 for authority_idx in authorities.iter() {
-                    if let Some(para_record) = self.get_mut_para_record(*authority_idx) {
+                    if let Some(para_record) = self.get_mut_para_record(*authority_idx, epoch_idx) {
                         para_record.remove_scheduled_core(para_id);
                     }
                 }
@@ -503,7 +519,9 @@ impl Records {
         // update scheduled core and para_id to the authorities assigned to the group_idx
         if let Some(authorities) = self.get_authorities_from_group(group_idx) {
             for authority_idx in authorities.iter() {
-                if let Some(para_record) = self.get_mut_para_record(authority_idx.clone()) {
+                if let Some(para_record) =
+                    self.get_mut_para_record(authority_idx.clone(), epoch_idx)
+                {
                     para_record.update_scheduled_core(para_id, core);
                 }
             }
@@ -599,9 +617,18 @@ impl Records {
     pub fn get_mut_authority_record(
         &mut self,
         index: AuthorityIndex,
+        epoch_index: Option<EpochIndex>,
     ) -> Option<&mut AuthorityRecord> {
-        let record_key = RecordKey(EpochKey(self.current_era, self.current_epoch), index);
-        self.authority_records.get_mut(&record_key)
+        let epoch_key = if let Some(epoch_idx) = epoch_index {
+            if let Some(&era_idx) = self.get_era_index(epoch_index) {
+                EpochKey(era_idx, epoch_idx)
+            } else {
+                EpochKey(self.current_era, self.current_epoch)
+            }
+        } else {
+            EpochKey(self.current_era, self.current_epoch)
+        };
+        self.authority_records.get_mut(&RecordKey(epoch_key, index))
     }
 
     pub fn get_mut_para_authorities(
@@ -616,9 +643,22 @@ impl Records {
         }
     }
 
-    pub fn get_mut_para_record(&mut self, index: AuthorityIndex) -> Option<&mut ParaRecord> {
-        let record_key = RecordKey(EpochKey(self.current_era, self.current_epoch), index);
-        self.para_records.get_mut(&record_key)
+    pub fn get_mut_para_record(
+        &mut self,
+        index: AuthorityIndex,
+        epoch_index: Option<EpochIndex>,
+    ) -> Option<&mut ParaRecord> {
+        let epoch_key = if let Some(epoch_idx) = epoch_index {
+            if let Some(&era_idx) = self.get_era_index(epoch_index) {
+                EpochKey(era_idx, epoch_idx)
+            } else {
+                EpochKey(self.current_era, self.current_epoch)
+            }
+        } else {
+            EpochKey(self.current_era, self.current_epoch)
+        };
+
+        self.para_records.get_mut(&RecordKey(epoch_key, index))
     }
 
     pub fn get_authority_record(
@@ -781,26 +821,24 @@ pub struct AuthorityRecord {
     #[serde(rename = "ep")]
     end_points: Option<Points>,
     #[serde(rename = "ab")]
-    authored_blocks: AuthoredBlocks,
+    authored_blocks: Vec<BlockNumber>,
     #[serde(default)]
     #[serde(skip_serializing)]
     is_flagged: bool,
 }
 
 impl AuthorityRecord {
-    pub fn with_index_address_points_and_blocks(
+    pub fn with_index_address_and_points(
         index: AuthorityIndex,
         address: AccountId32,
         start_points: Points,
-        authored_blocks: AuthoredBlocks,
     ) -> Self {
         Self {
             index: Some(index),
             address: Some(address),
             start_points,
-            end_points: None,
-            authored_blocks,
-            is_flagged: false,
+            end_points: Some(start_points),
+            ..Default::default()
         }
     }
 
@@ -833,18 +871,22 @@ impl AuthorityRecord {
     }
 
     pub fn para_points(&self) -> Points {
-        if self.points() < (self.authored_blocks() * 20) {
+        if self.points() < (self.total_authored_blocks() * 20) {
             return 0;
         }
-        self.points() - (self.authored_blocks() * 20)
+        self.points() - (self.total_authored_blocks() * 20)
     }
 
-    pub fn authored_blocks(&self) -> AuthoredBlocks {
-        self.authored_blocks
+    pub fn authored_blocks(&self) -> Vec<BlockNumber> {
+        self.authored_blocks.to_vec()
     }
 
-    pub fn inc_authored_blocks(&mut self) {
-        self.authored_blocks += 1;
+    pub fn total_authored_blocks(&self) -> u32 {
+        self.authored_blocks.len().try_into().unwrap()
+    }
+
+    pub fn push_authored_block(&mut self, block_number: BlockNumber) {
+        self.authored_blocks.push(block_number);
     }
 
     pub fn flag(&mut self) {
@@ -889,6 +931,8 @@ pub struct ParaRecord {
     #[serde(rename = "pid")]
     para_id: Option<ParaId>,
     peers: Vec<AuthorityIndex>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    disputes: Vec<(BlockNumber, DisputeKind)>,
     #[serde(skip)]
     para_stats: BTreeMap<ParaId, ParaStats>,
 }
@@ -906,6 +950,7 @@ impl ParaRecord {
             para_id: None,
             peers,
             para_stats: BTreeMap::new(),
+            ..Default::default()
         }
     }
 
@@ -936,6 +981,14 @@ impl ParaRecord {
 
     pub fn peers(&self) -> Vec<AuthorityIndex> {
         self.peers.to_vec()
+    }
+
+    pub fn disputes(&self) -> Vec<(BlockNumber, DisputeKind)> {
+        self.disputes.to_vec()
+    }
+
+    pub fn push_dispute(&mut self, block_number: BlockNumber, msg: String) {
+        self.disputes.push((block_number, msg));
     }
 
     pub fn update_scheduled_core(&mut self, para_id: ParaId, core: CoreIndex) {
@@ -1080,6 +1133,7 @@ impl ParaRecord {
             core: self.core.clone(),
             para_id: self.para_id.clone(),
             peers: self.peers.clone(),
+            disputes: self.disputes.clone(),
             para_stats: BTreeMap::new(),
         }
     }
@@ -1153,7 +1207,7 @@ impl Validity for ParaStats {
 pub struct Subscribers {
     current_era: EraIndex,
     current_epoch: EpochIndex,
-    subscribers: HashMap<EpochKey, Vec<(AccountId32, UserID)>>,
+    subscribers: HashMap<EpochKey, Vec<(AccountId32, UserID, Option<Param>)>>,
 }
 
 impl Subscribers {
@@ -1178,13 +1232,15 @@ impl Subscribers {
         self.current_epoch
     }
 
-    pub fn subscribe(&mut self, account: AccountId32, user_id: UserID) {
+    pub fn subscribe(&mut self, account: AccountId32, user_id: UserID, param: Option<Param>) {
         let key = EpochKey(self.current_era, self.current_epoch);
         if let Some(s) = self.subscribers.get_mut(&key) {
-            s.push((account.clone(), user_id.to_string()));
+            s.push((account.clone(), user_id.to_string(), param.clone()));
         } else {
-            self.subscribers
-                .insert(key, vec![(account.clone(), user_id.to_string())]);
+            self.subscribers.insert(
+                key,
+                vec![(account.clone(), user_id.to_string(), param.clone())],
+            );
         }
         info!(
             "{} subscribed ({}) report for epoch {} era {}",
@@ -1195,7 +1251,7 @@ impl Subscribers {
         );
     }
 
-    pub fn get(&self, key: Option<EpochKey>) -> Option<&Vec<(AccountId32, UserID)>> {
+    pub fn get(&self, key: Option<EpochKey>) -> Option<&Vec<(AccountId32, UserID, Option<Param>)>> {
         if let Some(key) = key {
             self.subscribers.get(&key)
         } else {
@@ -1231,7 +1287,7 @@ pub struct ParachainRecord {
     pub stats: ParaStats,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Identity {
     #[serde(default)]
     name: String,
@@ -1261,16 +1317,50 @@ impl std::fmt::Display for Identity {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
+// Note: the following structs are useful for api/cache support
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ValidatorProfileRecord {
     pub stash: Option<AccountId32>,
     pub controller: Option<AccountId32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub identity: Option<Identity>,
     // Note: commission max value = Perbill(1000000000) => 100%
     pub commission: u32,
     pub own_stake: u128,
     pub subset: Subset,
     pub is_oversubscribed: bool,
+}
+
+impl Validity for ValidatorProfileRecord {
+    fn is_empty(&self) -> bool {
+        self.stash.is_none()
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct SessionStats {
+    #[serde(rename = "na")]
+    pub authorities: u32,
+    #[serde(rename = "npa")]
+    pub para_authorities: u32,
+    #[serde(rename = "pt")]
+    pub points: Points,
+    #[serde(rename = "ab")]
+    pub authored_blocks: u32,
+    #[serde(rename = "ca")]
+    pub core_assignments: u32,
+    #[serde(rename = "ev")]
+    pub explicit_votes: u32,
+    #[serde(rename = "iv")]
+    pub implicit_votes: u32,
+    #[serde(rename = "mv")]
+    pub missed_votes: u32,
+}
+
+impl Validity for SessionStats {
+    fn is_empty(&self) -> bool {
+        self.authorities == 0
+    }
 }
 
 #[cfg(test)]
@@ -1375,7 +1465,7 @@ mod tests {
         }
 
         // Increment authored blocks and current points
-        if let Some(pr) = records.get_mut_para_record(authority_idx) {
+        if let Some(pr) = records.get_mut_para_record(authority_idx, None) {
             pr.update_scheduled_core(1001, 3);
             pr.update_points(1600, true);
             assert_eq!(pr.get_para_id_stats(1001).is_some(), true);

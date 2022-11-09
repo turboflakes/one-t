@@ -37,6 +37,7 @@ pub struct Message(pub String);
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum Methods {
+    GetBlock,
     SubscribeBlock,
     SubscribeSession,
     SubscribeValidator,
@@ -149,6 +150,48 @@ impl Handler<Disconnect> for Server {
     }
 }
 
+/// Get channel, if channel does not exists create new one.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct Get {
+    /// Client ID
+    pub id: usize,
+
+    /// Channel topic to fetch data
+    pub topic: Topic,
+}
+
+/// Get report, remove client from old subscription with the same type
+/// send join message to the client
+impl Handler<Get> for Server {
+    type Result = ();
+
+    fn handle(&mut self, msg: Get, ctx: &mut Context<Self>) {
+        let Get { id, topic } = msg;
+
+        if let Some(session_addr) = self.sessions.get(&id) {
+            // subscribe to a channel; if doesn't exist yet start a new channel and subscribe to it
+            if let Some(channel_addr) = self.channels.get(&topic) {
+                channel_addr.do_send(channel::Get {
+                    id,
+                    addr: session_addr.clone(),
+                    topic,
+                });
+            } else {
+                let channel_addr = Channel::new(topic.clone(), ctx.address()).start();
+                self.channels
+                    .entry(topic.clone())
+                    .or_insert(channel_addr.clone());
+                channel_addr.do_send(channel::Get {
+                    id,
+                    addr: session_addr.clone(),
+                    topic,
+                });
+            }
+        }
+    }
+}
+
 /// Subscribe channel, if channel does not exists create new one.
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -202,7 +245,7 @@ pub struct Unsubscribe {
     pub topic: Topic,
 }
 
-/// Subscribe report, remove client from old subscription with the same type
+/// Unsubscribe report, remove client from old subscription with the same type
 /// send join message to the client
 impl Handler<Unsubscribe> for Server {
     type Result = ();

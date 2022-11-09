@@ -37,7 +37,7 @@ use std::{
     str::FromStr,
     thread, time,
 };
-use subxt::sp_runtime::AccountId32;
+use subxt::ext::sp_runtime::AccountId32;
 use url::form_urlencoded::byte_serialize;
 const MATRIX_URL: &str = "https://matrix.org/_matrix/client/r0";
 const MATRIX_MEDIA_URL: &str = "https://matrix.org/_matrix/media/r0";
@@ -547,12 +547,17 @@ impl Matrix {
                 Commands::Legends => self.reply_legends(&room_id).await?,
                 Commands::Subscribe(report, who, stash) => {
                     match report {
-                        ReportType::Validator => {
+                        ReportType::Validator(param) => {
                             if let Some(stash) = stash {
                                 // Verify stash
                                 if let Ok(_) = AccountId32::from_str(&stash) {
-                                    // Write stash,user in subscribers file if doesn't already exist
-                                    let subscriber = format!("{stash},{who}\n");
+                                    let subscriber = if let Some(param) = param {
+                                        // Write stash,user, param in subscribers file if doesn't already exist
+                                        format!("{stash},{who},{param}\n")
+                                    } else {
+                                        // Write stash,user in subscribers file if doesn't already exist
+                                        format!("{stash},{who}\n")
+                                    };
                                     if Path::new(&subscribers_filename).exists() {
                                         let subscribers =
                                             fs::read_to_string(&subscribers_filename)?;
@@ -711,10 +716,16 @@ impl Matrix {
                 }
                 Commands::Unsubscribe(report, who, stash) => {
                     match report {
-                        ReportType::Validator => {
+                        ReportType::Validator(param) => {
                             if let Some(stash) = stash {
                                 // Remove stash,user from subscribers file
-                                let subscriber = format!("{stash},{who}\n");
+                                let subscriber = if let Some(param) = param {
+                                    // Write stash,user, param in subscribers file if doesn't already exist
+                                    format!("{stash},{who},{param}\n")
+                                } else {
+                                    // Write stash,user in subscribers file if doesn't already exist
+                                    format!("{stash},{who}\n")
+                                };
                                 let path =
                                     format!("{}{}", config.data_path, MATRIX_SUBSCRIBERS_FILENAME);
                                 if Path::new(&path).exists() {
@@ -1022,11 +1033,26 @@ impl Matrix {
                                                 message.sender.to_string(),
                                                 None,
                                             )),
-                                            stash => commands.push(Commands::Subscribe(
-                                                ReportType::Validator,
-                                                message.sender.to_string(),
-                                                Some(stash.to_string()),
-                                            )),
+                                            other => match other.split_once(' ') {
+                                                None => {
+                                                    // other = stash
+                                                    commands.push(Commands::Subscribe(
+                                                        ReportType::Validator(None),
+                                                        message.sender.to_string(),
+                                                        Some(other.to_string()),
+                                                    ))
+                                                }
+                                                Some((stash, param)) => match param {
+                                                    "short" => commands.push(Commands::Subscribe(
+                                                        ReportType::Validator(Some(
+                                                            param.to_string(),
+                                                        )),
+                                                        message.sender.to_string(),
+                                                        Some(stash.to_string()),
+                                                    )),
+                                                    _ => commands.push(Commands::NotSupported),
+                                                },
+                                            },
                                         },
                                         "!unsubscribe" => match value {
                                             "insights" => commands.push(Commands::Unsubscribe(
@@ -1034,11 +1060,28 @@ impl Matrix {
                                                 message.sender.to_string(),
                                                 None,
                                             )),
-                                            stash => commands.push(Commands::Unsubscribe(
-                                                ReportType::Validator,
-                                                message.sender.to_string(),
-                                                Some(stash.to_string()),
-                                            )),
+                                            other => match other.split_once(' ') {
+                                                None => {
+                                                    // other = stash
+                                                    commands.push(Commands::Unsubscribe(
+                                                        ReportType::Validator(None),
+                                                        message.sender.to_string(),
+                                                        Some(other.to_string()),
+                                                    ))
+                                                }
+                                                Some((stash, param)) => match param {
+                                                    "short" => {
+                                                        commands.push(Commands::Unsubscribe(
+                                                            ReportType::Validator(Some(
+                                                                param.to_string(),
+                                                            )),
+                                                            message.sender.to_string(),
+                                                            Some(stash.to_string()),
+                                                        ))
+                                                    }
+                                                    _ => commands.push(Commands::NotSupported),
+                                                },
+                                            },
                                         },
                                         _ => commands.push(Commands::NotSupported),
                                     },
@@ -1210,9 +1253,13 @@ impl Matrix {
     pub async fn reply_help(&self, room_id: &str) -> Result<(), MatrixError> {
         let config = CONFIG.clone();
         let mut message = String::from("✨ Supported commands:<br>");
-        message.push_str("<b>!subscribe <i>STASH_ADDRESS</i></b> - Subscribe to the <i>Validator Performance Report</i> for the stash address specified. The report is only sent if the <i>para-validator</i> role was assigned to the validator in the previous session. The report is always sent via DM at the end of each session, unless the report is unsubscribed.<br>");
+        message.push_str("<b>!subscribe <i>STASH_ADDRESS</i></b> - Subscribe to the <i>Validator Performance Report</i> with Parachains breakdown stats for the stash address specified. The report is only sent if the <i>para-validator</i> role was assigned to the validator in the previous session. The report is always sent via DM at the end of each session, unless the report is unsubscribed.<br>");
         message.push_str(
             "<b>!unsubscribe <i>STASH_ADDRESS</i></b> - Unsubscribe the stash address from the <i>Validator Performance Report</i> subscribers list.<br>",
+        );
+        message.push_str("<b>!subscribe <i>STASH_ADDRESS</i> short</b> - Subscribe to the <i>Validator Performance Report [short]</i> for the stash address specified. The report is only sent if the <i>para-validator</i> role was assigned to the validator in the previous session. The report is always sent via DM at the end of each session, unless the report is unsubscribed.<br>");
+        message.push_str(
+            "<b>!unsubscribe <i>STASH_ADDRESS</i> short</b> - Unsubscribe the stash address from the <i>Validator Performance Report [short]</i> subscribers list.<br>",
         );
         message.push_str(&format!("<b>!subscribe groups</b> - Subscribe to the <i>Validator Groups Performance Report</i>. The report is sent via DM at the end of the next {} sessions.<br>", config.maximum_reports));
         message.push_str(&format!("<b>!subscribe parachains</b> - Subscribe to the <i>Parachains Performance Report</i>. The report is sent via DM at the end of the next {} sessions.<br>", config.maximum_reports));

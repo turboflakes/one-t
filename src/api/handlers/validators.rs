@@ -35,7 +35,7 @@ use redis::aio::Connection;
 use serde::Deserialize;
 use serde_json::Value;
 use std::str::FromStr;
-use subxt::sp_runtime::AccountId32;
+use subxt::ext::sp_runtime::AccountId32;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -83,6 +83,9 @@ pub struct Params {
     // show_summary indicates whether parachain summary should be retrieved or not, default false
     #[serde(default)]
     show_summary: bool,
+    // show_profile indicates whether validator identity should be retrieved or not, default false
+    #[serde(default)]
+    show_profile: bool,
     // fetch_peers indicates whether peers should be also retrieved and included in the response, default false
     #[serde(default)]
     fetch_peers: bool,
@@ -140,6 +143,7 @@ async fn get_session_para_authorities(
     index: EpochIndex,
     show_stats: bool,
     show_summary: bool,
+    show_profile: bool,
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorsResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
@@ -181,6 +185,25 @@ async fn get_session_para_authorities(
             auth.extend(summary);
         }
 
+        if show_profile {
+            let address: String = redis::cmd("HGET")
+                .arg(key.to_string())
+                .arg(String::from("address"))
+                .query_async(&mut conn as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+
+            let profile: String = redis::cmd("GET")
+                .arg(CacheKey::ValidatorProfileByAccount(AccountId32::from_str(
+                    &address,
+                )?))
+                .query_async(&mut conn as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+
+            auth.insert(String::from("profile"), profile);
+        }
+
         data.push(auth.into());
     }
 
@@ -195,6 +218,7 @@ async fn get_validator_by_authority_key(
     auth_key: AuthorityKey,
     show_stats: bool,
     show_summary: bool,
+    _show_profile: bool,
     cache: Data<RedisPool>,
 ) -> Result<ValidatorResult, ApiError> {
     let mut conn = get_conn(&cache).await?;
@@ -228,6 +252,24 @@ async fn get_validator_by_authority_key(
             .map_err(CacheError::RedisCMDError)?;
         data.extend(summary);
     }
+
+    // if show_profile {
+    //     let serialized_data: String = redis::cmd("GET")
+    //     .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+    //     .query_async(&mut conn as &mut Connection)
+    //     .await
+    //     .map_err(CacheError::RedisCMDError)?;
+
+    //     let summary: CacheMap = redis::cmd("HGETALL")
+    //         .arg(CacheKey::AuthorityRecordVerbose(
+    //             auth_key.to_string(),
+    //             Verbosity::Summary,
+    //         ))
+    //         .query_async(&mut conn as &mut Connection)
+    //         .await
+    //         .map_err(CacheError::RedisCMDError)?;
+    //     data.extend(summary);
+    // }
 
     data.insert(String::from("session"), auth_key.epoch_index.to_string());
 
@@ -274,6 +316,7 @@ async fn get_validator_by_stash_and_index(
         authority_key_data.clone().into(),
         show_stats,
         show_summary,
+        false,
         cache,
     )
     .await?;
@@ -340,6 +383,7 @@ pub async fn get_validators(
                                             authority_key.clone(),
                                             params.show_stats,
                                             params.show_summary,
+                                            params.show_profile,
                                             cache.clone(),
                                         )
                                         .await?;
@@ -376,6 +420,7 @@ pub async fn get_validators(
                 requested_session_index,
                 params.show_stats,
                 params.show_summary,
+                params.show_profile,
                 cache,
             )
             .await
@@ -487,6 +532,7 @@ pub async fn get_peer_by_authority(
         authority_key,
         params.show_stats,
         params.show_summary,
+        params.show_profile,
         cache,
     )
     .await?;

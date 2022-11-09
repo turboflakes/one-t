@@ -25,7 +25,8 @@ use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
 use crate::records::EpochIndex;
 use crate::report::Network;
 use crate::runtimes::{
-    kusama, polkadot,
+    kusama,
+    // polkadot,
     support::{ChainPrefix, SupportedRuntime},
     westend,
 };
@@ -46,12 +47,15 @@ use std::{
     thread, time,
 };
 use subxt::{
-    sp_core::{crypto, sr25519, storage::StorageKey, Pair},
-    sp_runtime::AccountId32,
-    Client, ClientBuilder, DefaultConfig,
+    ext::{
+        sp_core::{crypto, sr25519, storage::StorageKey, Pair},
+        sp_runtime::AccountId32,
+    },
+    OnlineClient, PolkadotConfig,
 };
 
 const TVP_VALIDATORS_FILENAME: &str = ".tvp";
+pub const BLOCK_FILENAME: &str = ".block";
 pub const EPOCH_FILENAME: &str = ".epoch";
 
 type Message = Vec<String>;
@@ -81,21 +85,32 @@ impl MessageTrait for Message {
     }
 }
 
+pub type Param = String;
+
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 pub enum ReportType {
     Groups,
     Parachains,
-    Validator,
+    Validator(Option<Param>),
     Insights,
     NominationPools,
 }
 
 impl ReportType {
     pub fn name(&self) -> String {
-        match self {
+        match &self {
             Self::Groups => "Val. Groups Performance Report".to_string(),
             Self::Parachains => "Parachains Performance Report".to_string(),
-            Self::Validator => "Validator Performance Report".to_string(),
+            Self::Validator(param) => {
+                if param.is_none() {
+                    "Validator Performance Report".to_string()
+                } else {
+                    format!(
+                        "Validator Performance Report [{}]",
+                        param.clone().unwrap_or_default()
+                    )
+                }
+            }
             Self::Insights => "Validators Performance Insights Report".to_string(),
             Self::NominationPools => "Nomination Pools Report".to_string(),
         }
@@ -107,7 +122,7 @@ impl std::fmt::Display for ReportType {
         match self {
             Self::Groups => write!(f, "Groups"),
             Self::Parachains => write!(f, "Parachains"),
-            Self::Validator => write!(f, "Validator"),
+            Self::Validator(_param) => write!(f, "Validator"),
             Self::Insights => write!(f, "Insights"),
             Self::NominationPools => write!(f, "Pools"),
         }
@@ -116,38 +131,37 @@ impl std::fmt::Display for ReportType {
 
 pub async fn create_substrate_node_client(
     config: Config,
-) -> Result<Client<DefaultConfig>, subxt::BasicError> {
-    ClientBuilder::new()
-        .set_url(config.substrate_ws_url)
-        .build::<DefaultConfig>()
-        .await
+) -> Result<OnlineClient<PolkadotConfig>, subxt::Error> {
+    OnlineClient::<PolkadotConfig>::from_url(config.substrate_ws_url).await
 }
 
-pub async fn create_or_await_substrate_node_client(config: Config) -> Client<DefaultConfig> {
+pub async fn create_or_await_substrate_node_client(
+    config: Config,
+) -> (OnlineClient<PolkadotConfig>, SupportedRuntime) {
     loop {
         match create_substrate_node_client(config.clone()).await {
             Ok(client) => {
-                let chain = client
-                    .rpc()
-                    .system_chain()
-                    .await
-                    .unwrap_or_else(|_| "Chain undefined".to_string());
-                let name = client
-                    .rpc()
-                    .system_name()
-                    .await
-                    .unwrap_or_else(|_| "Node name undefined".to_string());
-                let version = client
-                    .rpc()
-                    .system_version()
-                    .await
-                    .unwrap_or_else(|_| "Node version undefined".to_string());
+                let chain = client.rpc().system_chain().await.unwrap_or_default();
+                let name = client.rpc().system_name().await.unwrap_or_default();
+                let version = client.rpc().system_version().await.unwrap_or_default();
+                let properties = client.rpc().system_properties().await.unwrap_or_default();
+
+                // Display SS58 addresses based on the connected chain
+                let chain_prefix: ChainPrefix =
+                    if let Some(ss58_format) = properties.get("ss58Format") {
+                        ss58_format.as_u64().unwrap_or_default().try_into().unwrap()
+                    } else {
+                        0
+                    };
+
+                crypto::set_default_ss58_version(crypto::Ss58AddressFormat::custom(chain_prefix));
 
                 info!(
                     "Connected to {} network using {} * Substrate node {} v{}",
                     chain, config.substrate_ws_url, name, version
                 );
-                break client;
+
+                break (client, SupportedRuntime::from(chain_prefix));
             }
             Err(e) => {
                 error!("{}", e);
@@ -160,36 +174,21 @@ pub async fn create_or_await_substrate_node_client(config: Config) -> Client<Def
 
 pub struct Onet {
     runtime: SupportedRuntime,
-    client: Client<DefaultConfig>,
+    client: OnlineClient<PolkadotConfig>,
     matrix: Matrix,
     pub cache: RedisPool,
 }
 
 impl Onet {
     pub async fn new() -> Onet {
-        let client = create_or_await_substrate_node_client(CONFIG.clone()).await;
-
-        let properties = client.properties();
-        // Display SS58 addresses based on the connected chain
-        let chain_prefix: ChainPrefix = if let Some(ss58_format) = properties.get("ss58Format") {
-            ss58_format.as_u64().unwrap_or_default().try_into().unwrap()
-        } else {
-            0
-        };
-        crypto::set_default_ss58_version(crypto::Ss58AddressFormat::custom(chain_prefix));
-
-        // Check for supported runtime
-        let runtime = SupportedRuntime::from(chain_prefix);
+        let (client, runtime) = create_or_await_substrate_node_client(CONFIG.clone()).await;
 
         // Initialize matrix client
         let mut matrix: Matrix = Matrix::new();
-        matrix
-            .authenticate(chain_prefix.into())
-            .await
-            .unwrap_or_else(|e| {
-                error!("{}", e);
-                Default::default()
-            });
+        matrix.authenticate(runtime).await.unwrap_or_else(|e| {
+            error!("{}", e);
+            Default::default()
+        });
 
         Onet {
             runtime,
@@ -199,7 +198,7 @@ impl Onet {
         }
     }
 
-    pub fn client(&self) -> &Client<DefaultConfig> {
+    pub fn client(&self) -> &OnlineClient<PolkadotConfig> {
         &self.client
     }
 
@@ -223,10 +222,10 @@ impl Onet {
         self.cache_network().await?;
 
         match self.runtime {
-            SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
+            // SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
-            // _ => unreachable!(),
+            _ => unreachable!(),
         }
     }
     // cache methods
@@ -386,10 +385,10 @@ pub fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {
     AccountId32::new(v)
 }
 
-pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID)>, OnetError> {
+pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID, Option<Param>)>, OnetError> {
     let config = CONFIG.clone();
     let subscribers_filename = format!("{}{}", config.data_path, MATRIX_SUBSCRIBERS_FILENAME);
-    let mut out: Vec<(AccountId32, UserID)> = Vec::new();
+    let mut out: Vec<(AccountId32, UserID, Option<Param>)> = Vec::new();
     let file = File::open(&subscribers_filename)?;
 
     // Read each subscriber (stash,user_id) and parse stash to AccountId
@@ -397,7 +396,11 @@ pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID)>, OnetError> {
         if let Ok(s) = line {
             let v: Vec<&str> = s.split(',').collect();
             let acc = AccountId32::from_str(&v[0])?;
-            out.push((acc, v[1].to_string()));
+            if let Some(param) = v.get(2) {
+                out.push((acc, v[1].to_string(), Some(param.to_string())));
+            } else {
+                out.push((acc, v[1].to_string(), None));
+            }
         }
     }
 
@@ -422,7 +425,7 @@ pub fn get_subscribers_by_epoch(
             "{}{}.{}",
             config.data_path,
             MATRIX_SUBSCRIBERS_FILENAME,
-            report_type.to_string().to_lowercase()
+            report_type.name().to_lowercase()
         )
     };
 
@@ -445,4 +448,22 @@ pub fn get_from_seed(seed: &str, pass: Option<&str>) -> sr25519::Pair {
     let clean_seed = re.replace_all(&seed.trim(), "");
     sr25519::Pair::from_string(&clean_seed, pass)
         .expect("constructed from known-good static value; qed")
+}
+
+pub fn get_latest_block_number_processed() -> Result<Option<u64>, OnetError> {
+    let config = CONFIG.clone();
+    let filename = format!("{}{}", config.data_path, BLOCK_FILENAME);
+    if let Ok(number) = fs::read_to_string(&filename) {
+        Ok(Some(number.parse().unwrap_or(config.initial_block_number)))
+    } else {
+        fs::write(&filename, config.initial_block_number.to_string())?;
+        Ok(Some(config.initial_block_number))
+    }
+}
+
+pub fn write_latest_block_number_processed(block_number: u64) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    let filename = format!("{}{}", config.data_path, BLOCK_FILENAME);
+    fs::write(&filename, block_number.to_string())?;
+    Ok(())
 }

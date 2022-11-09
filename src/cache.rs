@@ -30,7 +30,7 @@ use mobc_redis::RedisConnectionManager;
 use serde::Deserialize;
 use std::time::Duration;
 use std::{thread, time};
-use subxt::sp_runtime::AccountId32;
+use subxt::ext::sp_runtime::AccountId32;
 
 const CACHE_POOL_MAX_OPEN: u64 = 20;
 const CACHE_POOL_MAX_IDLE: u64 = 8;
@@ -43,9 +43,11 @@ pub type RedisConn = Connection<RedisConnectionManager>;
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum Index {
-    Num(u32),
+    Num(u64),
     Str(String),
     Current,
+    Best,
+    Finalized,
 }
 
 impl std::fmt::Display for Index {
@@ -54,6 +56,8 @@ impl std::fmt::Display for Index {
             Self::Num(index) => write!(f, "{}", index),
             Self::Str(name) => write!(f, "{}", name),
             Self::Current => write!(f, "current"),
+            Self::Best => write!(f, "best"),
+            Self::Finalized => write!(f, "finalized"),
         }
     }
 }
@@ -78,7 +82,11 @@ impl std::fmt::Display for Verbosity {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CacheKey {
     Network,
+    FinalizedBlock,
     BestBlock,
+    PushedBlockByClientId(usize),
+    BlockByIndexStats(Index),
+    BlocksBySession(Index),
     SessionByIndex(Index),
     SessionByIndexStats(Index),
     AuthorityRecord(EraIndex, EpochIndex, AuthorityIndex),
@@ -95,8 +103,12 @@ impl std::fmt::Display for CacheKey {
         match self {
             Self::Network => write!(f, "network"),
             Self::BestBlock => write!(f, "best"),
-            Self::SessionByIndex(index) => write!(f, "s:{}", index),
-            Self::SessionByIndexStats(index) => write!(f, "s:{}:s", index),
+            Self::FinalizedBlock => write!(f, "finalized"),
+            Self::PushedBlockByClientId(client_id) => write!(f, "pushed:{}", client_id),
+            Self::BlockByIndexStats(block_index) => write!(f, "b:{}:s", block_index),
+            Self::BlocksBySession(session_index) => write!(f, "bs:{}", session_index),
+            Self::SessionByIndex(session_index) => write!(f, "s:{}", session_index),
+            Self::SessionByIndexStats(session_index) => write!(f, "s:{}:s", session_index),
             Self::AuthorityRecord(era_index, session_index, authority_index) => write!(
                 f,
                 "e:{}:s:{}:a:{}",
