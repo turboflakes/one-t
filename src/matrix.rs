@@ -1258,9 +1258,13 @@ impl Matrix {
     pub async fn reply_help(&self, room_id: &str) -> Result<(), MatrixError> {
         let config = CONFIG.clone();
         let mut message = String::from("✨ Supported commands:<br>");
-        message.push_str("<b>!subscribe <i>STASH_ADDRESS</i></b> - Subscribe to the <i>Validator Performance Report</i> for the stash address specified. The report is only sent if the <i>para-validator</i> role was assigned to the validator in the previous session. The report is always sent via DM at the end of each session, unless the report is unsubscribed.<br>");
+        message.push_str("<b>!subscribe <i>STASH_ADDRESS</i></b> - Subscribe to the <i>Validator Performance Report</i> with Parachains breakdown stats for the stash address specified. The report is only sent if the <i>para-validator</i> role was assigned to the validator in the previous session. The report is always sent via DM at the end of each session, unless the report is unsubscribed.<br>");
         message.push_str(
             "<b>!unsubscribe <i>STASH_ADDRESS</i></b> - Unsubscribe the stash address from the <i>Validator Performance Report</i> subscribers list.<br>",
+        );
+        message.push_str("<b>!subscribe <i>STASH_ADDRESS</i> short</b> - Subscribe to the <i>Validator Performance Report [short]</i> for the stash address specified. The report is only sent if the <i>para-validator</i> role was assigned to the validator in the previous session. The report is always sent via DM at the end of each session, unless the report is unsubscribed.<br>");
+        message.push_str(
+            "<b>!unsubscribe <i>STASH_ADDRESS</i> short</b> - Unsubscribe the stash address from the <i>Validator Performance Report [short]</i> subscribers list.<br>",
         );
         message.push_str(&format!("<b>!subscribe groups</b> - Subscribe to the <i>Validator Groups Performance Report</i>. The report is sent via DM at the end of the next {} sessions.<br>", config.maximum_reports));
         message.push_str(&format!("<b>!subscribe parachains</b> - Subscribe to the <i>Parachains Performance Report</i>. The report is sent via DM at the end of the next {} sessions.<br>", config.maximum_reports));
