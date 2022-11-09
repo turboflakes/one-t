@@ -230,32 +230,35 @@ impl Onet {
     }
     // cache methods
     async fn cache_network(&self) -> Result<(), OnetError> {
-        let mut conn = self.cache.get().await.map_err(CacheError::RedisPoolError)?;
+        let config = CONFIG.clone();
+        if config.api_enabled {
+            let mut conn = self.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
-        let client = self.client();
+            let client = self.client();
 
-        let mut data: BTreeMap<String, String> = BTreeMap::new();
+            let mut data: BTreeMap<String, String> = BTreeMap::new();
 
-        let network = Network::load(client).await?;
-        // Get Network details
-        data.insert(String::from("name"), network.name);
-        data.insert(String::from("token_symbol"), network.token_symbol);
-        data.insert(
-            String::from("token_decimals"),
-            network.token_decimals.to_string(),
-        );
-        data.insert(String::from("ss58_format"), network.ss58_format.to_string());
+            let network = Network::load(client).await?;
+            // Get Network details
+            data.insert(String::from("name"), network.name);
+            data.insert(String::from("token_symbol"), network.token_symbol);
+            data.insert(
+                String::from("token_decimals"),
+                network.token_decimals.to_string(),
+            );
+            data.insert(String::from("ss58_format"), network.ss58_format.to_string());
 
-        // Cache genesis hash
-        let genesis_hash = client.rpc().genesis_hash().await?;
-        data.insert("genesis_hash".to_string(), format!("{:?}", genesis_hash));
+            // Cache genesis hash
+            let genesis_hash = client.rpc().genesis_hash().await?;
+            data.insert("genesis_hash".to_string(), format!("{:?}", genesis_hash));
 
-        let _: () = redis::cmd("HSET")
-            .arg(CacheKey::Network)
-            .arg(data)
-            .query_async(&mut conn as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?;
+            let _: () = redis::cmd("HSET")
+                .arg(CacheKey::Network)
+                .arg(data)
+                .query_async(&mut conn as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+        }
 
         Ok(())
     }
