@@ -1381,7 +1381,7 @@ mod tests {
         // Subscribe
         let account =
             AccountId32::from_str("DSov56qpKEc32ZjhCN1qTPmTYW3tM65wmsXVkrrtXV3ywpV").unwrap();
-        subscribers.subscribe(account, "@subscriber:matrix.org".to_string());
+        subscribers.subscribe(account, "@subscriber:matrix.org".to_string(), None);
         assert_eq!(subscribers.get(None).is_some(), true);
         assert_eq!(subscribers.get(Some(EpochKey(era, epoch))).is_some(), true);
         assert_eq!(subscribers.get(Some(EpochKey(era, 30))).is_none(), true);
@@ -1389,7 +1389,8 @@ mod tests {
             subscribers.get(Some(EpochKey(era, epoch))),
             Some(&vec![(
                 AccountId32::from_str("DSov56qpKEc32ZjhCN1qTPmTYW3tM65wmsXVkrrtXV3ywpV").unwrap(),
-                "@subscriber:matrix.org".to_string()
+                "@subscriber:matrix.org".to_string(),
+                None
             )])
         );
 
@@ -1417,17 +1418,12 @@ mod tests {
         // assert_eq!(records.end_block(), None);
 
         //
-        let ar = AuthorityRecord::with_index_address_points_and_blocks(
-            authority_idx,
-            account.clone(),
-            300,
-            2,
-        );
-        assert_eq!(ar.authority_index(), &authority_idx);
-        assert_eq!(ar.address(), &account);
+        let ar =
+            AuthorityRecord::with_index_address_and_points(authority_idx, account.clone(), 300);
+        assert_eq!(ar.authority_index(), Some(authority_idx));
+        assert_eq!(ar.address(), Some(&account));
         assert_eq!(ar.start_points(), 300);
-        assert_eq!(ar.end_points().is_none(), true);
-        assert_eq!(ar.authored_blocks(), 2);
+        assert_eq!(ar.end_points().is_none(), false);
 
         let pr = ParaRecord::with_index_group_and_peers(1, 2, vec![456, 789]);
         assert_eq!(pr.para_index(), &1);
@@ -1453,9 +1449,7 @@ mod tests {
         }
 
         // Increment authored blocks and current points
-        if let Some(ar) = records.get_mut_authority_record(authority_idx) {
-            ar.inc_authored_blocks();
-            assert_eq!(ar.authored_blocks(), 3);
+        if let Some(ar) = records.get_mut_authority_record(authority_idx, None) {
             let diff = ar.update_current_points(1900);
             assert_eq!(diff, 1600);
             assert_eq!(ar.start_points(), 300);
