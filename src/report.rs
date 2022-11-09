@@ -842,7 +842,7 @@ impl From<RawDataPara> for Report {
                                     "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}",
                                     "#", "❒", "↻", "✓", "✗", "p"
                                 );
-                                for (i, _) in data.peers.iter().enumerate() {
+                                for _ in data.peers.iter() {
                                     line.push_str(&format!("{:>4}{:>4}{:>5}", "✓", "✗", "p"));
                                 }
                                 clode_block.push_str(&format!("{line}\n"));

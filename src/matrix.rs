@@ -1023,11 +1023,6 @@ impl Matrix {
                                                 message.sender.to_string(),
                                                 None,
                                             )),
-                                            "groups" => commands.push(Commands::Subscribe(
-                                                ReportType::Groups,
-                                                message.sender.to_string(),
-                                                None,
-                                            )),
                                             "parachains" => commands.push(Commands::Subscribe(
                                                 ReportType::Parachains,
                                                 message.sender.to_string(),

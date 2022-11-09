@@ -23,17 +23,12 @@ use crate::config::CONFIG;
 use crate::matrix::UserID;
 use crate::onet::Param;
 use crate::report::Subset;
-use codec::Decode;
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap, collections::HashMap, collections::HashSet, convert::TryInto, hash::Hash,
 };
-use subxt::{
-    ext::sp_runtime::{traits::Header as HeaderT, AccountId32, Digest, DigestItem},
-    rpc::ChainBlock,
-    PolkadotConfig,
-};
+use subxt::ext::sp_runtime::AccountId32;
 
 pub trait Validity {
     fn is_empty(&self) -> bool;

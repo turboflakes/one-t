@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::api::responses::{CacheMap, SessionResult, SessionsResult, ValidatorResult};
+use crate::api::responses::CacheMap;
 use crate::api::{
     helpers::respond_json,
     responses::{BlockResult, BlocksResult},
@@ -28,10 +28,9 @@ use crate::cache::{get_conn, CacheKey, Index, RedisPool};
 use crate::errors::{ApiError, CacheError};
 use crate::records::{BlockNumber, EpochIndex};
 use actix_web::web::{Data, Json, Path, Query};
-use log::{info, warn};
+use log::warn;
 use redis::aio::Connection;
 use serde::Deserialize;
-use std::convert::TryInto;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 pub struct Params {
@@ -146,7 +145,7 @@ pub async fn get_finalized_block(
 
 /// Get best block
 pub async fn get_best_block(
-    params: Query<Params>,
+    _params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<BlockResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;

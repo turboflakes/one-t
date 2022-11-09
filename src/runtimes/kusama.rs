@@ -31,7 +31,7 @@ use crate::pools::{Nominee, Pool, PoolNomination, PoolNominees, PoolsEra};
 use crate::records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EpochKey, EraIndex, Identity, ParaId,
     ParaRecord, ParaStats, ParachainRecord, Points, Records, SessionStats, Subscribers,
-    ValidatorProfileRecord, Votes,
+    ValidatorProfileRecord,
 };
 use crate::report::{
     group_by_points, position, Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara,
@@ -40,7 +40,6 @@ use crate::report::{
 use redis::aio::Connection;
 
 use async_recursion::async_recursion;
-use futures::StreamExt;
 use log::{debug, error, info, warn};
 
 use codec::Decode;
@@ -71,18 +70,11 @@ mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        frame_system::{EventRecord, Phase},
-        // kusama_runtime::Event,
-        pallet_identity::types::Data,
-        polkadot_parachain::primitives::Id,
-        polkadot_primitives::v2::CoreIndex,
-        polkadot_primitives::v2::DisputeStatement,
-        polkadot_primitives::v2::GroupIndex,
-        polkadot_primitives::v2::ValidatorIndex,
-        polkadot_primitives::v2::ValidityAttestation,
-        sp_arithmetic::per_things::Perbill,
-        sp_consensus_babe::digests::PreDigest,
-        sp_core::bounded::bounded_vec::BoundedVec,
+        pallet_identity::types::Data, polkadot_parachain::primitives::Id,
+        polkadot_primitives::v2::CoreIndex, polkadot_primitives::v2::DisputeStatement,
+        polkadot_primitives::v2::GroupIndex, polkadot_primitives::v2::ValidatorIndex,
+        polkadot_primitives::v2::ValidityAttestation, sp_arithmetic::per_things::Perbill,
+        sp_consensus_babe::digests::PreDigest, sp_core::bounded::bounded_vec::BoundedVec,
     },
     session::events::NewSession,
     // Event,
@@ -142,7 +134,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
         };
 
         // Cache Nomination pools
-        try_run_cache_pools_era(era_index, false).await?;
+        // try_run_cache_pools_era(era_index, false).await?;
 
         // Fetch current session index
         let session_index_addr = node_runtime::storage().session().current_index();
@@ -307,7 +299,7 @@ pub async fn process_finalized_block(
 
     // TODO: include block_hash
     // Cache pools every minute
-    // try_run_cache_pools_data(&onet, block_number).await?;
+    try_run_cache_pools_data(&onet, block_number, is_loading).await?;
 
     // Cache records at every block
     cache_track_records(&onet, &records).await?;
@@ -1157,8 +1149,6 @@ pub async fn track_records(
                                 }
                             }
                         }
-
-                        let current_session = records.current_epoch();
 
                         // Record Initiated Disputes
                         for dispute_statement_set in backing_votes.disputes.iter() {
@@ -2036,9 +2026,13 @@ pub async fn fetch_pool_data(onet: &Onet, pool_id: u32) -> Result<Option<Pool>, 
     Ok(None)
 }
 
-pub async fn try_run_cache_pools_data(onet: &Onet, block_number: u32) -> Result<(), OnetError> {
+pub async fn try_run_cache_pools_data(
+    onet: &Onet,
+    block_number: BlockNumber,
+    is_loading: bool,
+) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.pools_enabled {
+    if config.pools_enabled && !is_loading {
         if (block_number as f64 % 10.0_f64) == 0.0_f64 {
             cache_pool_data(&onet, config.pool_id_1).await?;
             cache_pool_data(&onet, config.pool_id_2).await?;

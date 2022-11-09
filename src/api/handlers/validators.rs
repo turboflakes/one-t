@@ -218,7 +218,7 @@ async fn get_validator_by_authority_key(
     auth_key: AuthorityKey,
     show_stats: bool,
     show_summary: bool,
-    show_profile: bool,
+    _show_profile: bool,
     cache: Data<RedisPool>,
 ) -> Result<ValidatorResult, ApiError> {
     let mut conn = get_conn(&cache).await?;

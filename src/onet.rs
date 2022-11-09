@@ -28,7 +28,7 @@ use crate::runtimes::{
     kusama,
     // polkadot,
     support::{ChainPrefix, SupportedRuntime},
-    // westend,
+    westend,
 };
 use log::{debug, error, info, warn};
 use redis::aio::Connection;
@@ -224,7 +224,7 @@ impl Onet {
         match self.runtime {
             // SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
-            // SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
+            SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
             _ => unreachable!(),
         }
     }

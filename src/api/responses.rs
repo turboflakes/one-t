@@ -20,12 +20,12 @@
 // SOFTWARE.
 
 use crate::records::{
-    AuthoredBlocks, AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, ParaId,
-    ParaStats, ParachainRecord, Points, SessionStats, ValidatorProfileRecord, Validity,
+    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, ParaId, ParaStats,
+    ParachainRecord, SessionStats, ValidatorProfileRecord, Validity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::BTreeMap, convert::TryInto};
+use std::collections::BTreeMap;
 
 pub type AuthorityKeyCache = BTreeMap<String, String>;
 pub type CacheMap = BTreeMap<String, String>;

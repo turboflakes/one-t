@@ -21,11 +21,11 @@
 
 use crate::api::{
     helpers::respond_json,
-    responses::{CacheMap, SessionResult, SessionsResult, ValidatorResult},
+    responses::{CacheMap, SessionResult, SessionsResult},
 };
-use crate::cache::{get_conn, CacheKey, Index, RedisPool, Verbosity};
+use crate::cache::{get_conn, CacheKey, Index, RedisPool};
 use crate::errors::{ApiError, CacheError};
-use crate::records::{EpochIndex, SessionStats};
+use crate::records::EpochIndex;
 use actix_web::web::{Data, Json, Path, Query};
 use log::warn;
 use redis::aio::Connection;
