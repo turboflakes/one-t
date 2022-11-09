@@ -777,7 +777,7 @@ impl From<RawDataPara> for Report {
                         ));
                     }
                     // Print out peers names
-                    let peers_letters = vec!["A", "B", "C", "D"];
+                    let peers_letters = vec!["A", "B", "C", "D", "E", "F", "G", "H"];
                     for (i, peer) in data.peers.iter().enumerate() {
                         if let Some(mvr) = peer.2.missed_votes_ratio() {
                             clode_block.push_str(&format!(
@@ -812,51 +812,67 @@ impl From<RawDataPara> for Report {
                         }
                     }
 
-                    // Print out parachains breakdown
-                    clode_block.push_str("\nPARACHAINS BREAKDOWN\n");
-                    // Print title line based on the number of peers
-                    let header_chr = vec!["A", "B", "C", "D", "E", "F", "G", "H"];
-                    let mut line = String::from("            ┌──── * ────┐");
-                    for (i, _) in data.peers.iter().enumerate() {
-                        line.push_str(&format!("{:>13}", format!("┌──── {} ────┐", header_chr[i])));
-                    }
-                    clode_block.push_str(&format!("{line}\n"));
-
-                    // Print subtitle line based on the number of peers
-                    let mut line: String = format!(
-                        "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}",
-                        "#", "❒", "↻", "✓", "✗", "p"
-                    );
-                    for (i, _) in data.peers.iter().enumerate() {
-                        line.push_str(&format!("{:>4}{:>4}{:>5}", "✓", "✗", "p"));
-                    }
-                    clode_block.push_str(&format!("{line}\n"));
-
-                    // Print parachains data
-                    for para_id in data.parachains.iter() {
-                        // Print out votes per para id
-                        if let Some(stats) = para_record.get_para_id_stats(*para_id) {
-                            let mut line: String = format!(
-                                "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}",
-                                para_id,
-                                stats.authored_blocks(),
-                                stats.core_assignments(),
-                                stats.total_votes(),
-                                stats.missed_votes(),
-                                stats.para_points(),
-                            );
-                            for peer in data.peers.iter() {
-                                if let Some(peer_stats) = peer.2.get_para_id_stats(*para_id) {
+                    // NOTE: By default print the full report
+                    match data.report_type {
+                        ReportType::Validator(param) => match param {
+                            None => {
+                                // default print the full report
+                                // Print out parachains breakdown
+                                clode_block.push_str("\nPARACHAINS BREAKDOWN\n");
+                                // Print title line based on the number of peers
+                                let mut line = String::from("            ┌──── * ────┐");
+                                for (i, _) in data.peers.iter().enumerate() {
                                     line.push_str(&format!(
-                                        "{:>4}{:>4}{:>5}",
-                                        peer_stats.total_votes(),
-                                        peer_stats.missed_votes(),
-                                        peer_stats.para_points()
+                                        "{:>13}",
+                                        format!("┌──── {} ────┐", peers_letters[i])
                                     ));
                                 }
+                                clode_block.push_str(&format!("{line}\n"));
+
+                                // Print subtitle line based on the number of peers
+                                let mut line: String = format!(
+                                    "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}",
+                                    "#", "❒", "↻", "✓", "✗", "p"
+                                );
+                                for (i, _) in data.peers.iter().enumerate() {
+                                    line.push_str(&format!("{:>4}{:>4}{:>5}", "✓", "✗", "p"));
+                                }
+                                clode_block.push_str(&format!("{line}\n"));
+
+                                // Print parachains data
+                                for para_id in data.parachains.iter() {
+                                    // Print out votes per para id
+                                    if let Some(stats) = para_record.get_para_id_stats(*para_id) {
+                                        let mut line: String = format!(
+                                            "{:<6}{:^3}{:^3}{:>4}{:>4}{:>5}",
+                                            para_id,
+                                            stats.authored_blocks(),
+                                            stats.core_assignments(),
+                                            stats.total_votes(),
+                                            stats.missed_votes(),
+                                            stats.para_points(),
+                                        );
+                                        for peer in data.peers.iter() {
+                                            if let Some(peer_stats) =
+                                                peer.2.get_para_id_stats(*para_id)
+                                            {
+                                                line.push_str(&format!(
+                                                    "{:>4}{:>4}{:>5}",
+                                                    peer_stats.total_votes(),
+                                                    peer_stats.missed_votes(),
+                                                    peer_stats.para_points()
+                                                ));
+                                            }
+                                        }
+                                        clode_block.push_str(&format!("{line}\n"));
+                                    }
+                                }
                             }
-                            clode_block.push_str(&format!("{line}\n"));
-                        }
+                            Some(_) => {
+                                // Note: in the current version there is only one value possible 'short' -> do nothing here
+                            }
+                        },
+                        _ => unreachable!(),
                     }
                     clode_block.push_str("\n</code></pre>");
                     report.add_raw_text(clode_block);

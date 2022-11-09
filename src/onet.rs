@@ -85,21 +85,32 @@ impl MessageTrait for Message {
     }
 }
 
+pub type Param = String;
+
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 pub enum ReportType {
     Groups,
     Parachains,
-    Validator,
+    Validator(Option<Param>),
     Insights,
     NominationPools,
 }
 
 impl ReportType {
     pub fn name(&self) -> String {
-        match self {
+        match &self {
             Self::Groups => "Val. Groups Performance Report".to_string(),
             Self::Parachains => "Parachains Performance Report".to_string(),
-            Self::Validator => "Validator Performance Report".to_string(),
+            Self::Validator(param) => {
+                if param.is_none() {
+                    "Validator Performance Report".to_string()
+                } else {
+                    format!(
+                        "Validator Performance Report [{}]",
+                        param.clone().unwrap_or_default()
+                    )
+                }
+            }
             Self::Insights => "Validators Performance Insights Report".to_string(),
             Self::NominationPools => "Nomination Pools Report".to_string(),
         }
@@ -111,7 +122,7 @@ impl std::fmt::Display for ReportType {
         match self {
             Self::Groups => write!(f, "Groups"),
             Self::Parachains => write!(f, "Parachains"),
-            Self::Validator => write!(f, "Validator"),
+            Self::Validator(_param) => write!(f, "Validator"),
             Self::Insights => write!(f, "Insights"),
             Self::NominationPools => write!(f, "Pools"),
         }
@@ -374,10 +385,10 @@ pub fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {
     AccountId32::new(v)
 }
 
-pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID)>, OnetError> {
+pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID, Option<Param>)>, OnetError> {
     let config = CONFIG.clone();
     let subscribers_filename = format!("{}{}", config.data_path, MATRIX_SUBSCRIBERS_FILENAME);
-    let mut out: Vec<(AccountId32, UserID)> = Vec::new();
+    let mut out: Vec<(AccountId32, UserID, Option<Param>)> = Vec::new();
     let file = File::open(&subscribers_filename)?;
 
     // Read each subscriber (stash,user_id) and parse stash to AccountId
@@ -385,7 +396,11 @@ pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID)>, OnetError> {
         if let Ok(s) = line {
             let v: Vec<&str> = s.split(',').collect();
             let acc = AccountId32::from_str(&v[0])?;
-            out.push((acc, v[1].to_string()));
+            if let Some(param) = v.get(2) {
+                out.push((acc, v[1].to_string(), Some(param.to_string())));
+            } else {
+                out.push((acc, v[1].to_string(), None));
+            }
         }
     }
 
@@ -410,7 +425,7 @@ pub fn get_subscribers_by_epoch(
             "{}{}.{}",
             config.data_path,
             MATRIX_SUBSCRIBERS_FILENAME,
-            report_type.to_string().to_lowercase()
+            report_type.name().to_lowercase()
         )
     };
 

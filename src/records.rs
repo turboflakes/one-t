@@ -21,6 +21,7 @@
 #![allow(dead_code)]
 use crate::config::CONFIG;
 use crate::matrix::UserID;
+use crate::onet::Param;
 use crate::report::Subset;
 use codec::Decode;
 use log::info;
@@ -1211,7 +1212,7 @@ impl Validity for ParaStats {
 pub struct Subscribers {
     current_era: EraIndex,
     current_epoch: EpochIndex,
-    subscribers: HashMap<EpochKey, Vec<(AccountId32, UserID)>>,
+    subscribers: HashMap<EpochKey, Vec<(AccountId32, UserID, Option<Param>)>>,
 }
 
 impl Subscribers {
@@ -1236,13 +1237,15 @@ impl Subscribers {
         self.current_epoch
     }
 
-    pub fn subscribe(&mut self, account: AccountId32, user_id: UserID) {
+    pub fn subscribe(&mut self, account: AccountId32, user_id: UserID, param: Option<Param>) {
         let key = EpochKey(self.current_era, self.current_epoch);
         if let Some(s) = self.subscribers.get_mut(&key) {
-            s.push((account.clone(), user_id.to_string()));
+            s.push((account.clone(), user_id.to_string(), param.clone()));
         } else {
-            self.subscribers
-                .insert(key, vec![(account.clone(), user_id.to_string())]);
+            self.subscribers.insert(
+                key,
+                vec![(account.clone(), user_id.to_string(), param.clone())],
+            );
         }
         info!(
             "{} subscribed ({}) report for epoch {} era {}",
@@ -1253,7 +1256,7 @@ impl Subscribers {
         );
     }
 
-    pub fn get(&self, key: Option<EpochKey>) -> Option<&Vec<(AccountId32, UserID)>> {
+    pub fn get(&self, key: Option<EpochKey>) -> Option<&Vec<(AccountId32, UserID, Option<Param>)>> {
         if let Some(key) = key {
             self.subscribers.get(&key)
         } else {

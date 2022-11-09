@@ -547,12 +547,17 @@ impl Matrix {
                 Commands::Legends => self.reply_legends(&room_id).await?,
                 Commands::Subscribe(report, who, stash) => {
                     match report {
-                        ReportType::Validator => {
+                        ReportType::Validator(param) => {
                             if let Some(stash) = stash {
                                 // Verify stash
                                 if let Ok(_) = AccountId32::from_str(&stash) {
-                                    // Write stash,user in subscribers file if doesn't already exist
-                                    let subscriber = format!("{stash},{who}\n");
+                                    let subscriber = if let Some(param) = param {
+                                        // Write stash,user, param in subscribers file if doesn't already exist
+                                        format!("{stash},{who},{param}\n")
+                                    } else {
+                                        // Write stash,user in subscribers file if doesn't already exist
+                                        format!("{stash},{who}\n")
+                                    };
                                     if Path::new(&subscribers_filename).exists() {
                                         let subscribers =
                                             fs::read_to_string(&subscribers_filename)?;
@@ -711,10 +716,16 @@ impl Matrix {
                 }
                 Commands::Unsubscribe(report, who, stash) => {
                     match report {
-                        ReportType::Validator => {
+                        ReportType::Validator(param) => {
                             if let Some(stash) = stash {
                                 // Remove stash,user from subscribers file
-                                let subscriber = format!("{stash},{who}\n");
+                                let subscriber = if let Some(param) = param {
+                                    // Write stash,user, param in subscribers file if doesn't already exist
+                                    format!("{stash},{who},{param}\n")
+                                } else {
+                                    // Write stash,user in subscribers file if doesn't already exist
+                                    format!("{stash},{who}\n")
+                                };
                                 let path =
                                     format!("{}{}", config.data_path, MATRIX_SUBSCRIBERS_FILENAME);
                                 if Path::new(&path).exists() {
@@ -1012,6 +1023,11 @@ impl Matrix {
                                                 message.sender.to_string(),
                                                 None,
                                             )),
+                                            "groups" => commands.push(Commands::Subscribe(
+                                                ReportType::Groups,
+                                                message.sender.to_string(),
+                                                None,
+                                            )),
                                             "parachains" => commands.push(Commands::Subscribe(
                                                 ReportType::Parachains,
                                                 message.sender.to_string(),
@@ -1022,11 +1038,26 @@ impl Matrix {
                                                 message.sender.to_string(),
                                                 None,
                                             )),
-                                            stash => commands.push(Commands::Subscribe(
-                                                ReportType::Validator,
-                                                message.sender.to_string(),
-                                                Some(stash.to_string()),
-                                            )),
+                                            other => match other.split_once(' ') {
+                                                None => {
+                                                    // other = stash
+                                                    commands.push(Commands::Subscribe(
+                                                        ReportType::Validator(None),
+                                                        message.sender.to_string(),
+                                                        Some(other.to_string()),
+                                                    ))
+                                                }
+                                                Some((stash, param)) => match param {
+                                                    "short" => commands.push(Commands::Subscribe(
+                                                        ReportType::Validator(Some(
+                                                            param.to_string(),
+                                                        )),
+                                                        message.sender.to_string(),
+                                                        Some(stash.to_string()),
+                                                    )),
+                                                    _ => commands.push(Commands::NotSupported),
+                                                },
+                                            },
                                         },
                                         "!unsubscribe" => match value {
                                             "insights" => commands.push(Commands::Unsubscribe(
@@ -1034,11 +1065,28 @@ impl Matrix {
                                                 message.sender.to_string(),
                                                 None,
                                             )),
-                                            stash => commands.push(Commands::Unsubscribe(
-                                                ReportType::Validator,
-                                                message.sender.to_string(),
-                                                Some(stash.to_string()),
-                                            )),
+                                            other => match other.split_once(' ') {
+                                                None => {
+                                                    // other = stash
+                                                    commands.push(Commands::Unsubscribe(
+                                                        ReportType::Validator(None),
+                                                        message.sender.to_string(),
+                                                        Some(other.to_string()),
+                                                    ))
+                                                }
+                                                Some((stash, param)) => match param {
+                                                    "short" => {
+                                                        commands.push(Commands::Unsubscribe(
+                                                            ReportType::Validator(Some(
+                                                                param.to_string(),
+                                                            )),
+                                                            message.sender.to_string(),
+                                                            Some(stash.to_string()),
+                                                        ))
+                                                    }
+                                                    _ => commands.push(Commands::NotSupported),
+                                                },
+                                            },
                                         },
                                         _ => commands.push(Commands::NotSupported),
                                     },
