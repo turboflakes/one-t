@@ -428,7 +428,7 @@ pub fn get_subscribers_by_epoch(
             "{}{}.{}",
             config.data_path,
             MATRIX_SUBSCRIBERS_FILENAME,
-            report_type.name().to_lowercase()
+            report_type.to_string().to_lowercase()
         )
     };
 
