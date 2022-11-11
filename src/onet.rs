@@ -26,7 +26,7 @@ use crate::records::EpochIndex;
 use crate::report::Network;
 use crate::runtimes::{
     kusama,
-    // polkadot,
+    polkadot,
     support::{ChainPrefix, SupportedRuntime},
     westend,
 };
@@ -222,10 +222,10 @@ impl Onet {
         self.cache_network().await?;
 
         match self.runtime {
-            // SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
+            SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
-            _ => unreachable!(),
+            // _ => unreachable!(),
         }
     }
     // cache methods
