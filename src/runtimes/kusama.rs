@@ -721,157 +721,171 @@ pub async fn initialize_records(
     let era_reward_points_addr = node_runtime::storage()
         .staking()
         .eras_reward_points(&records.current_era());
-    if let Some(era_reward_points) = api
+    let era_reward_points = api
         .storage()
         .fetch(&era_reward_points_addr, block_hash)
-        .await?
-    {
-        // Fetch active validators
-        let authorities_addr = node_runtime::storage().session().validators();
-        if let Some(authorities) = api.storage().fetch(&authorities_addr, block_hash).await? {
-            // Fetch para validator groups
-            let validator_groups_addr = node_runtime::storage().para_scheduler().validator_groups();
-            if let Some(validator_groups) = api
+        .await?;
+
+    if era_reward_points.is_none() {
+        warn!(
+            "At block hash: {:?} - None reward points were found for era {}.",
+            block_hash,
+            &records.current_era()
+        );
+    }
+
+    // Fetch active validators
+    let authorities_addr = node_runtime::storage().session().validators();
+    if let Some(authorities) = api.storage().fetch(&authorities_addr, block_hash).await? {
+        // Fetch para validator groups
+        let validator_groups_addr = node_runtime::storage().para_scheduler().validator_groups();
+        if let Some(validator_groups) = api
+            .storage()
+            .fetch(&validator_groups_addr, block_hash)
+            .await?
+        {
+            // Fetch para validator indices
+            let active_validator_indices_addr = node_runtime::storage()
+                .paras_shared()
+                .active_validator_indices();
+            if let Some(active_validator_indices) = api
                 .storage()
-                .fetch(&validator_groups_addr, block_hash)
+                .fetch(&active_validator_indices_addr, block_hash)
                 .await?
             {
-                // Fetch para validator indices
-                let active_validator_indices_addr = node_runtime::storage()
-                    .paras_shared()
-                    .active_validator_indices();
-                if let Some(active_validator_indices) = api
-                    .storage()
-                    .fetch(&active_validator_indices_addr, block_hash)
-                    .await?
-                {
-                    // Update records groups with respective authorities
-                    for (group_idx, group) in validator_groups.iter().enumerate() {
-                        let auths: Vec<AuthorityIndex> = group
-                            .iter()
-                            .map(|ValidatorIndex(i)| {
-                                let ValidatorIndex(auth_idx) =
-                                    active_validator_indices.get(*i as usize).unwrap();
-                                *auth_idx
-                            })
-                            .collect();
+                // Update records groups with respective authorities
+                for (group_idx, group) in validator_groups.iter().enumerate() {
+                    let auths: Vec<AuthorityIndex> = group
+                        .iter()
+                        .map(|ValidatorIndex(i)| {
+                            let ValidatorIndex(auth_idx) =
+                                active_validator_indices.get(*i as usize).unwrap();
+                            *auth_idx
+                        })
+                        .collect();
 
-                        records.insert_group(group_idx.try_into().unwrap(), auths);
-                    }
+                    records.insert_group(group_idx.try_into().unwrap(), auths);
+                }
 
-                    // Find groupIdx and peers for each authority
-                    for (auth_idx, stash) in authorities.iter().enumerate() {
-                        let auth_idx: AuthorityIndex = auth_idx.try_into().unwrap();
+                // Find groupIdx and peers for each authority
+                for (auth_idx, stash) in authorities.iter().enumerate() {
+                    let auth_idx: AuthorityIndex = auth_idx.try_into().unwrap();
 
-                        // Verify if is a para validator
-                        if let Some(auth_para_idx) = active_validator_indices
-                            .iter()
-                            .position(|i| *i == ValidatorIndex(auth_idx))
-                        {
-                            for (group_idx, group) in validator_groups.iter().enumerate() {
-                                // group = [ValidatorIndex(115), ValidatorIndex(116), ValidatorIndex(117), ValidatorIndex(118), ValidatorIndex(119)]
-                                if group
-                                    .contains(&ValidatorIndex(auth_para_idx.try_into().unwrap()))
-                                {
-                                    // Identify peers and collect respective points
+                    // Verify if is a para validator
+                    if let Some(auth_para_idx) = active_validator_indices
+                        .iter()
+                        .position(|i| *i == ValidatorIndex(auth_idx))
+                    {
+                        for (group_idx, group) in validator_groups.iter().enumerate() {
+                            // group = [ValidatorIndex(115), ValidatorIndex(116), ValidatorIndex(117), ValidatorIndex(118), ValidatorIndex(119)]
+                            if group.contains(&ValidatorIndex(auth_para_idx.try_into().unwrap())) {
+                                // Identify peers and collect respective points
 
-                                    for ValidatorIndex(para_idx) in group {
-                                        if let Some(ValidatorIndex(auth_idx)) =
-                                            active_validator_indices.get(*para_idx as usize)
-                                        {
-                                            if let Some(address) =
-                                                authorities.get(*auth_idx as usize)
-                                            {
-                                                // Collect peer points
-                                                let points = if let Some((_s, points)) =
-                                                    era_reward_points
-                                                        .individual
-                                                        .iter()
-                                                        .find(|(s, _p)| s == address)
+                                for ValidatorIndex(para_idx) in group {
+                                    if let Some(ValidatorIndex(auth_idx)) =
+                                        active_validator_indices.get(*para_idx as usize)
+                                    {
+                                        if let Some(address) = authorities.get(*auth_idx as usize) {
+                                            // Collect peer points
+                                            let points = if let Some(ref erp) = era_reward_points {
+                                                if let Some((_s, points)) = erp
+                                                    .individual
+                                                    .iter()
+                                                    .find(|(s, _p)| s == address)
                                                 {
                                                     *points
                                                 } else {
                                                     0
-                                                };
+                                                }
+                                            } else {
+                                                0
+                                            };
 
-                                                // Define AuthorityRecord
-                                                let authority_record =
-                                                    AuthorityRecord::with_index_address_and_points(
-                                                        *auth_idx,
-                                                        address.clone(),
-                                                        points,
-                                                    );
-
-                                                // Find authority indexes for peers
-                                                let peers: Vec<AuthorityIndex> = group
-                                                    .into_iter()
-                                                    .filter(|ValidatorIndex(i)| i != para_idx)
-                                                    .map(|ValidatorIndex(i)| {
-                                                        let ValidatorIndex(peer_auth_idx) =
-                                                            active_validator_indices
-                                                                .get(*i as usize)
-                                                                .unwrap();
-                                                        *peer_auth_idx
-                                                    })
-                                                    .collect();
-
-                                                // Define ParaRecord
-                                                let para_record =
-                                                    ParaRecord::with_index_group_and_peers(
-                                                        *para_idx,
-                                                        group_idx.try_into().unwrap(),
-                                                        peers,
-                                                    );
-
-                                                // Insert a record for each validator in group
-                                                records.insert(
-                                                    address,
+                                            // Define AuthorityRecord
+                                            let authority_record =
+                                                AuthorityRecord::with_index_address_and_points(
                                                     *auth_idx,
-                                                    authority_record,
-                                                    Some(para_record),
+                                                    address.clone(),
+                                                    points,
                                                 );
-                                            }
+
+                                            // Find authority indexes for peers
+                                            let peers: Vec<AuthorityIndex> = group
+                                                .into_iter()
+                                                .filter(|ValidatorIndex(i)| i != para_idx)
+                                                .map(|ValidatorIndex(i)| {
+                                                    let ValidatorIndex(peer_auth_idx) =
+                                                        active_validator_indices
+                                                            .get(*i as usize)
+                                                            .unwrap();
+                                                    *peer_auth_idx
+                                                })
+                                                .collect();
+
+                                            // Define ParaRecord
+                                            let para_record =
+                                                ParaRecord::with_index_group_and_peers(
+                                                    *para_idx,
+                                                    group_idx.try_into().unwrap(),
+                                                    peers,
+                                                );
+
+                                            // Insert a record for each validator in group
+                                            records.insert(
+                                                address,
+                                                *auth_idx,
+                                                authority_record,
+                                                Some(para_record),
+                                            );
                                         }
                                     }
                                 }
                             }
-                        } else {
-                            // Fetch current points
-                            let points = if let Some((_s, points)) = era_reward_points
-                                .individual
-                                .iter()
-                                .find(|(s, _p)| s == stash)
+                        }
+                    } else {
+                        // Fetch current points
+                        let points = if let Some(ref erp) = era_reward_points {
+                            if let Some((_s, points)) =
+                                erp.individual.iter().find(|(s, _p)| s == stash)
                             {
                                 *points
                             } else {
                                 0
-                            };
+                            }
+                        } else {
+                            0
+                        };
 
-                            let authority_record = AuthorityRecord::with_index_address_and_points(
-                                auth_idx,
-                                stash.clone(),
-                                points,
-                            );
+                        let authority_record = AuthorityRecord::with_index_address_and_points(
+                            auth_idx,
+                            stash.clone(),
+                            points,
+                        );
 
-                            records.insert(stash, auth_idx, authority_record, None);
-                        }
+                        records.insert(stash, auth_idx, authority_record, None);
                     }
-                    // debug!("records {:?}", records);
-                } else {
-                    warn!(
-                        "None authorities defined at era {}.",
-                        &records.current_era()
-                    );
                 }
+                // debug!("records {:?}", records);
             } else {
-                warn!("None validator groups defined.");
+                warn!(
+                    "At block hash: {:?} - None authorities defined for era {}.",
+                    block_hash,
+                    &records.current_era()
+                );
             }
         } else {
-            warn!("None active validator indices defined.");
+            warn!(
+                "At block hash: {:?} - None validator groups defined.",
+                block_hash
+            );
         }
     } else {
-        warn!("None reward points at era {}.", &records.current_era());
+        warn!(
+            "At block hash: {:?} - None active validator indices defined.",
+            block_hash
+        );
     }
+
     Ok(())
 }
 
