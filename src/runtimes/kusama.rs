@@ -2356,13 +2356,15 @@ async fn try_run_nomination_pools(
     let call = define_first_pool_call(&mut tvp_validators.clone(), None)?;
     calls.push(call);
 
-    // Pool 2 should include top TVP validators with the lowest commission in the last X sessions
-    // Note: maximum validators are 12 in Kusama / 8 Polkadot
-    let call = define_second_pool_call(
-        &mut tvp_validators.clone(),
-        Some(config.pools_maximum_nominations / 2),
-    )?;
-    calls.push(call);
+    if config.pools_second_pool_enabled {
+        // Pool 2 should include top TVP validators with the lowest commission in the last X sessions
+        // Note: maximum validators are 12 in Kusama / 8 Polkadot
+        let call = define_second_pool_call(
+            &mut tvp_validators.clone(),
+            Some(config.pools_maximum_nominations / 2),
+        )?;
+        calls.push(call);
+    }
 
     if calls.len() > 0 {
         // Submit batch call with nominations

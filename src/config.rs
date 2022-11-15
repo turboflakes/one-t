@@ -223,6 +223,8 @@ pub struct Config {
     #[serde(default)]
     pub pools_enabled: bool,
     #[serde(default)]
+    pub pools_second_pool_enabled: bool,
+    #[serde(default)]
     pub pool_id_1: u32,
     #[serde(default)]
     pub pool_id_2: u32,
