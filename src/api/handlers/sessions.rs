@@ -74,15 +74,15 @@ pub async fn get_sessions(
             }
 
             if params.show_stats {
-                let serialized_data: String = redis::cmd("GET")
+                if let Ok(serialized_data) = redis::cmd("GET")
                     .arg(CacheKey::SessionByIndexStats(Index::Num(
                         session_index.into(),
                     )))
-                    .query_async(&mut conn as &mut Connection)
+                    .query_async::<Connection, String>(&mut conn)
                     .await
-                    .map_err(CacheError::RedisCMDError)?;
-
-                session_data.insert(String::from("stats"), serialized_data);
+                {
+                    session_data.insert(String::from("stats"), serialized_data);
+                }
             }
 
             data.push(session_data.into());
