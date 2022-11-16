@@ -2386,14 +2386,17 @@ async fn try_run_nomination_pools(
                 config.chain_name.to_lowercase(),
                 tx_events.extrinsic_hash()
             );
-            let message = format!(
-                "🗳️ Nomination for <i>Pool Id {}</i> and <i>Pool Id {}</i> finalized at block #{} (<a href=\"{}\">{}</a>)",
-                config.pool_id_1,
-                config.pool_id_2,
+            let mut message: String =
+                format!("🗳️ Nomination for <i>Pool Id {}</i> ", config.pool_id_1,);
+            if config.pools_second_pool_enabled {
+                message.push_str(&format!("and <i>Pool Id {}</i> ", config.pool_id_2,));
+            }
+            message.push_str(&format!(
+                "finalized at block #{} (<a href=\"{}\">{}</a>)",
                 block_number,
                 explorer_url,
                 tx_events.extrinsic_hash().to_string()
-            );
+            ));
             // Cache pool nomination
             let unix_now = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
