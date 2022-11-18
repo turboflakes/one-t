@@ -2397,14 +2397,6 @@ async fn try_run_nomination_pools(
                 explorer_url,
                 tx_events.extrinsic_hash().to_string()
             ));
-            let message = format!(
-                "🗳️ Nomination for <i>Pool Id {}</i> and <i>Pool Id {}</i> finalized at block #{} (<a href=\"{}\">{}</a>)",
-                config.pool_id_1,
-                config.pool_id_2,
-                block_number,
-                explorer_url,
-                tx_events.extrinsic_hash().to_string()
-            );
             // Cache pool nomination
             let unix_now = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
