@@ -905,13 +905,19 @@ impl AuthorityRecord {
                 0
             }
         }
-        let diff_points = if let Some(end_points) = self.end_points {
-            diff(current_points, end_points)
+        if let Some(end_points) = self.end_points {
+            // Note: only update end_points if current_points > end_points
+            if current_points > end_points {
+                self.end_points = Some(current_points);
+            }
+            // calculate diff and return
+            return diff(current_points, end_points);
         } else {
-            diff(current_points, self.start_points)
+            // update end_points if None with current_points value
+            self.end_points = Some(current_points);
+            // calculate diff and return
+            return diff(current_points, self.start_points);
         };
-        self.end_points = Some(current_points);
-        diff_points
     }
 }
 
