@@ -37,10 +37,10 @@ use crate::report::{
     group_by_points, position, Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara,
     RawDataParachains, RawDataPools, RawDataRank, Report, Subset, Validator, Validators,
 };
-use redis::aio::Connection;
-
 use async_recursion::async_recursion;
+use futures::StreamExt;
 use log::{debug, error, info, warn};
+use redis::aio::Connection;
 
 use codec::Decode;
 use std::{
@@ -55,7 +55,7 @@ use std::{
 use subxt::{
     ext::{
         sp_core::{sr25519, H256},
-        sp_runtime::{generic::Header, traits::BlakeTwo256, AccountId32, Digest, DigestItem},
+        sp_runtime::{AccountId32, Digest, DigestItem},
     },
     rpc::Subscription,
     tx::PairSigner,
@@ -178,12 +178,11 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
         // NOTE: the reason why we subscribe head and not finalized_head,
         // is just because head is in sync more frequently.
         // finalized_head can always be queried so as soon as it changes we process th repective block_hash
-        let mut blocks: Subscription<Header<u32, BlakeTwo256>> =
-            api.rpc().subscribe_blocks().await?;
-        while let Some(Ok(best_block)) = blocks.next().await {
-            debug!("block head {:?} received", best_block.number);
+        let mut blocks_sub = api.blocks().subscribe_best().await?;
+        while let Some(Ok(best_block)) = blocks_sub.next().await {
+            debug!("block head {:?} received", best_block.number());
             // update records best_block number
-            process_best_block(&onet, &mut records, best_block.number.into()).await?;
+            process_best_block(&onet, &mut records, best_block.number().into()).await?;
 
             // fetch latest finalized block
             let finalized_block_hash = api.rpc().finalized_head().await?;

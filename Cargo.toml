@@ -35,7 +35,7 @@ mobc = { version = "0.7", default-features = false, features = ["async-std"] }
 mobc-redis = { version = "0.7", default-features = false, features = ["async-std-comp"] }
 
 # subxt dependencies
-subxt = "0.24.0"
+subxt = "0.25.0"
 
 async-std = { version = "1.11.0", features = ["attributes", "tokio1"] }
 env_logger = "0.9.0"
