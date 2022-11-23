@@ -180,14 +180,14 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
         // finalized_head can always be queried so as soon as it changes we process th repective block_hash
         let mut blocks_sub = api.blocks().subscribe_best().await?;
         while let Some(Ok(best_block)) = blocks_sub.next().await {
-            info!("block head {:?} received", best_block.number());
+            debug!("block head {:?} received", best_block.number());
             // update records best_block number
             process_best_block(&onet, &mut records, best_block.number().into()).await?;
 
             // fetch latest finalized block
             let finalized_block_hash = api.rpc().finalized_head().await?;
             if let Some(block) = api.rpc().header(Some(finalized_block_hash)).await? {
-                info!("finalized block head {:?} in storage", block.number);
+                debug!("finalized block head {:?} in storage", block.number);
                 // process older blocks that have not been processed first
                 while let Some(processed_block_number) = latest_block_number_processed {
                     if block.number as u64 == processed_block_number {
