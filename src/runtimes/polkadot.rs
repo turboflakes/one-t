@@ -81,7 +81,7 @@ use node_runtime::{
     system::events::ExtrinsicFailed,
 };
 
-type Call = node_runtime::runtime_types::kusama_runtime::RuntimeCall;
+type Call = node_runtime::runtime_types::polkadot_runtime::RuntimeCall;
 type NominationPoolsCall = node_runtime::runtime_types::pallet_nomination_pools::pallet::Call;
 
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
