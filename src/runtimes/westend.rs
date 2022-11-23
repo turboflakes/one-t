@@ -173,8 +173,6 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
         // Start indexing from the start_block_number
         let mut latest_block_number_processed: Option<u64> = Some(start_block_number.into());
         let mut is_loading = true;
-        // fetch metadata first so we guarantee that all events will corrected decoded from latest_block processed
-        let mut metadata = api.rpc().metadata(latest_block_hash).await?;
 
         // Subscribe head
         // NOTE: the reason why we subscribe head and not finalized_head,
@@ -195,7 +193,6 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                     if block.number as u64 == processed_block_number {
                         latest_block_number_processed = None;
                         is_loading = false;
-                        metadata = api.rpc().metadata(Some(block.hash())).await?;
                     } else {
                         // process the next block
                         let block_number = processed_block_number + 1;
@@ -206,7 +203,6 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                                 &onet,
                                 &mut subscribers,
                                 &mut records,
-                                metadata.clone(),
                                 block_number,
                                 Some(block.hash()),
                                 is_loading,
@@ -220,7 +216,6 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                                 &onet,
                                 &mut subscribers,
                                 &mut records,
-                                metadata.clone(),
                                 block_number,
                                 block_hash,
                                 is_loading,
@@ -266,7 +261,6 @@ pub async fn process_finalized_block(
     onet: &Onet,
     subscribers: &mut Subscribers,
     records: &mut Records,
-    metadata: subxt::Metadata,
     block_number: BlockNumber,
     block_hash: Option<H256>,
     is_loading: bool,
@@ -274,26 +268,29 @@ pub async fn process_finalized_block(
     let start = Instant::now();
     let api = onet.client().clone();
 
-    let events = Events::new_from_client(metadata, block_hash.unwrap(), api.clone()).await?;
-    if let Some(new_session_event) = events.find_first::<NewSession>()? {
-        info!("{:?}", new_session_event);
+    let metadata = api.rpc().metadata(block_hash).await?;
+    if let Some(block_hash) = block_hash {
+        let events = Events::new_from_client(metadata, block_hash, api.clone()).await?;
+        if let Some(new_session_event) = events.find_first::<NewSession>()? {
+            info!("{:?}", new_session_event);
 
-        switch_new_session(
-            &onet,
-            block_number,
-            new_session_event.session_index,
-            subscribers,
-            records,
-            block_hash,
-            is_loading,
-        )
-        .await?;
+            switch_new_session(
+                &onet,
+                block_number,
+                new_session_event.session_index,
+                subscribers,
+                records,
+                Some(block_hash),
+                is_loading,
+            )
+            .await?;
 
-        // Network public report
-        try_run_network_report(new_session_event.session_index, &records, is_loading).await?;
+            // Network public report
+            try_run_network_report(new_session_event.session_index, &records, is_loading).await?;
 
-        // Cache records every new session
-        try_run_cache_session_records(&records, block_hash).await?;
+            // Cache records every new session
+            try_run_cache_session_records(&records, Some(block_hash)).await?;
+        }
     }
 
     // Update records
