@@ -266,9 +266,24 @@ pub async fn process_finalized_block(
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
+    let config = CONFIG.clone();
     let api = onet.client().clone();
 
-    let metadata = api.rpc().metadata(block_hash).await?;
+    let exceptional_blocks: Vec<String> =
+        config.blocks_where_metadata_is_fetched_from_previous_block;
+
+    // NOTE: this exceptional cases handle the cases where the events of a certain block is
+    // only able to be decoded if metadata presented is from previous block
+    // an example is the block_number 15426015 in Kusama
+    let block_hash_metadata = if exceptional_blocks.contains(&block_number.to_string()) {
+        api.rpc()
+            .block_hash(Some((block_number - 1).into()))
+            .await?
+    } else {
+        block_hash
+    };
+
+    let metadata = api.rpc().metadata(block_hash_metadata).await?;
     if let Some(block_hash) = block_hash {
         let events = Events::new_from_client(metadata, block_hash, api.clone()).await?;
         if let Some(new_session_event) = events.find_first::<NewSession>()? {

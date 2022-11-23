@@ -214,6 +214,8 @@ pub struct Config {
     pub is_debug: bool,
     #[serde(default)]
     pub initial_block_number: u64,
+    #[serde(default)]
+    pub blocks_where_metadata_is_fetched_from_previous_block: Vec<String>,
     // ranking
     #[serde(default = "default_maximum_top_ranking")]
     pub maximum_top_ranking: u32,
