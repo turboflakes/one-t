@@ -40,7 +40,7 @@ pub async fn get_pool(id: Path<u32>) -> Result<Json<PoolResponse>, ApiError> {
 
     let filename = format!(
         "{}{}_{}_{}",
-        config.data_path,
+        config.data_path_read_only,
         POOL_FILENAME,
         *id,
         config.chain_name.to_lowercase()
@@ -73,7 +73,7 @@ pub async fn get_pool_nominees(id: Path<u32>) -> Result<Json<PoolNomineesRespons
 
     let filename = format!(
         "{}{}_{}_nominees_{}",
-        config.data_path,
+        config.data_path_read_only,
         POOL_FILENAME,
         *id,
         config.chain_name.to_lowercase()
@@ -99,7 +99,7 @@ pub async fn get_pools_stats() -> Result<Json<PoolsEraResponse>, ApiError> {
 
     let filename = format!(
         "{}{}s_era_{}",
-        config.data_path,
+        config.data_path_read_only,
         POOL_FILENAME,
         config.chain_name.to_lowercase()
     );
@@ -131,7 +131,7 @@ pub async fn get_pool_nomination(id: Path<u32>) -> Result<Json<PoolNominationRes
 
     let filename = format!(
         "{}{}_{}_nomination_{}",
-        config.data_path,
+        config.data_path_read_only,
         POOL_FILENAME,
         *id,
         config.chain_name.to_lowercase()

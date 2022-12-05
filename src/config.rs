@@ -74,6 +74,11 @@ fn default_data_path() -> String {
     "./".into()
 }
 
+/// provides default value for data_path if ONET_DATA_PATH_READ_ONLY env var is not set
+fn default_data_path_read_only() -> String {
+    default_data_path()
+}
+
 /// provides default value for maximum_subscribers if ONET_MAXIMUM_SUBSCRIBERS env var is not set
 fn default_maximum_subscribers() -> u32 {
     1000
@@ -194,6 +199,8 @@ pub struct Config {
     pub substrate_ws_url: String,
     #[serde(default = "default_data_path")]
     pub data_path: String,
+    #[serde(default = "default_data_path_read_only")]
+    pub data_path_read_only: String,
     #[serde(default = "default_maximum_subscribers")]
     pub maximum_subscribers: u32,
     #[serde(default = "default_minimum_initial_eras")]
