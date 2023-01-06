@@ -1589,7 +1589,9 @@ pub async fn try_run_network_report(
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if !config.matrix_disabled && !is_loading {
-        if (epoch_index as f64 % config.matrix_network_report_epoch_rate as f64) == 0.0_f64 {
+        if (epoch_index as f64 % config.matrix_network_report_epoch_rate as f64)
+            == config.epoch_rate_threshold as f64
+        {
             if records.total_full_epochs() > 0 {
                 let records_cloned = records.clone();
                 async_std::task::spawn(async move {
@@ -1872,8 +1874,9 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
         // Trigger nomination at the rate defined in config
         if config.pools_enabled {
-            let r = current_session_index as f64 % config.pools_nominate_rate as f64;
-            if r == 0.0_f64 {
+            if (current_session_index as f64 % config.pools_nominate_rate as f64)
+                == config.epoch_rate_threshold as f64
+            {
                 if records.total_full_epochs() >= config.pools_minimum_sessions {
                     match try_run_nomination_pools(&onet, &records, validators).await {
                         Ok(message) => {

@@ -110,6 +110,11 @@ fn default_matrix_network_report_epoch_rate() -> u32 {
     6
 }
 
+/// provides default value for callout_epoch_rate if ONET_EPOCH_RATE_THRESHOLD env var is not set
+fn default_epoch_rate_threshold() -> u32 {
+    0
+}
+
 /// provides default value for mvr_level_1 if ONET_MVR_LEVEL_1 env var is not set
 /// example: 20% = 2000
 fn default_mvr_level_1() -> u32 {
@@ -223,6 +228,8 @@ pub struct Config {
     pub initial_block_number: u64,
     #[serde(default)]
     pub blocks_where_metadata_is_fetched_from_previous_block: Vec<String>,
+    #[serde(default = "default_epoch_rate_threshold")]
+    pub epoch_rate_threshold: u32,
     // ranking
     #[serde(default = "default_maximum_top_ranking")]
     pub maximum_top_ranking: u32,
