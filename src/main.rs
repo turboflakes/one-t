@@ -71,9 +71,12 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         let cors = Cors::default()
             .allowed_origin_fn(|origin, _req_head| {
-                let allowed_origin =
+                let allowed_origins =
                     env::var("ONET_API_CORS_ALLOW_ORIGIN").unwrap_or("*".to_string());
-                origin.as_bytes().ends_with(allowed_origin.as_bytes())
+                let allowed_origins = allowed_origins.split(",").collect::<Vec<_>>();
+                allowed_origins
+                    .iter()
+                    .any(|e| e.as_bytes() == origin.as_bytes())
             })
             .allowed_methods(vec!["GET", "OPTIONS"])
             .allowed_headers(vec![http::header::CONTENT_TYPE])
