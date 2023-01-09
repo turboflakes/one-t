@@ -37,6 +37,48 @@ pub struct AuthorityKey {
     pub authority_index: AuthorityIndex,
 }
 
+impl From<String> for AuthorityKey {
+    fn from(data: String) -> Self {
+        // example authority_key = e:{era}:s:{session}:a:{authority}
+        // let key = String::from("e:1:s:123:a:555");
+        let era_index: u32 = if let Some(a) = data.strip_prefix("e:") {
+            if let Some(i) = a.find(":s") {
+                let s = &a[..i];
+                s.parse().unwrap_or_default()
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        let prefix = format!("e:{era_index}:s:");
+        let epoch_index: u32 = if let Some(a) = data.strip_prefix(&prefix) {
+            if let Some(i) = a.find(":a") {
+                let s = &a[..i];
+                s.parse().unwrap_or_default()
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        let prefix = format!("e:{era_index}:s:{epoch_index}:a:");
+        let authority_index: u32 = if let Some(a) = data.strip_prefix(&prefix) {
+            a.parse().unwrap_or_default()
+        } else {
+            0
+        };
+
+        AuthorityKey {
+            era_index,
+            epoch_index,
+            authority_index,
+        }
+    }
+}
+
 impl From<AuthorityKeyCache> for AuthorityKey {
     fn from(data: AuthorityKeyCache) -> Self {
         let zero = "0".to_string();
@@ -186,6 +228,7 @@ impl From<Vec<SessionResult>> for SessionsResult {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ValidatorResult {
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub address: String,
     #[serde(skip_serializing_if = "ValidatorProfileResult::is_empty")]
     pub profile: ValidatorProfileResult,
@@ -302,4 +345,16 @@ impl From<String> for ValidatorProfileResult {
     fn from(serialized_data: String) -> Self {
         serde_json::from_str(&serialized_data).unwrap_or_default()
     }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ValidatorGradeResult {
+    pub address: String,
+    pub grade: String,
+    pub authority_inclusion: f64,
+    pub para_authority_inclusion: f64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sessions: Vec<u32>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sessions_data: Vec<ValidatorResult>,
 }
