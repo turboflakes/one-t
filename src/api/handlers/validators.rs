@@ -22,17 +22,17 @@
 use crate::api::{
     helpers::respond_json,
     responses::{
-        AuthorityKey, AuthorityKeyCache, CacheMap, ValidatorProfileResult, ValidatorResult,
-        ValidatorsResult,
+        AuthorityKey, AuthorityKeyCache, CacheMap, ValidatorGradeResult, ValidatorProfileResult,
+        ValidatorResult, ValidatorsResult,
     },
 };
 use crate::cache::{get_conn, CacheKey, Index, RedisPool, Verbosity};
 use crate::errors::{ApiError, CacheError};
-use crate::records::EpochIndex;
+use crate::records::{grade, EpochIndex};
 use actix_web::web::{Data, Json, Path, Query};
 use log::warn;
 use redis::aio::Connection;
-use serde::Deserialize;
+use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
 use std::str::FromStr;
 use subxt::ext::sp_runtime::AccountId32;
@@ -92,8 +92,11 @@ pub struct Params {
     // address must be in combination with number_last_sessions
     #[serde(default)]
     address: String,
-    #[serde(default)]
+    #[serde(default = "default_number_last_sessions")]
     number_last_sessions: u32,
+    #[serde(default = "default_sessions")]
+    #[serde(deserialize_with = "parse_sessions")]
+    sessions: Sessions,
 }
 
 fn default_role() -> Role {
@@ -108,11 +111,35 @@ fn default_index() -> Index {
     Index::Current
 }
 
+type Sessions = Vec<EpochIndex>;
+
+fn default_sessions() -> Sessions {
+    vec![]
+}
+
+fn default_number_last_sessions() -> u32 {
+    6
+}
+
+fn parse_sessions<'de, D>(d: D) -> Result<Sessions, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Deserialize::deserialize(d).map(|x: Option<_>| {
+        let sessions_as_csv = x.unwrap_or("".to_string());
+        let sessions: Sessions = sessions_as_csv
+            .split(",")
+            .map(|x| x.parse::<EpochIndex>().unwrap_or_default())
+            .collect();
+        sessions
+    })
+}
+
 /// Get active validators
 async fn get_session_authorities(
     index: EpochIndex,
     cache: Data<RedisPool>,
-) -> Result<Json<ValidatorsResult>, ApiError> {
+) -> Result<ValidatorsResult, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
     let authority_keys: Vec<String> = redis::cmd("SMEMBERS")
@@ -132,7 +159,7 @@ async fn get_session_authorities(
         data.push(auth.into());
     }
 
-    respond_json(ValidatorsResult {
+    Ok(ValidatorsResult {
         session: index,
         data,
     })
@@ -145,7 +172,7 @@ async fn get_session_para_authorities(
     show_summary: bool,
     show_profile: bool,
     cache: Data<RedisPool>,
-) -> Result<Json<ValidatorsResult>, ApiError> {
+) -> Result<ValidatorsResult, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
     let authority_keys: Vec<String> = redis::cmd("SMEMBERS")
@@ -207,7 +234,7 @@ async fn get_session_para_authorities(
         data.push(auth.into());
     }
 
-    respond_json(ValidatorsResult {
+    Ok(ValidatorsResult {
         session: index,
         data,
     })
@@ -219,6 +246,7 @@ async fn get_validator_by_authority_key(
     show_stats: bool,
     show_summary: bool,
     _show_profile: bool,
+    hide_address: bool,
     cache: Data<RedisPool>,
 ) -> Result<ValidatorResult, ApiError> {
     let mut conn = get_conn(&cache).await?;
@@ -273,6 +301,11 @@ async fn get_validator_by_authority_key(
 
     data.insert(String::from("session"), auth_key.epoch_index.to_string());
 
+    // Hide address if requested
+    if hide_address {
+        data.remove("address");
+    }
+
     Ok(data.into())
 }
 
@@ -282,6 +315,7 @@ async fn get_validator_by_stash_and_index(
     session_index: EpochIndex,
     show_stats: bool,
     show_summary: bool,
+    hide_address: bool,
     cache: Data<RedisPool>,
 ) -> Result<(ValidatorResult, AuthorityKey), ApiError> {
     let mut conn = get_conn(&cache).await?;
@@ -301,6 +335,15 @@ async fn get_validator_by_stash_and_index(
             session_index, stash
         );
         warn!("{}", msg);
+        if hide_address {
+            return Ok((
+                ValidatorResult {
+                    session: session_index,
+                    ..Default::default()
+                },
+                authority_key_data.into(),
+            ));
+        }
         return Ok((
             ValidatorResult {
                 address: stash.to_string(),
@@ -317,6 +360,7 @@ async fn get_validator_by_stash_and_index(
         show_stats,
         show_summary,
         false,
+        hide_address,
         cache,
     )
     .await?;
@@ -364,6 +408,7 @@ pub async fn get_validators(
                     session_index,
                     params.show_stats,
                     params.show_summary,
+                    false,
                     cache.clone(),
                 )
                 .await?;
@@ -384,6 +429,7 @@ pub async fn get_validators(
                                             params.show_stats,
                                             params.show_summary,
                                             params.show_profile,
+                                            false,
                                             cache.clone(),
                                         )
                                         .await?;
@@ -413,8 +459,44 @@ pub async fn get_validators(
         });
     }
 
-    match params.role {
-        Role::Authority => get_session_authorities(requested_session_index, cache).await,
+    // TODO: draft validators by session
+    // 
+    // if &params.sessions.len() > &0 {
+    //     let mut data: Vec<ValidatorResult> = Vec::new();
+    //     for session in &params.sessions {
+    //         println!("{session}");
+    //         let authority_keys: Vec<String> = redis::cmd("SMEMBERS")
+    //             .arg(CacheKey::AuthorityKeysBySession(*session))
+    //             .query_async(&mut conn as &mut Connection)
+    //             .await
+    //             .map_err(CacheError::RedisCMDError)?;
+
+    //         for key in authority_keys.iter() {
+    //             let auth: CacheMap = redis::cmd("HGETALL")
+    //                 .arg(key)
+    //                 .query_async(&mut conn as &mut Connection)
+    //                 .await
+    //                 .map_err(CacheError::RedisCMDError)?;
+
+    //             // let val = get_validator_by_authority_key(
+    //             //     *(key).into(),
+    //             //     params.show_stats,
+    //             //     params.show_summary,
+    //             //     params.show_profile,
+    //             //     cache,
+    //             // ).await?;
+
+    //             // data.push(val.into());
+    //         }
+    //     }
+    //     return respond_json(ValidatorsResult {
+    //         data,
+    //         ..Default::default()
+    //     });
+    // }
+
+    let res: ValidatorsResult = match params.role {
+        Role::Authority => get_session_authorities(requested_session_index, cache).await?,
         Role::ParaAuthority => {
             get_session_para_authorities(
                 requested_session_index,
@@ -423,7 +505,7 @@ pub async fn get_validators(
                 params.show_profile,
                 cache,
             )
-            .await
+            .await?
         }
         _ => {
             let msg = format!(
@@ -433,7 +515,9 @@ pub async fn get_validators(
             warn!("{}", msg);
             return Err(ApiError::BadRequest(msg));
         }
-    }
+    };
+
+    respond_json(res.into())
 }
 
 /// Get a validator by stash
@@ -469,6 +553,7 @@ pub async fn get_validator_by_stash(
         session_index,
         params.show_stats,
         params.show_summary,
+        false,
         cache,
     )
     .await?;
@@ -533,6 +618,7 @@ pub async fn get_peer_by_authority(
         params.show_stats,
         params.show_summary,
         params.show_profile,
+        false,
         cache,
     )
     .await?;
@@ -555,4 +641,130 @@ pub async fn get_validator_profile_by_stash(
         .map_err(CacheError::RedisCMDError)?;
 
     respond_json(serialized_data.into())
+}
+
+/// Get a validator grade by stash
+pub async fn get_validator_grade_by_stash(
+    stash: Path<String>,
+    params: Query<Params>,
+    cache: Data<RedisPool>,
+) -> Result<Json<ValidatorGradeResult>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+    let stash = AccountId32::from_str(&*stash.to_string())?;
+
+    // get current session
+    let requested_session_index: EpochIndex = match &params.session {
+        Index::Str(index) => {
+            if String::from("current") == *index {
+                redis::cmd("GET")
+                    .arg(CacheKey::SessionByIndex(Index::Current))
+                    .query_async(&mut conn as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?
+            } else {
+                index.parse::<EpochIndex>().unwrap_or_default()
+            }
+        }
+        _ => redis::cmd("GET")
+            .arg(CacheKey::SessionByIndex(Index::Current))
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?,
+    };
+
+    let mut data: Vec<ValidatorResult> = Vec::new();
+
+    // NOTE: currently define max number of sessions up to 192 with default being 6 sessions
+    // TODO: Add 'maximum_number_last_sessions' as configurable variable
+    if params.number_last_sessions > 0 && params.number_last_sessions <= 192 {
+        let mut last = Some(requested_session_index - params.number_last_sessions);
+
+        while let Some(session_index) = last {
+            if session_index >= requested_session_index {
+                last = None;
+            } else {
+                let (validator_data, _) = get_validator_by_stash_and_index(
+                    stash.clone(),
+                    session_index,
+                    false,
+                    true,
+                    true,
+                    cache.clone(),
+                )
+                .await?;
+
+                data.push(validator_data.clone().into());
+
+                last = Some(session_index + 1);
+            }
+        }
+    } else {
+        let msg =
+            format!("The value of parameter 'number_last_sessions' must be between 1 and 192.");
+        warn!("{}", msg);
+        return Err(ApiError::NotFound(msg));
+    }
+
+    // calculate auth_epochs and para_epochs
+    let auth_epochs = data.iter().filter(|v| v.is_auth).count();
+    let para_epochs = data.iter().filter(|v| v.is_para).count();
+
+    if para_epochs == 0 {
+        if params.show_summary {
+            return respond_json(ValidatorGradeResult {
+                address: stash.to_string(),
+                grade: String::from("-"),
+                authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
+                para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
+                sessions_data: data.into(),
+                ..Default::default()
+            });
+        }
+        return respond_json(ValidatorGradeResult {
+            address: stash.to_string(),
+            grade: String::from("-"),
+            authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
+            para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
+            sessions: data.iter().map(|v| v.session).collect(),
+            ..Default::default()
+        });
+    }
+
+    // calculate mvr if para_epochs > 0
+    let mvrs: Vec<f64> = data
+        .iter()
+        .filter(|v| v.is_para)
+        .map(|v| {
+            let partial = v.para_summary.explicit_votes
+                + v.para_summary.implicit_votes
+                + v.para_summary.missed_votes;
+            if partial > 0 {
+                v.para_summary.missed_votes as f64 / partial as f64
+            } else {
+                0.0_f64
+            }
+        })
+        .collect();
+
+    let mvr = mvrs.iter().sum::<f64>() / para_epochs as f64;
+
+    if params.show_summary {
+        return respond_json(ValidatorGradeResult {
+            address: stash.to_string(),
+            grade: grade(1.0 - mvr),
+            authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
+            para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
+            sessions_data: data.into(),
+            ..Default::default()
+        });
+    }
+
+    return respond_json(ValidatorGradeResult {
+        address: stash.to_string(),
+        grade: grade(1.0 - mvr),
+        authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
+        para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
+        sessions: data.iter().map(|v| v.session).collect(),
+        ..Default::default()
+    });
 }

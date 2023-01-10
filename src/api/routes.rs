@@ -27,8 +27,8 @@ use crate::api::handlers::{
     pool::{get_pool, get_pool_nomination, get_pool_nominees, get_pools_stats},
     sessions::{get_session_by_index, get_sessions},
     validators::{
-        get_peer_by_authority, get_validator_by_stash, get_validator_profile_by_stash,
-        get_validators,
+        get_peer_by_authority, get_validator_by_stash, get_validator_grade_by_stash,
+        get_validator_profile_by_stash, get_validators,
     },
     ws::init,
 };
@@ -69,6 +69,10 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
                         .route(
                             "/{stash}/profile",
                             web::get().to(get_validator_profile_by_stash),
+                        )
+                        .route(
+                            "/{stash}/grade",
+                            web::get().to(get_validator_grade_by_stash),
                         )
                         .route(
                             "/{stash}/peers/{peer}",
