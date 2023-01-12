@@ -310,7 +310,7 @@ async fn get_validator_by_authority_key(
 }
 
 /// Get validator by stash addresss and index
-async fn get_validator_by_stash_and_index(
+async fn get_validator_by_stash_and_session(
     stash: AccountId32,
     session_index: EpochIndex,
     show_stats: bool,
@@ -374,6 +374,13 @@ pub async fn get_validators(
 ) -> Result<Json<ValidatorsResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
+    // Throw error if params.sessions > 6
+    if &params.sessions.len() > &6 {
+        let msg = format!("Parameter sessions must not contain more than 6 sessions");
+        warn!("{}", msg);
+        return Err(ApiError::BadRequest(msg));
+    }
+
     let requested_session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
             if String::from("current") == *index {
@@ -403,7 +410,7 @@ pub async fn get_validators(
             if session_index >= requested_session_index {
                 last = None;
             } else {
-                let (validator_data, mut authority_key) = get_validator_by_stash_and_index(
+                let (validator_data, mut authority_key) = get_validator_by_stash_and_session(
                     stash.clone(),
                     session_index,
                     params.show_stats,
@@ -459,41 +466,35 @@ pub async fn get_validators(
         });
     }
 
-    // TODO: draft validators by session
-    // 
-    // if &params.sessions.len() > &0 {
-    //     let mut data: Vec<ValidatorResult> = Vec::new();
-    //     for session in &params.sessions {
-    //         println!("{session}");
-    //         let authority_keys: Vec<String> = redis::cmd("SMEMBERS")
-    //             .arg(CacheKey::AuthorityKeysBySession(*session))
-    //             .query_async(&mut conn as &mut Connection)
-    //             .await
-    //             .map_err(CacheError::RedisCMDError)?;
+    // Note: pull validators by session
+    if &params.sessions.len() > &0 {
+        let mut data: Vec<ValidatorResult> = Vec::new();
+        for session in &params.sessions {
+            let authority_keys: Vec<String> = redis::cmd("SMEMBERS")
+                .arg(CacheKey::AuthorityKeysBySession(*session))
+                .query_async(&mut conn as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
 
-    //         for key in authority_keys.iter() {
-    //             let auth: CacheMap = redis::cmd("HGETALL")
-    //                 .arg(key)
-    //                 .query_async(&mut conn as &mut Connection)
-    //                 .await
-    //                 .map_err(CacheError::RedisCMDError)?;
+            for key in authority_keys.iter() {
+                let val = get_validator_by_authority_key(
+                    key.clone().into(),
+                    false,
+                    params.show_summary,
+                    false,
+                    false,
+                    cache.clone(),
+                )
+                .await?;
 
-    //             // let val = get_validator_by_authority_key(
-    //             //     *(key).into(),
-    //             //     params.show_stats,
-    //             //     params.show_summary,
-    //             //     params.show_profile,
-    //             //     cache,
-    //             // ).await?;
-
-    //             // data.push(val.into());
-    //         }
-    //     }
-    //     return respond_json(ValidatorsResult {
-    //         data,
-    //         ..Default::default()
-    //     });
-    // }
+                data.push(val.into());
+            }
+        }
+        return respond_json(ValidatorsResult {
+            data,
+            ..Default::default()
+        });
+    }
 
     let res: ValidatorsResult = match params.role {
         Role::Authority => get_session_authorities(requested_session_index, cache).await?,
@@ -548,7 +549,7 @@ pub async fn get_validator_by_stash(
             .map_err(CacheError::RedisCMDError)?,
     };
 
-    let (data, _) = get_validator_by_stash_and_index(
+    let (data, _) = get_validator_by_stash_and_session(
         stash.clone(),
         session_index,
         params.show_stats,
@@ -683,7 +684,7 @@ pub async fn get_validator_grade_by_stash(
             if session_index >= requested_session_index {
                 last = None;
             } else {
-                let (validator_data, _) = get_validator_by_stash_and_index(
+                let (validator_data, _) = get_validator_by_stash_and_session(
                     stash.clone(),
                     session_index,
                     false,
