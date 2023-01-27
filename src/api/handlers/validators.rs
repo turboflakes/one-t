@@ -245,7 +245,7 @@ async fn get_validator_by_authority_key(
     auth_key: AuthorityKey,
     show_stats: bool,
     show_summary: bool,
-    _show_profile: bool,
+    show_profile: bool,
     hide_address: bool,
     cache: Data<RedisPool>,
 ) -> Result<ValidatorResult, ApiError> {
@@ -281,23 +281,18 @@ async fn get_validator_by_authority_key(
         data.extend(summary);
     }
 
-    // if show_profile {
-    //     let serialized_data: String = redis::cmd("GET")
-    //     .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
-    //     .query_async(&mut conn as &mut Connection)
-    //     .await
-    //     .map_err(CacheError::RedisCMDError)?;
-
-    //     let summary: CacheMap = redis::cmd("HGETALL")
-    //         .arg(CacheKey::AuthorityRecordVerbose(
-    //             auth_key.to_string(),
-    //             Verbosity::Summary,
-    //         ))
-    //         .query_async(&mut conn as &mut Connection)
-    //         .await
-    //         .map_err(CacheError::RedisCMDError)?;
-    //     data.extend(summary);
-    // }
+    if show_profile {
+        if let Some(stash) = data.get("address") {
+            if let Ok(stash) = AccountId32::from_str(&stash) {
+                let profile: String = redis::cmd("GET")
+                    .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+                    .query_async(&mut conn as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?;
+                data.insert(String::from("profile"), profile);
+            }
+        }
+    }
 
     data.insert(String::from("session"), auth_key.epoch_index.to_string());
 
@@ -459,41 +454,43 @@ pub async fn get_validators(
         });
     }
 
-    // TODO: draft validators by session
-    // 
-    // if &params.sessions.len() > &0 {
-    //     let mut data: Vec<ValidatorResult> = Vec::new();
-    //     for session in &params.sessions {
-    //         println!("{session}");
-    //         let authority_keys: Vec<String> = redis::cmd("SMEMBERS")
-    //             .arg(CacheKey::AuthorityKeysBySession(*session))
-    //             .query_async(&mut conn as &mut Connection)
-    //             .await
-    //             .map_err(CacheError::RedisCMDError)?;
+    // validators by session
+    //
+    if &params.sessions.len() > &1 {
+        let mut data: Vec<ValidatorResult> = Vec::new();
+        let mut last = Some(params.sessions[0]);
+        while let Some(session_index) = last {
+            if session_index >= params.sessions[1] {
+                last = None;
+            } else {
+                let authority_keys: Vec<String> = redis::cmd("SMEMBERS")
+                    .arg(CacheKey::AuthorityKeysBySession(session_index))
+                    .query_async(&mut conn as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?;
 
-    //         for key in authority_keys.iter() {
-    //             let auth: CacheMap = redis::cmd("HGETALL")
-    //                 .arg(key)
-    //                 .query_async(&mut conn as &mut Connection)
-    //                 .await
-    //                 .map_err(CacheError::RedisCMDError)?;
+                for key in authority_keys.iter() {
+                    let val = get_validator_by_authority_key(
+                        (*key).clone().into(),
+                        params.show_stats,
+                        params.show_summary,
+                        params.show_profile,
+                        false,
+                        cache.clone(),
+                    )
+                    .await?;
 
-    //             // let val = get_validator_by_authority_key(
-    //             //     *(key).into(),
-    //             //     params.show_stats,
-    //             //     params.show_summary,
-    //             //     params.show_profile,
-    //             //     cache,
-    //             // ).await?;
+                    data.push(val.into());
+                }
+                last = Some(session_index + 1);
+            }
+        }
 
-    //             // data.push(val.into());
-    //         }
-    //     }
-    //     return respond_json(ValidatorsResult {
-    //         data,
-    //         ..Default::default()
-    //     });
-    // }
+        return respond_json(ValidatorsResult {
+            data,
+            ..Default::default()
+        });
+    }
 
     let res: ValidatorsResult = match params.role {
         Role::Authority => get_session_authorities(requested_session_index, cache).await?,
