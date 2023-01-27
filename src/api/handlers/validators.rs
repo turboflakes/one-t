@@ -460,7 +460,7 @@ pub async fn get_validators(
         let mut data: Vec<ValidatorResult> = Vec::new();
         let mut last = Some(params.sessions[0]);
         while let Some(session_index) = last {
-            if session_index >= params.sessions[1] {
+            if session_index > params.sessions[1] {
                 last = None;
             } else {
                 let authority_keys: Vec<String> = redis::cmd("SMEMBERS")
