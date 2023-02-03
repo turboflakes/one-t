@@ -138,36 +138,7 @@ where
 /// Get active validators
 async fn get_session_authorities(
     index: EpochIndex,
-    cache: Data<RedisPool>,
-) -> Result<ValidatorsResult, ApiError> {
-    let mut conn = get_conn(&cache).await?;
-
-    let authority_keys: Vec<String> = redis::cmd("SMEMBERS")
-        .arg(CacheKey::AuthorityKeysBySession(index))
-        .query_async(&mut conn as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?;
-
-    let mut data: Vec<ValidatorResult> = Vec::new();
-    for key in authority_keys.iter() {
-        let auth: CacheMap = redis::cmd("HGETALL")
-            .arg(key)
-            .query_async(&mut conn as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?;
-
-        data.push(auth.into());
-    }
-
-    Ok(ValidatorsResult {
-        session: index,
-        data,
-    })
-}
-
-/// Get active para_validators
-async fn get_session_para_authorities(
-    index: EpochIndex,
+    role: Role,
     show_stats: bool,
     show_summary: bool,
     show_profile: bool,
@@ -175,11 +146,27 @@ async fn get_session_para_authorities(
 ) -> Result<ValidatorsResult, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
-    let authority_keys: Vec<String> = redis::cmd("SMEMBERS")
-        .arg(CacheKey::AuthorityKeysBySessionParaOnly(index))
-        .query_async(&mut conn as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?;
+    let authority_keys: Vec<String> = match role {
+        Role::Authority => redis::cmd("SMEMBERS")
+            .arg(CacheKey::AuthorityKeysBySession(index))
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?,
+        Role::ParaAuthority => redis::cmd("SMEMBERS")
+            .arg(CacheKey::AuthorityKeysBySessionParaOnly(index))
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?,
+        _ => {
+            let msg = format!(
+                "Parameter role={} must be equal to one of the options: [authority, para_authority]",
+                role
+            );
+            warn!("{}", msg);
+            return Err(ApiError::BadRequest(msg));
+        }
+    };
+
     let mut data: Vec<ValidatorResult> = Vec::new();
     for key in authority_keys.iter() {
         let mut auth: CacheMap = redis::cmd("HGETALL")
@@ -492,27 +479,15 @@ pub async fn get_validators(
         });
     }
 
-    let res: ValidatorsResult = match params.role {
-        Role::Authority => get_session_authorities(requested_session_index, cache).await?,
-        Role::ParaAuthority => {
-            get_session_para_authorities(
-                requested_session_index,
-                params.show_stats,
-                params.show_summary,
-                params.show_profile,
-                cache,
-            )
-            .await?
-        }
-        _ => {
-            let msg = format!(
-                "Parameter role={} must be equal to one of the options: [authority, para_authority]",
-                params.role
-            );
-            warn!("{}", msg);
-            return Err(ApiError::BadRequest(msg));
-        }
-    };
+    let res: ValidatorsResult = get_session_authorities(
+        requested_session_index,
+        params.role.clone(),
+        params.show_stats,
+        params.show_summary,
+        params.show_profile,
+        cache,
+    )
+    .await?;
 
     respond_json(res.into())
 }
