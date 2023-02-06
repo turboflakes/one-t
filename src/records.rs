@@ -1333,8 +1333,26 @@ pub struct ValidatorProfileRecord {
     // Note: commission max value = Perbill(1000000000) => 100%
     pub commission: u32,
     pub own_stake: u128,
+    pub points: u32,
     pub subset: Subset,
     pub is_oversubscribed: bool,
+    pub is_active: bool,
+}
+
+impl ValidatorProfileRecord {
+    pub fn new(stash: AccountId32) -> Self {
+        Self {
+            stash: Some(stash),
+            controller: None,
+            identity: None,
+            commission: 0,
+            own_stake: 0,
+            points: 0,
+            subset: Subset::NONTVP,
+            is_active: false,
+            is_oversubscribed: false,
+        }
+    }
 }
 
 impl Validity for ValidatorProfileRecord {
@@ -1366,6 +1384,44 @@ pub struct SessionStats {
 impl Validity for SessionStats {
     fn is_empty(&self) -> bool {
         self.authorities == 0
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct NetworkSessionStats {
+    pub session: EpochIndex,
+    pub subset: Subset,
+    pub vals_total: u32,
+    pub vals_active: u32,
+    pub vals_own_stake_total: u128,
+    pub vals_own_stake_avg: u128,
+    pub vals_own_stake_min: u128,
+    pub vals_own_stake_max: u128,
+    pub vals_oversubscribed: u32,
+    pub vals_points_total: u32,
+    pub vals_points_avg: u32,
+    pub vals_points_min: u32,
+    pub vals_points_max: u32,
+    // pub oversubscribed_vals: u32,
+}
+
+impl NetworkSessionStats {
+    pub fn new(session: EpochIndex, subset: Subset) -> Self {
+        Self {
+            session,
+            subset,
+            vals_total: 0,
+            vals_active: 0,
+            vals_own_stake_total: 0,
+            vals_own_stake_avg: 0,
+            vals_own_stake_min: 0,
+            vals_own_stake_max: 0,
+            vals_oversubscribed: 0,
+            vals_points_total: 0,
+            vals_points_avg: 0,
+            vals_points_min: 0,
+            vals_points_max: 0,
+        }
     }
 }
 
