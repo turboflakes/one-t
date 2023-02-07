@@ -44,6 +44,9 @@ pub struct Params {
     // show_stats indicates whether session stats should be retrieved or not, default false
     #[serde(default)]
     show_stats: bool,
+    // show_netstats indicates whether session network stats should be retrieved or not, default false
+    #[serde(default)]
+    show_netstats: bool,
 }
 
 fn default_number_last_sessions() -> u32 {
@@ -111,6 +114,18 @@ pub async fn get_sessions(
                     .await
                 {
                     session_data.insert(String::from("stats"), serialized_data);
+                }
+            }
+
+            if params.show_netstats {
+                if let Ok(serialized_data) = redis::cmd("GET")
+                    .arg(CacheKey::NetworkStatsBySession(Index::Num(
+                        session_index.into(),
+                    )))
+                    .query_async::<Connection, String>(&mut conn)
+                    .await
+                {
+                    session_data.insert(String::from("netstats"), serialized_data);
                 }
             }
 

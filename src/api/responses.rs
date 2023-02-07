@@ -20,8 +20,8 @@
 // SOFTWARE.
 
 use crate::records::{
-    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, ParaId, ParaStats,
-    ParachainRecord, SessionStats, ValidatorProfileRecord, Validity,
+    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, NetworkSessionStats,
+    ParaId, ParaStats, ParachainRecord, SessionStats, ValidatorProfileRecord, Validity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -168,6 +168,8 @@ pub struct SessionResult {
     is_current: bool,
     #[serde(skip_serializing_if = "SessionStats::is_empty")]
     stats: SessionStats,
+    #[serde(skip_serializing_if = "NetworkSessionStats::is_empty")]
+    netstats: NetworkSessionStats,
 }
 
 fn default<T: Default + PartialEq>(t: &T) -> bool {
@@ -177,8 +179,17 @@ fn default<T: Default + PartialEq>(t: &T) -> bool {
 impl From<CacheMap> for SessionResult {
     fn from(data: CacheMap) -> Self {
         let zero = "0".to_string();
-        let serialized = data.get("stats").unwrap_or(&"{}".to_string()).to_string();
-        let stats: SessionStats = serde_json::from_str(&serialized).unwrap_or_default();
+        // stats
+        let stats_serialized = data.get("stats").unwrap_or(&"{}".to_string()).to_string();
+        let stats: SessionStats = serde_json::from_str(&stats_serialized).unwrap_or_default();
+        // netstats
+        let netstats_serialized = data
+            .get("netstats")
+            .unwrap_or(&"{}".to_string())
+            .to_string();
+        let netstats: NetworkSessionStats =
+            serde_json::from_str(&netstats_serialized).unwrap_or_default();
+
         SessionResult {
             eix: data
                 .get("era")
@@ -211,6 +222,7 @@ impl From<CacheMap> for SessionResult {
                 .parse::<bool>()
                 .unwrap_or_default(),
             stats,
+            netstats,
         }
     }
 }
@@ -357,4 +369,23 @@ pub struct ValidatorGradeResult {
     pub sessions: Vec<u32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sessions_data: Vec<ValidatorResult>,
+}
+
+pub type NetworkStatResult = NetworkSessionStats;
+
+impl From<String> for NetworkStatResult {
+    fn from(serialized_data: String) -> Self {
+        serde_json::from_str(&serialized_data).unwrap_or_default()
+    }
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct NetworkStatsResult {
+    pub data: Vec<NetworkStatResult>,
+}
+
+impl From<Vec<NetworkStatResult>> for NetworkStatsResult {
+    fn from(data: Vec<NetworkStatResult>) -> Self {
+        NetworkStatsResult { data }
+    }
 }

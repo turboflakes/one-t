@@ -31,7 +31,7 @@ use crate::pools::{Nominee, Pool, PoolNomination, PoolNominees, PoolsEra};
 use crate::records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EpochKey, EraIndex, Identity,
     NetworkSessionStats, ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records,
-    SessionStats, Subscribers, ValidatorProfileRecord,
+    SessionStats, Subscribers, SubsetStats, ValidatorProfileRecord,
 };
 use crate::report::{
     group_by_points, position, Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara,
@@ -2616,7 +2616,7 @@ pub async fn cache_session_stats_records(
     let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url().await?;
 
     if let Some(block) = api.rpc().header(block_hash).await? {
-        // get previous block_hash and if is a new era get previous era_index
+        // // get previous block_hash and if is a new era get previous era_index
         let era_index = if records.is_first_epoch(records.current_era()) {
             records.current_era() - 1
         } else {
@@ -2695,6 +2695,7 @@ pub async fn cache_session_stats_records(
             }
 
             // cache points from the parent_block_hash of the session
+            let mut nss = NetworkSessionStats::new(epoch_index);
 
             // Fetch Era reward points
             let era_reward_points_addr = node_runtime::storage()
@@ -2705,15 +2706,7 @@ pub async fn cache_session_stats_records(
                 .fetch(&era_reward_points_addr, Some(block.parent_hash))
                 .await?
             {
-                // cache total reward points
-                redis::cmd("SET")
-                    .arg(CacheKey::NetworkTotalPointsBySession(Index::Num(
-                        epoch_index.into(),
-                    )))
-                    .arg(era_reward_points.total.to_string())
-                    .query_async(&mut cache as &mut Connection)
-                    .await
-                    .map_err(CacheError::RedisCMDError)?;
+                nss.total_reward_points = era_reward_points.total;
 
                 for (stash, points) in era_reward_points.individual.iter() {
                     validators
@@ -2738,41 +2731,27 @@ pub async fn cache_session_stats_records(
                 .fetch(&eras_total_stake_addr, Some(block.parent_hash))
                 .await?
             {
-                redis::cmd("SET")
-                    .arg(CacheKey::NetworkTotalStakedBySession(Index::Num(
-                        epoch_index.into(),
-                    )))
-                    .arg(total_staked.to_string())
-                    .query_async(&mut cache as &mut Connection)
-                    .await
-                    .map_err(CacheError::RedisCMDError)?;
+                nss.total_staked = total_staked;
             };
 
-            // total rewarded
+            // total rewarded from previous era
             let eras_total_reward_addr = node_runtime::storage()
                 .staking()
-                .eras_validator_reward(&era_index);
-            if let Some(total_rewarded) = api
+                .eras_validator_reward(&era_index - 1);
+            if let Some(last_rewarded) = api
                 .storage()
                 .fetch(&eras_total_reward_addr, Some(block.parent_hash))
                 .await?
             {
-                redis::cmd("SET")
-                    .arg(CacheKey::NetworkTotalRewardedBySession(Index::Num(
-                        epoch_index.into(),
-                    )))
-                    .arg(total_rewarded.to_string())
-                    .query_async(&mut cache as &mut Connection)
-                    .await
-                    .map_err(CacheError::RedisCMDError)?;
+                nss.last_rewarded = last_rewarded;
             };
 
             let subsets = vec![Subset::C100, Subset::NONTVP, Subset::TVP];
             for subset in subsets {
-                let mut ns = NetworkSessionStats::new(epoch_index, subset.clone());
+                let mut ss = SubsetStats::new(subset.clone());
 
                 // all validators
-                ns.vals_total = validators
+                ss.vals_total = validators
                     .iter()
                     .filter(|v| v.subset == subset)
                     .count()
@@ -2780,7 +2759,7 @@ pub async fn cache_session_stats_records(
                     .unwrap();
 
                 // active validators
-                ns.vals_active = validators
+                ss.vals_active = validators
                     .iter()
                     .filter(|v| v.is_active && v.subset == subset)
                     .count()
@@ -2794,13 +2773,13 @@ pub async fn cache_session_stats_records(
                     .map(|v| v.own_stake)
                     .collect();
 
-                ns.vals_own_stake_total = own_stakes.iter().sum::<u128>();
-                ns.vals_own_stake_avg = own_stakes.iter().sum::<u128>() / own_stakes.len() as u128;
-                ns.vals_own_stake_min = *own_stakes.iter().min().unwrap_or_else(|| &0);
-                ns.vals_own_stake_max = *own_stakes.iter().max().unwrap_or_else(|| &0);
+                ss.vals_own_stake_total = own_stakes.iter().sum::<u128>();
+                ss.vals_own_stake_avg = own_stakes.iter().sum::<u128>() / own_stakes.len() as u128;
+                ss.vals_own_stake_min = *own_stakes.iter().min().unwrap_or_else(|| &0);
+                ss.vals_own_stake_max = *own_stakes.iter().max().unwrap_or_else(|| &0);
 
                 // oversubscribed
-                ns.vals_oversubscribed = validators
+                ss.vals_oversubscribed = validators
                     .iter()
                     .filter(|v| v.is_oversubscribed && v.subset == subset)
                     .count()
@@ -2814,25 +2793,27 @@ pub async fn cache_session_stats_records(
                     .map(|v| v.points)
                     .collect();
 
-                ns.vals_points_total = points.iter().sum::<u32>();
-                ns.vals_points_avg = points.iter().sum::<u32>() / points.len() as u32;
-                ns.vals_points_min = *points.iter().min().unwrap_or_else(|| &0);
-                ns.vals_points_max = *points.iter().max().unwrap_or_else(|| &0);
+                ss.vals_points_total = points.iter().sum::<u32>();
+                ss.vals_points_avg = points.iter().sum::<u32>() / points.len() as u32;
+                ss.vals_points_min = *points.iter().min().unwrap_or_else(|| &0);
+                ss.vals_points_max = *points.iter().max().unwrap_or_else(|| &0);
 
                 // TODO: flagged (grade F) and exceptional A+ validators
 
-                // serialize and cache
-                let serialized = serde_json::to_string(&ns)?;
-                redis::cmd("SET")
-                    .arg(CacheKey::NetworkStatsBySessionAndSubset(
-                        Index::Num(epoch_index.into()),
-                        subset,
-                    ))
-                    .arg(serialized)
-                    .query_async(&mut cache as &mut Connection)
-                    .await
-                    .map_err(CacheError::RedisCMDError)?;
+                nss.subsets.push(ss);
             }
+
+            // serialize and cache
+            let serialized = serde_json::to_string(&nss)?;
+            redis::cmd("SET")
+                .arg(CacheKey::NetworkStatsBySession(Index::Num(
+                    epoch_index.into(),
+                )))
+                .arg(serialized)
+                .query_async(&mut cache as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+
             // Log sesssion cache processed duration time
             info!(
                 "Session #{} stats cached ({:?})",

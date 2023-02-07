@@ -1390,6 +1390,32 @@ impl Validity for SessionStats {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct NetworkSessionStats {
     pub session: EpochIndex,
+    pub subsets: Vec<SubsetStats>,
+    pub total_reward_points: u32,
+    pub total_staked: u128,
+    pub last_rewarded: u128,
+}
+
+impl Validity for NetworkSessionStats {
+    fn is_empty(&self) -> bool {
+        self.session == 0
+    }
+}
+
+impl NetworkSessionStats {
+    pub fn new(session: EpochIndex) -> Self {
+        Self {
+            session,
+            subsets: Vec::new(),
+            total_reward_points: 0,
+            total_staked: 0,
+            last_rewarded: 0,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct SubsetStats {
     pub subset: Subset,
     pub vals_total: u32,
     pub vals_active: u32,
@@ -1402,13 +1428,17 @@ pub struct NetworkSessionStats {
     pub vals_points_avg: u32,
     pub vals_points_min: u32,
     pub vals_points_max: u32,
-    // pub oversubscribed_vals: u32,
 }
 
-impl NetworkSessionStats {
-    pub fn new(session: EpochIndex, subset: Subset) -> Self {
+impl Validity for SubsetStats {
+    fn is_empty(&self) -> bool {
+        self.vals_total == 0
+    }
+}
+
+impl SubsetStats {
+    pub fn new(subset: Subset) -> Self {
         Self {
-            session,
             subset,
             vals_total: 0,
             vals_active: 0,

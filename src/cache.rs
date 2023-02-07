@@ -22,7 +22,6 @@
 use crate::config::{Config, CONFIG};
 use crate::errors::CacheError;
 use crate::records::{AuthorityIndex, EpochIndex, EraIndex};
-use crate::report::Subset;
 
 use actix_web::web;
 use log::{error, info};
@@ -90,10 +89,7 @@ pub enum CacheKey {
     BlocksBySession(Index),
     SessionByIndex(Index),
     SessionByIndexStats(Index),
-    NetworkStatsBySessionAndSubset(Index, Subset),
-    NetworkTotalStakedBySession(Index),
-    NetworkTotalRewardedBySession(Index),
-    NetworkTotalPointsBySession(Index),
+    NetworkStatsBySession(Index),
     AuthorityRecord(EraIndex, EpochIndex, AuthorityIndex),
     AuthorityRecordVerbose(AuthorityRecordKey, Verbosity),
     AuthorityKeyByAccountAndSession(AccountId32, EpochIndex),
@@ -114,17 +110,8 @@ impl std::fmt::Display for CacheKey {
             Self::BlocksBySession(session_index) => write!(f, "bs:{}", session_index),
             Self::SessionByIndex(session_index) => write!(f, "s:{}", session_index),
             Self::SessionByIndexStats(session_index) => write!(f, "s:{}:s", session_index),
-            Self::NetworkStatsBySessionAndSubset(session_index, subset) => {
-                write!(f, "ns:{}:{}", session_index, subset)
-            }
-            Self::NetworkTotalStakedBySession(session_index) => {
-                write!(f, "nts:{}", session_index)
-            }
-            Self::NetworkTotalRewardedBySession(session_index) => {
-                write!(f, "ntr:{}", session_index)
-            }
-            Self::NetworkTotalPointsBySession(session_index) => {
-                write!(f, "ntp:{}", session_index)
+            Self::NetworkStatsBySession(session_index) => {
+                write!(f, "ns:{}", session_index)
             }
             Self::AuthorityRecord(era_index, session_index, authority_index) => write!(
                 f,

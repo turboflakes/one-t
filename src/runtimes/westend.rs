@@ -29,9 +29,9 @@ use crate::onet::{
 };
 use crate::pools::{Nominee, Pool, PoolNomination, PoolNominees, PoolsEra};
 use crate::records::{
-    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EpochKey, EraIndex, Identity, ParaId,
-    ParaRecord, ParaStats, ParachainRecord, Points, Records, SessionStats, Subscribers,
-    ValidatorProfileRecord,
+    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EpochKey, EraIndex, Identity,
+    NetworkSessionStats, ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records,
+    SessionStats, Subscribers, SubsetStats, ValidatorProfileRecord,
 };
 use crate::report::{
     group_by_points, position, Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara,
@@ -303,8 +303,11 @@ pub async fn process_finalized_block(
             // Network public report
             try_run_network_report(new_session_event.session_index, &records, is_loading).await?;
 
-            // Cache records every new session
+            // Cache session records every new session
             try_run_cache_session_records(&records, Some(block_hash)).await?;
+
+            // Cache session stats records every new session
+            try_run_cache_session_stats_records(&records, Some(block_hash)).await?;
         }
     }
 
@@ -530,6 +533,7 @@ pub async fn cache_session_records(
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if config.api_enabled {
+        let start = Instant::now();
         let onet: Onet = Onet::new().await;
         let api = onet.client().clone();
         let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
@@ -597,58 +601,7 @@ pub async fn cache_session_records(
                     .map_err(CacheError::RedisCMDError)?;
             }
         }
-        // ---
-        // cache all validators profile every new session
-        // Load TVP stashes
-        let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url().await?;
 
-        // Fetch all validators
-        let validators_addr = node_runtime::storage().staking().validators_root();
-        let mut iter = api.storage().iter(validators_addr, 10, block_hash).await?;
-        while let Some((key, validator_prefs)) = iter.next().await? {
-            // validator stash address
-            let stash = get_account_id_from_storage_key(key);
-            // validator controller address
-            let bonded_addr = node_runtime::storage().staking().bonded(&stash);
-            if let Some(controller) = api.storage().fetch(&bonded_addr, block_hash).await? {
-                // deconstruct commission
-                let Perbill(commission) = validator_prefs.commission;
-                // get own stake
-                let own_stake = get_own_stake_via_controller(&onet, &controller).await?;
-                // verify subset (1_000_000_000 = 100% commission)
-                let subset: Subset = if commission != 1_000_000_000 {
-                    if !tvp_stashes.contains(&stash) {
-                        Subset::NONTVP
-                    } else {
-                        Subset::TVP
-                    }
-                } else {
-                    Subset::C100
-                };
-
-                let is_oversubscribed = verify_oversubscribed(&onet, current_era, &stash).await?;
-
-                let identity = get_identity(&onet, &stash, None).await?;
-
-                let data = ValidatorProfileRecord {
-                    stash: Some(stash.clone()),
-                    controller: Some(controller),
-                    identity,
-                    commission,
-                    own_stake,
-                    subset,
-                    is_oversubscribed,
-                };
-
-                let serialized = serde_json::to_string(&data)?;
-                redis::cmd("SET")
-                    .arg(CacheKey::ValidatorProfileByAccount(stash))
-                    .arg(serialized)
-                    .query_async(&mut cache as &mut Connection)
-                    .await
-                    .map_err(CacheError::RedisCMDError)?;
-            }
-        }
         // ---
         // cache authorities every new session
         if let Some(authorities) = records.get_authorities(None) {
@@ -720,6 +673,8 @@ pub async fn cache_session_records(
                 }
             }
         }
+        // Log sesssion cache processed duration time
+        info!("Session #{} cached ({:?})", current_epoch, start.elapsed());
     }
 
     Ok(())
@@ -1667,7 +1622,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                     v.subset = Subset::TVP;
                 }
                 v.is_oversubscribed =
-                    verify_oversubscribed(&onet, active_era_index, &stash).await?;
+                    verify_oversubscribed(&onet, active_era_index, &stash, None).await?;
             } else {
                 v.subset = Subset::C100;
             }
@@ -1678,7 +1633,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             v.is_active = authorities.contains(&stash);
 
             // Fetch own stake
-            v.own_stake = get_own_stake_via_stash(&onet, &stash).await?;
+            v.own_stake = get_own_stake_via_stash(&onet, &stash, None).await?;
 
             // Get performance data from all eras available
             if let Some(((active_epochs, authored_blocks, mut pattern), para_data)) =
@@ -2462,13 +2417,14 @@ async fn verify_oversubscribed(
     onet: &Onet,
     era_index: u32,
     stash: &AccountId32,
+    block_hash: Option<H256>,
 ) -> Result<bool, OnetError> {
     let api = onet.client().clone();
 
     let eras_stakers_addr = node_runtime::storage()
         .staking()
         .eras_stakers(&era_index, stash);
-    if let Some(exposure) = api.storage().fetch(&eras_stakers_addr, None).await? {
+    if let Some(exposure) = api.storage().fetch(&eras_stakers_addr, block_hash).await? {
         return Ok(exposure.others.len() > 256);
     }
     return Ok(false);
@@ -2477,23 +2433,28 @@ async fn verify_oversubscribed(
 async fn get_own_stake_via_controller(
     onet: &Onet,
     controller: &AccountId32,
+    block_hash: Option<H256>,
 ) -> Result<u128, OnetError> {
     let api = onet.client().clone();
 
     let ledger_addr = node_runtime::storage().staking().ledger(controller);
-    if let Some(ledger) = api.storage().fetch(&ledger_addr, None).await? {
+    if let Some(ledger) = api.storage().fetch(&ledger_addr, block_hash).await? {
         return Ok(ledger.active);
     }
     return Ok(0);
 }
 
-async fn get_own_stake_via_stash(onet: &Onet, stash: &AccountId32) -> Result<u128, OnetError> {
+async fn get_own_stake_via_stash(
+    onet: &Onet,
+    stash: &AccountId32,
+    block_hash: Option<H256>,
+) -> Result<u128, OnetError> {
     let api = onet.client().clone();
 
     let bonded_addr = node_runtime::storage().staking().bonded(stash);
-    if let Some(controller) = api.storage().fetch(&bonded_addr, None).await? {
+    if let Some(controller) = api.storage().fetch(&bonded_addr, block_hash).await? {
         let ledger_addr = node_runtime::storage().staking().ledger(controller);
-        if let Some(ledger) = api.storage().fetch(&ledger_addr, None).await? {
+        if let Some(ledger) = api.storage().fetch(&ledger_addr, block_hash).await? {
             return Ok(ledger.active);
         }
     }
@@ -2615,4 +2576,252 @@ async fn get_authority_index(
         }
     }
     Ok(None)
+}
+
+pub async fn try_run_cache_session_stats_records(
+    records: &Records,
+    block_hash: Option<H256>,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if config.api_enabled {
+        let records_cloned = records.clone();
+        async_std::task::spawn(async move {
+            if let Err(e) = cache_session_stats_records(&records_cloned, block_hash).await {
+                error!("try_run_cache_session_stats_records error: {:?}", e);
+            }
+        });
+    }
+
+    Ok(())
+}
+
+/// ---
+/// cache all validators profile and snapshot session stats at the last block of the session
+pub async fn cache_session_stats_records(
+    records: &Records,
+    block_hash: Option<H256>,
+) -> Result<(), OnetError> {
+    let start = Instant::now();
+    let onet: Onet = Onet::new().await;
+    let api = onet.client().clone();
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+    // ---
+    // cache all validators profile every new session and snapshot session stats
+
+    // Initialize validators vec
+    let mut validators: Vec<ValidatorProfileRecord> = Vec::new();
+
+    // Load TVP stashes
+    let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url().await?;
+
+    if let Some(block) = api.rpc().header(block_hash).await? {
+        // // get previous block_hash and if is a new era get previous era_index
+        let era_index = if records.is_first_epoch(records.current_era()) {
+            records.current_era() - 1
+        } else {
+            records.current_era()
+        };
+        let epoch_index = records.current_epoch() - 1;
+
+        // Fetch active validators
+        let authorities_addr = node_runtime::storage().session().validators();
+        if let Some(authorities) = api
+            .storage()
+            .fetch(&authorities_addr, Some(block.parent_hash))
+            .await?
+        {
+            // Fetch all validators
+            let validators_addr = node_runtime::storage().staking().validators_root();
+            let mut iter = api
+                .storage()
+                .iter(validators_addr, 10, Some(block.parent_hash))
+                .await?;
+            while let Some((key, validator_prefs)) = iter.next().await? {
+                // validator stash address
+                let stash = get_account_id_from_storage_key(key);
+                // create a new validator instance
+                let mut v = ValidatorProfileRecord::new(stash.clone());
+                // validator controller address
+                let bonded_addr = node_runtime::storage().staking().bonded(&stash);
+                if let Some(controller) = api
+                    .storage()
+                    .fetch(&bonded_addr, Some(block.parent_hash))
+                    .await?
+                {
+                    v.controller = Some(controller.clone());
+                    // get own stake
+                    v.own_stake =
+                        get_own_stake_via_controller(&onet, &controller, Some(block.parent_hash))
+                            .await?;
+
+                    // deconstruct commisssion
+                    let Perbill(commission) = validator_prefs.commission;
+                    v.commission = commission;
+
+                    // verify subset (1_000_000_000 = 100% commission)
+                    v.subset = if commission != 1_000_000_000 {
+                        if !tvp_stashes.contains(&stash) {
+                            Subset::NONTVP
+                        } else {
+                            Subset::TVP
+                        }
+                    } else {
+                        Subset::C100
+                    };
+
+                    // check if is oversubscribed
+                    v.is_oversubscribed =
+                        verify_oversubscribed(&onet, era_index, &stash, Some(block.parent_hash))
+                            .await?;
+
+                    // check if is in active set
+                    v.is_active = authorities.contains(&stash);
+
+                    // get identity
+                    v.identity = get_identity(&onet, &stash, None).await?;
+
+                    let serialized = serde_json::to_string(&v)?;
+                    redis::cmd("SET")
+                        .arg(CacheKey::ValidatorProfileByAccount(stash))
+                        .arg(serialized)
+                        .query_async(&mut cache as &mut Connection)
+                        .await
+                        .map_err(CacheError::RedisCMDError)?;
+
+                    //
+                    validators.push(v);
+                }
+            }
+
+            // cache points from the parent_block_hash of the session
+            let mut nss = NetworkSessionStats::new(epoch_index);
+
+            // Fetch Era reward points
+            let era_reward_points_addr = node_runtime::storage()
+                .staking()
+                .eras_reward_points(&era_index);
+            if let Some(era_reward_points) = api
+                .storage()
+                .fetch(&era_reward_points_addr, Some(block.parent_hash))
+                .await?
+            {
+                nss.total_reward_points = era_reward_points.total;
+
+                for (stash, points) in era_reward_points.individual.iter() {
+                    validators
+                        .iter_mut()
+                        .filter(|v| v.stash.is_some())
+                        .filter(|v| *(v.stash.as_ref().unwrap()) == *stash)
+                        .for_each(|v| {
+                            (*v).points = *points;
+                        });
+                }
+            }
+
+            // build stats
+            //
+            // general session stats
+            // total staked
+            let eras_total_stake_addr = node_runtime::storage()
+                .staking()
+                .eras_total_stake(&era_index);
+            if let Some(total_staked) = api
+                .storage()
+                .fetch(&eras_total_stake_addr, Some(block.parent_hash))
+                .await?
+            {
+                nss.total_staked = total_staked;
+            };
+
+            // total rewarded from previous era
+            let eras_total_reward_addr = node_runtime::storage()
+                .staking()
+                .eras_validator_reward(&era_index - 1);
+            if let Some(last_rewarded) = api
+                .storage()
+                .fetch(&eras_total_reward_addr, Some(block.parent_hash))
+                .await?
+            {
+                nss.last_rewarded = last_rewarded;
+            };
+
+            let subsets = vec![Subset::C100, Subset::NONTVP, Subset::TVP];
+            for subset in subsets {
+                let mut ss = SubsetStats::new(subset.clone());
+
+                // all validators
+                ss.vals_total = validators
+                    .iter()
+                    .filter(|v| v.subset == subset)
+                    .count()
+                    .try_into()
+                    .unwrap();
+
+                // active validators
+                ss.vals_active = validators
+                    .iter()
+                    .filter(|v| v.is_active && v.subset == subset)
+                    .count()
+                    .try_into()
+                    .unwrap();
+
+                // own stake
+                let own_stakes: Vec<u128> = validators
+                    .iter()
+                    .filter(|v| v.subset == subset)
+                    .map(|v| v.own_stake)
+                    .collect();
+
+                ss.vals_own_stake_total = own_stakes.iter().sum::<u128>();
+                ss.vals_own_stake_avg = own_stakes.iter().sum::<u128>() / own_stakes.len() as u128;
+                ss.vals_own_stake_min = *own_stakes.iter().min().unwrap_or_else(|| &0);
+                ss.vals_own_stake_max = *own_stakes.iter().max().unwrap_or_else(|| &0);
+
+                // oversubscribed
+                ss.vals_oversubscribed = validators
+                    .iter()
+                    .filter(|v| v.is_oversubscribed && v.subset == subset)
+                    .count()
+                    .try_into()
+                    .unwrap();
+
+                // points
+                let points: Vec<u32> = validators
+                    .iter()
+                    .filter(|v| v.subset == subset)
+                    .map(|v| v.points)
+                    .collect();
+
+                ss.vals_points_total = points.iter().sum::<u32>();
+                ss.vals_points_avg = points.iter().sum::<u32>() / points.len() as u32;
+                ss.vals_points_min = *points.iter().min().unwrap_or_else(|| &0);
+                ss.vals_points_max = *points.iter().max().unwrap_or_else(|| &0);
+
+                // TODO: flagged (grade F) and exceptional A+ validators
+
+                nss.subsets.push(ss);
+            }
+
+            // serialize and cache
+            let serialized = serde_json::to_string(&nss)?;
+            redis::cmd("SET")
+                .arg(CacheKey::NetworkStatsBySession(Index::Num(
+                    epoch_index.into(),
+                )))
+                .arg(serialized)
+                .query_async(&mut cache as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+
+            // Log sesssion cache processed duration time
+            info!(
+                "Session #{} stats cached ({:?})",
+                epoch_index,
+                start.elapsed()
+            );
+        }
+    }
+
+    Ok(())
 }
