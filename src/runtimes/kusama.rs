@@ -307,7 +307,7 @@ pub async fn process_finalized_block(
             try_run_cache_session_records(&records, Some(block_hash)).await?;
 
             // Cache session stats records every new session
-            try_run_cache_session_stats_records(&records, Some(block_hash)).await?;
+            try_run_cache_session_stats_records(Some(block_hash)).await?;
         }
     }
 
@@ -2579,14 +2579,12 @@ async fn get_authority_index(
 }
 
 pub async fn try_run_cache_session_stats_records(
-    records: &Records,
     block_hash: Option<H256>,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if config.api_enabled {
-        let records_cloned = records.clone();
         async_std::task::spawn(async move {
-            if let Err(e) = cache_session_stats_records(&records_cloned, block_hash).await {
+            if let Err(e) = cache_session_stats_records(block_hash).await {
                 error!("try_run_cache_session_stats_records error: {:?}", e);
             }
         });
@@ -2598,7 +2596,6 @@ pub async fn try_run_cache_session_stats_records(
 /// ---
 /// cache all validators profile and snapshot session stats at the last block of the session
 pub async fn cache_session_stats_records(
-    records: &Records,
     block_hash: Option<H256>,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
@@ -2616,13 +2613,18 @@ pub async fn cache_session_stats_records(
     let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url().await?;
 
     if let Some(block) = api.rpc().header(block_hash).await? {
-        // // get previous block_hash and if is a new era get previous era_index
-        let era_index = if records.is_first_epoch(records.current_era()) {
-            records.current_era() - 1
-        } else {
-            records.current_era()
+        
+        let active_era_addr = node_runtime::storage().staking().active_era();
+        let era_index = match api.storage().fetch(&active_era_addr, Some(block.parent_hash)).await? {
+            Some(info) => info.index,
+            None => return Err("Active era not defined".into()),
         };
-        let epoch_index = records.current_epoch() - 1;
+
+        let current_index_addr = node_runtime::storage().session().current_index();
+        let epoch_index = match api.storage().fetch(&current_index_addr, Some(block.parent_hash)).await? {
+            Some(index) => index,
+            None => return Err("Current session index not defined".into()),
+        };
 
         // Fetch active validators
         let authorities_addr = node_runtime::storage().session().validators();
@@ -2695,7 +2697,7 @@ pub async fn cache_session_stats_records(
             }
 
             // cache points from the parent_block_hash of the session
-            let mut nss = NetworkSessionStats::new(epoch_index);
+            let mut nss = NetworkSessionStats::new(epoch_index, (block.number - 1) as u64);
 
             // Fetch Era reward points
             let era_reward_points_addr = node_runtime::storage()
@@ -2722,6 +2724,18 @@ pub async fn cache_session_stats_records(
             // build stats
             //
             // general session stats
+            // total issuance
+            let total_issuance_addr = node_runtime::storage()
+                .balances()
+                .total_issuance();
+            if let Some(total_issuance) = api
+                .storage()
+                .fetch(&total_issuance_addr, Some(block.parent_hash))
+                .await?
+            {
+                nss.total_issuance = total_issuance;
+            };
+
             // total staked
             let eras_total_stake_addr = node_runtime::storage()
                 .staking()

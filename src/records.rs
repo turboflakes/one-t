@@ -1390,7 +1390,9 @@ impl Validity for SessionStats {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct NetworkSessionStats {
     pub session: EpochIndex,
+    pub block_number: BlockNumber,
     pub subsets: Vec<SubsetStats>,
+    pub total_issuance: u128,
     pub total_reward_points: u32,
     pub total_staked: u128,
     pub last_rewarded: u128,
@@ -1403,10 +1405,12 @@ impl Validity for NetworkSessionStats {
 }
 
 impl NetworkSessionStats {
-    pub fn new(session: EpochIndex) -> Self {
+    pub fn new(session: EpochIndex, block_number: BlockNumber) -> Self {
         Self {
             session,
+            block_number,
             subsets: Vec::new(),
+            total_issuance: 0,
             total_reward_points: 0,
             total_staked: 0,
             last_rewarded: 0,
