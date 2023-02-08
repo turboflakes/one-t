@@ -2595,9 +2595,7 @@ pub async fn try_run_cache_session_stats_records(
 
 /// ---
 /// cache all validators profile and snapshot session stats at the last block of the session
-pub async fn cache_session_stats_records(
-    block_hash: Option<H256>,
-) -> Result<(), OnetError> {
+pub async fn cache_session_stats_records(block_hash: Option<H256>) -> Result<(), OnetError> {
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
     let api = onet.client().clone();
@@ -2613,15 +2611,22 @@ pub async fn cache_session_stats_records(
     let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url().await?;
 
     if let Some(block) = api.rpc().header(block_hash).await? {
-        
         let active_era_addr = node_runtime::storage().staking().active_era();
-        let era_index = match api.storage().fetch(&active_era_addr, Some(block.parent_hash)).await? {
+        let era_index = match api
+            .storage()
+            .fetch(&active_era_addr, Some(block.parent_hash))
+            .await?
+        {
             Some(info) => info.index,
             None => return Err("Active era not defined".into()),
         };
 
         let current_index_addr = node_runtime::storage().session().current_index();
-        let epoch_index = match api.storage().fetch(&current_index_addr, Some(block.parent_hash)).await? {
+        let epoch_index = match api
+            .storage()
+            .fetch(&current_index_addr, Some(block.parent_hash))
+            .await?
+        {
             Some(index) => index,
             None => return Err("Current session index not defined".into()),
         };
@@ -2725,9 +2730,7 @@ pub async fn cache_session_stats_records(
             //
             // general session stats
             // total issuance
-            let total_issuance_addr = node_runtime::storage()
-                .balances()
-                .total_issuance();
+            let total_issuance_addr = node_runtime::storage().balances().total_issuance();
             if let Some(total_issuance) = api
                 .storage()
                 .fetch(&total_issuance_addr, Some(block.parent_hash))
