@@ -24,7 +24,7 @@ use crate::api::handlers::{
     health::get_health,
     info::get_info,
     parachains::get_parachains,
-    pool::{get_pool, get_pool_nomination, get_pool_nominees, get_pools_stats},
+    // pool::{get_pool, get_pool_nomination, get_pool_nominees, get_pools_stats},
     sessions::{get_session_by_index, get_sessions},
     validators::{
         get_peer_by_authority, get_validator_by_stash, get_validator_grade_by_stash,
@@ -81,14 +81,13 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
                         .route("", web::get().to(get_validators)),
                 )
                 // PARACHAIN routes
-                .service(web::scope("/parachains").route("", web::get().to(get_parachains)))
-                // POOL routes
-                .service(
-                    web::scope("/pool")
-                        .route("/{id}", web::get().to(get_pool))
-                        .route("/{id}/nominees", web::get().to(get_pool_nominees))
-                        .route("/{id}/nomination", web::get().to(get_pool_nomination))
-                        .route("", web::get().to(get_pools_stats)),
-                ),
+                .service(web::scope("/parachains").route("", web::get().to(get_parachains))), // POOL routes
+                                                                                              // .service(
+                                                                                              //     web::scope("/pool")
+                                                                                              //         .route("/{id}", web::get().to(get_pool))
+                                                                                              //         .route("/{id}/nominees", web::get().to(get_pool_nominees))
+                                                                                              //         .route("/{id}/nomination", web::get().to(get_pool_nomination))
+                                                                                              //         .route("", web::get().to(get_pools_stats)),
+                                                                                              // ),
         );
 }
