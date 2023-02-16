@@ -151,14 +151,8 @@ pub struct ActiveNominee {
 }
 
 impl ActiveNominee {
-    pub fn with(
-        account: AccountId32,
-        value: u128,
-    ) -> Self {
-        Self {
-            account,
-            value,
-        }
+    pub fn with(account: AccountId32, value: u128) -> Self {
+        Self { account, value }
     }
 }
 

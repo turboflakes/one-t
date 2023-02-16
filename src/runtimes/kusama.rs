@@ -330,12 +330,8 @@ pub async fn process_finalized_block(
     // Note: this records should be updated after the switch of session
     track_records(&onet, records, block_number, block_hash).await?;
 
-    // TODO: include block_hash
     // Cache pools every minute
-    // try_run_cache_pools_data(&onet, block_number, is_loading).await?;
-    // if (block_number as f64 % 10.0_f64) == 0.0_f64 {
-    //     try_run_cache_nomination_pools(records.current_epoch(), block_number, block_hash).await?;
-    // }
+    try_run_cache_nomination_pools_stats(block_number, block_hash).await?;
 
     // Cache records at every block
     cache_track_records(&onet, &records).await?;
@@ -2148,36 +2144,35 @@ pub async fn calculate_apr_from_stashes(
 
     if nominees_total_eras > 0 {
         let avg_points_per_nominee_per_era = nominees_total_points / nominees_total_eras;
-        info!(
+        debug!(
             "avg_points_per_nominee_per_era: {}",
             avg_points_per_nominee_per_era
         );
         let avg_stake_per_nominee_per_era = nominees_total_stake / nominees_total_eras;
-        info!(
+        debug!(
             "avg_stake_per_nominee_per_era: {}",
             avg_stake_per_nominee_per_era
         );
         let avg_reward_per_era = total_reward / total_eras;
-        info!("avg_reward_per_era: {}", avg_reward_per_era);
+        debug!("avg_reward_per_era: {}", avg_reward_per_era);
         let avg_points_per_era = total_points / total_eras;
-        info!("avg_points_per_era: {}", avg_points_per_era);
+        debug!("avg_points_per_era: {}", avg_points_per_era);
 
         let avg_reward_per_nominee_per_era =
             (avg_points_per_nominee_per_era * avg_reward_per_era) / avg_points_per_era;
-        info!(
+        debug!(
             "avg_reward_per_nominee_per_era: {}",
             avg_reward_per_nominee_per_era
         );
 
         let avg_commission_per_nominee = nominees_total_commission / stashes.len() as u128;
-        info!("avg_commission_per_nominee: {}", avg_commission_per_nominee);
+        debug!("avg_commission_per_nominee: {}", avg_commission_per_nominee);
 
         let commission = avg_commission_per_nominee as f64 / 1_000_000_000.0_f64;
         let apr: f64 = (avg_reward_per_nominee_per_era as f64 * (1.0 - commission))
             * (1.0 / avg_stake_per_nominee_per_era as f64)
             * config.eras_per_day as f64
             * 365.0;
-        info!("apr: {}", apr);
         info!(
             "Nomination pools nominees APR #{} calculated ({:?})",
             apr,
@@ -2217,6 +2212,24 @@ pub async fn try_run_cache_nomination_pools(
                 error!("cache_nomination_pools_stats error: {:?}", e);
             }
         });
+    }
+    Ok(())
+}
+
+pub async fn try_run_cache_nomination_pools_stats(
+    block_number: BlockNumber,
+    block_hash: Option<H256>,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if config.pools_enabled {
+        // collect nomination stats every minute
+        if (block_number as f64 % 10.0_f64) == 0.0_f64 {
+            async_std::task::spawn(async move {
+                if let Err(e) = cache_nomination_pools_stats(block_number, block_hash).await {
+                    error!("cache_nomination_pools_stats error: {:?}", e);
+                }
+            });
+        }
     }
     Ok(())
 }
