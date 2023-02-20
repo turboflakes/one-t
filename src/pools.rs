@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::{fs, result::Result, time::SystemTime};
 use subxt::ext::{sp_core::H256, sp_runtime::AccountId32};
-pub const POOL_FILENAME: &str = ".pool";
+// pub const POOL_FILENAME: &str = ".pool";
 
 pub type PoolId = u32;
 

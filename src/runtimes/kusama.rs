@@ -2422,12 +2422,6 @@ pub async fn cache_nomination_pools(
     // fetch last pool id
     let last_pool_id_addr = node_runtime::storage().nomination_pools().last_pool_id();
     if let Some(last_pool_id) = api.storage().fetch(&last_pool_id_addr, block_hash).await? {
-        let active_era_addr = node_runtime::storage().staking().active_era();
-        let era_index = match api.storage().fetch(&active_era_addr, block_hash).await? {
-            Some(info) => info.index,
-            None => return Err("Active era not defined".into()),
-        };
-
         let current_index_addr = node_runtime::storage().session().current_index();
         let epoch_index = match api.storage().fetch(&current_index_addr, block_hash).await? {
             Some(index) => index,
@@ -2494,11 +2488,7 @@ pub async fn cache_nomination_pools(
                         // serialize and cache pool
                         let serialized = serde_json::to_string(&pool)?;
                         redis::cmd("SET")
-                            .arg(CacheKey::NominationPoolRecord(
-                                era_index,
-                                epoch_index,
-                                pool_id,
-                            ))
+                            .arg(CacheKey::NominationPoolRecord(epoch_index, pool_id))
                             .arg(serialized)
                             .query_async(&mut cache as &mut Connection)
                             .await
