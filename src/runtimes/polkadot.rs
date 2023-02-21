@@ -368,7 +368,7 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                             session_stats.explicit_votes += para_record.total_explicit_votes();
                             session_stats.implicit_votes += para_record.total_implicit_votes();
                             session_stats.missed_votes += para_record.total_missed_votes();
-                            session_stats.explicit_votes += para_record.total_explicit_votes();
+                            session_stats.disputes += para_record.total_disputes();
 
                             //
                             let serialized = serde_json::to_string(&para_record)?;
