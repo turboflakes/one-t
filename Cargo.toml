@@ -1,6 +1,6 @@
 [package]
 name = "onet"
-version = "0.11.25"
+version = "0.11.26"
 authors = ["Paulo <paulo@turboflakes.io>"]
 description = "ONE-T is a performance report bot for the Polkadot and Kusama network with a special focus on the One Thousand validator programme" 
 edition = "2018"
