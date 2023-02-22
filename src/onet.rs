@@ -216,7 +216,7 @@ impl Onet {
 
     async fn subscribe_on_chain_events(&self) -> Result<(), OnetError> {
         // initialize and load TVP stashes
-        try_fetch_stashes_from_remote_url().await?;
+        try_fetch_stashes_from_remote_url(false).await?;
 
         self.cache_network().await?;
 
@@ -333,7 +333,9 @@ fn read_tvp_cached_filename(filename: &str) -> Result<Vec<Validator>, OnetError>
 }
 
 /// Fetch stashes from 1kv endpoint https://polkadot.w3f.community/candidates
-pub async fn try_fetch_stashes_from_remote_url() -> Result<Vec<AccountId32>, OnetError> {
+pub async fn try_fetch_stashes_from_remote_url(
+    is_loading: bool,
+) -> Result<Vec<AccountId32>, OnetError> {
     let config = CONFIG.clone();
     let url = format!(
         "https://{}.w3f.community/candidates",
@@ -348,29 +350,35 @@ pub async fn try_fetch_stashes_from_remote_url() -> Result<Vec<AccountId32>, One
         config.chain_name.to_lowercase()
     );
 
-    let validators: Vec<Validator> = match reqwest::get(url.to_string()).await {
-        Ok(request) => {
-            match request.json::<Vec<Validator>>().await {
-                Ok(validators) => {
-                    debug!("validators {:?}", validators);
-                    // Serialize and cache
-                    let serialized = serde_json::to_string(&validators)?;
-                    fs::write(&tvp_validators_filename, serialized)?;
-                    validators
-                }
-                Err(e) => {
-                    warn!("Parsing json from url {} failed with error: {:?}", url, e);
-                    // Try to read from cached file
-                    read_tvp_cached_filename(&tvp_validators_filename)?
+    let validators: Vec<Validator> = if is_loading {
+        // Try to read from cached file
+        read_tvp_cached_filename(&tvp_validators_filename)?
+    } else {
+        match reqwest::get(url.to_string()).await {
+            Ok(request) => {
+                match request.json::<Vec<Validator>>().await {
+                    Ok(validators) => {
+                        debug!("validators {:?}", validators);
+                        // Serialize and cache
+                        let serialized = serde_json::to_string(&validators)?;
+                        fs::write(&tvp_validators_filename, serialized)?;
+                        validators
+                    }
+                    Err(e) => {
+                        warn!("Parsing json from url {} failed with error: {:?}", url, e);
+                        // Try to read from cached file
+                        read_tvp_cached_filename(&tvp_validators_filename)?
+                    }
                 }
             }
-        }
-        Err(e) => {
-            warn!("Fetching url {} failed with error: {:?}", url, e);
-            // Try to read from cached file
-            read_tvp_cached_filename(&tvp_validators_filename)?
+            Err(e) => {
+                warn!("Fetching url {} failed with error: {:?}", url, e);
+                // Try to read from cached file
+                read_tvp_cached_filename(&tvp_validators_filename)?
+            }
         }
     };
+
     // Parse stashes
     let v: Vec<AccountId32> = validators
         .iter()
