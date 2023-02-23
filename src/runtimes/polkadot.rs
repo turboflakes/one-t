@@ -307,7 +307,7 @@ pub async fn process_finalized_block(
             try_run_cache_session_records(&records, Some(block_hash)).await?;
 
             // Cache session stats records every new session
-            try_run_cache_session_stats_records(Some(block_hash)).await?;
+            try_run_cache_session_stats_records(Some(block_hash), is_loading).await?;
         }
     }
 
@@ -368,7 +368,7 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                             session_stats.explicit_votes += para_record.total_explicit_votes();
                             session_stats.implicit_votes += para_record.total_implicit_votes();
                             session_stats.missed_votes += para_record.total_missed_votes();
-                            session_stats.explicit_votes += para_record.total_explicit_votes();
+                            session_stats.disputes += para_record.total_disputes();
 
                             //
                             let serialized = serde_json::to_string(&para_record)?;
@@ -1604,7 +1604,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     let mut validators: Validators = Vec::new();
 
     // Load TVP stashes
-    let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url().await?;
+    let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url(false).await?;
 
     // Fetch active validators
     let authorities_addr = node_runtime::storage().session().validators();
@@ -2580,11 +2580,12 @@ async fn get_authority_index(
 
 pub async fn try_run_cache_session_stats_records(
     block_hash: Option<H256>,
+    is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if config.api_enabled {
         async_std::task::spawn(async move {
-            if let Err(e) = cache_session_stats_records(block_hash).await {
+            if let Err(e) = cache_session_stats_records(block_hash, is_loading).await {
                 error!("try_run_cache_session_stats_records error: {:?}", e);
             }
         });
@@ -2595,7 +2596,10 @@ pub async fn try_run_cache_session_stats_records(
 
 /// ---
 /// cache all validators profile and snapshot session stats at the last block of the session
-pub async fn cache_session_stats_records(block_hash: Option<H256>) -> Result<(), OnetError> {
+pub async fn cache_session_stats_records(
+    block_hash: Option<H256>,
+    is_loading: bool,
+) -> Result<(), OnetError> {
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
     let api = onet.client().clone();
@@ -2608,7 +2612,7 @@ pub async fn cache_session_stats_records(block_hash: Option<H256>) -> Result<(),
     let mut validators: Vec<ValidatorProfileRecord> = Vec::new();
 
     // Load TVP stashes
-    let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url().await?;
+    let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url(is_loading).await?;
 
     if let Some(block) = api.rpc().header(block_hash).await? {
         let active_era_addr = node_runtime::storage().staking().active_era();

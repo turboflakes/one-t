@@ -1124,6 +1124,10 @@ impl ParaRecord {
             .sum()
     }
 
+    pub fn total_disputes(&self) -> u32 {
+        self.disputes.len().try_into().unwrap()
+    }
+
     pub fn get_para_id_stats(&self, para_id: ParaId) -> Option<&ParaStats> {
         self.para_stats.get(&para_id)
     }
@@ -1379,6 +1383,8 @@ pub struct SessionStats {
     pub implicit_votes: u32,
     #[serde(rename = "mv")]
     pub missed_votes: u32,
+    #[serde(rename = "di")]
+    pub disputes: u32,
 }
 
 impl Validity for SessionStats {
