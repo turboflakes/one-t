@@ -19,47 +19,149 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::api::handlers::params::Params;
 use crate::api::helpers::respond_json;
-use crate::api::responses::CacheMap;
-use crate::cache::{get_conn, CacheKey, Index, RedisPool, Verbosity};
-use crate::config::CONFIG;
+use crate::api::responses::{PoolResult, PoolsResult};
+use crate::cache::{get_conn, CacheKey, Index, RedisPool};
 use crate::errors::{ApiError, CacheError};
-use crate::pools::{Pool, PoolNominees};
-use crate::records::{grade, EpochIndex};
+use crate::pools::{Pool, PoolId, PoolNominees, PoolNomineesStats};
+use crate::records::EpochIndex;
 use actix_web::web::{Data, Json, Path, Query};
 use redis::aio::Connection;
-use serde::{de::Deserializer, Deserialize};
-use std::{fs, path, result::Result};
+use std::convert::TryInto;
+use std::result::Result;
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
-pub struct Params {
-    #[serde(default = "default_index")]
-    session: Index,
+pub async fn get_pools(
+    params: Query<Params>,
+    cache: Data<RedisPool>,
+) -> Result<Json<PoolsResult>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+
+    let current_session: EpochIndex = redis::cmd("GET")
+        .arg(CacheKey::SessionByIndex(Index::Current))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    let mut data: Vec<PoolResult> = Vec::new();
+
+    let (start_session, end_session) = if params.from != 0 && params.from < params.to {
+        (params.from, params.to)
+    } else if params.number_last_sessions != 0 {
+        (
+            current_session - params.number_last_sessions,
+            current_session - 1,
+        )
+    } else {
+        (current_session, current_session)
+    };
+
+    let mut i = Some(start_session);
+    while let Some(session_index) = i {
+        if session_index > end_session {
+            i = None;
+        } else {
+            if let Ok(session_pool_ids) = redis::cmd("ZRANGE")
+                .arg(CacheKey::NominationPoolIdsBySession(session_index))
+                .arg(0) // min
+                .arg(-1) // max
+                .query_async::<Connection, Vec<PoolId>>(&mut conn)
+                .await
+            {
+                if !session_pool_ids.is_empty() {
+                    for id in session_pool_ids.iter() {
+                        let pool: Pool = if params.show_metadata {
+                            if let Ok(serialized_data) = redis::cmd("GET")
+                                .arg(CacheKey::NominationPoolRecord(*id))
+                                .query_async::<Connection, String>(&mut conn)
+                                .await
+                            {
+                                serde_json::from_str(&serialized_data).unwrap_or_default()
+                            } else {
+                                // return Err(ApiError::InternalServerError(format!(
+                                //     "Cache for Pool ID {} is not available.",
+                                //     *id
+                                // )));
+                                // TODO: if not cached attach an error message
+                                Pool::with_id(*id)
+                            }
+                        } else {
+                            Pool::with_id(*id)
+                        };
+
+                        let mut pool_response: PoolResult = pool.into();
+                        pool_response.session = session_index;
+
+                        if params.show_stats {
+                            if let Ok(serialized_data) = redis::cmd("GET")
+                                .arg(CacheKey::NominationPoolStatsByPoolAndSession(
+                                    *id,
+                                    session_index,
+                                ))
+                                .query_async::<Connection, String>(&mut conn)
+                                .await
+                            {
+                                pool_response.stats =
+                                    serde_json::from_str(&serialized_data).unwrap_or_default();
+                            }
+                        }
+
+                        if params.show_nominees {
+                            if let Ok(serialized_data) = redis::cmd("GET")
+                                .arg(CacheKey::NominationPoolNomineesByPoolAndSession(
+                                    *id,
+                                    session_index,
+                                ))
+                                .query_async::<Connection, String>(&mut conn)
+                                .await
+                            {
+                                pool_response.nominees =
+                                    serde_json::from_str(&serialized_data).unwrap_or_default();
+                            }
+                        }
+
+                        if params.show_nstats {
+                            if let Ok(serialized_data) = redis::cmd("GET")
+                                .arg(CacheKey::NominationPoolNomineesByPoolAndSession(
+                                    *id,
+                                    session_index,
+                                ))
+                                .query_async::<Connection, String>(&mut conn)
+                                .await
+                            {
+                                // TODO: nominees_changed
+                                // verify if nominees are different from previous session
+
+                                let pool_nominees: PoolNominees =
+                                    serde_json::from_str(&serialized_data).unwrap_or_default();
+                                let pool_nominees_stats = PoolNomineesStats {
+                                    nominees: pool_nominees.nominees.len().try_into().unwrap(),
+                                    apr: pool_nominees.apr,
+                                    active: pool_nominees.active.len().try_into().unwrap(),
+                                    block_number: pool_nominees.block_number,
+                                };
+                                pool_response.nstats = pool_nominees_stats;
+                            }
+                        }
+
+                        data.push(pool_response.into());
+                    }
+                }
+            }
+
+            i = Some(session_index + 1);
+        }
+    }
+
+    respond_json(data.into())
 }
-
-fn default_index() -> Index {
-    Index::Current
-}
-
-type PoolResponse = Pool;
-
-type PoolsResponse = Vec<Pool>;
-
-// pub async fn get_pools(
-//     id: Path<u32>,
-//     params: Query<Params>,
-//     cache: Data<RedisPool>,
-// ) -> Result<Json<PoolsResponse>, ApiError> {
-//     return respond_json("TODO".into());
-// }
 
 pub async fn get_pool(
     id: Path<u32>,
     params: Query<Params>,
     cache: Data<RedisPool>,
-) -> Result<Json<PoolResponse>, ApiError> {
+) -> Result<Json<PoolResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
-    let config = CONFIG.clone();
 
     // get current session
     let requested_session_index: EpochIndex = match &params.session {
@@ -81,28 +183,41 @@ pub async fn get_pool(
             .map_err(CacheError::RedisCMDError)?,
     };
 
-    let mut pool_data: CacheMap = CacheMap::new();
-
     if let Ok(serialized_data) = redis::cmd("GET")
-        .arg(CacheKey::NominationPoolRecord(requested_session_index, *id))
+        .arg(CacheKey::NominationPoolRecord(*id))
         .query_async::<Connection, String>(&mut conn)
         .await
     {
+        let pool: Pool = serde_json::from_str(&serialized_data).unwrap_or_default();
+        let mut pool_response: PoolResult = pool.into();
+
         if params.show_stats {
             if let Ok(serialized_data) = redis::cmd("GET")
                 .arg(CacheKey::NominationPoolStatsByPoolAndSession(
                     *id,
                     requested_session_index,
                 ))
-                .query_async::<Connection, String>( &mut conn)
+                .query_async::<Connection, String>(&mut conn)
                 .await
             {
-                session_data.insert(String::from("stats"), serialized_data);
+                pool_response.stats = serde_json::from_str(&serialized_data).unwrap_or_default();
             }
         }
 
-        let pool: Pool = serde_json::from_str(&serialized_data).unwrap();
-        return respond_json(pool.into());
+        if params.show_nominees {
+            if let Ok(serialized_data) = redis::cmd("GET")
+                .arg(CacheKey::NominationPoolNomineesByPoolAndSession(
+                    *id,
+                    requested_session_index,
+                ))
+                .query_async::<Connection, String>(&mut conn)
+                .await
+            {
+                pool_response.nominees = serde_json::from_str(&serialized_data).unwrap_or_default();
+            }
+        }
+
+        return respond_json(pool_response);
     } else {
         return Err(ApiError::InternalServerError(format!(
             "Cache for Pool ID {} at session {} is not available.",
@@ -110,94 +225,3 @@ pub async fn get_pool(
         )));
     }
 }
-
-type PoolNomineesResponse = PoolNominees;
-
-// pub async fn get_pool_nominees(id: Path<u32>) -> Result<Json<PoolNomineesResponse>, ApiError> {
-//     let config = CONFIG.clone();
-
-//     if *id != config.pool_id_1 && *id != config.pool_id_2 {
-//         return Err(ApiError::NotFound(format!(
-//             "Pool with ID: {} not found.",
-//             *id
-//         )));
-//     }
-
-//     let filename = format!(
-//         "{}{}_{}_nominees_{}",
-//         config.data_path_read_only,
-//         POOL_FILENAME,
-//         *id,
-//         config.chain_name.to_lowercase()
-//     );
-
-//     // Try to read from cached file
-//     if !path::Path::new(&filename).exists() {
-//         return Err(ApiError::InternalServerError(format!(
-//             "Cache ({}) is not available.",
-//             filename
-//         )));
-//     }
-
-//     let serialized = fs::read_to_string(filename)?;
-//     let pool_nominees: PoolNominees = serde_json::from_str(&serialized).unwrap();
-//     respond_json(pool_nominees.into())
-// }
-
-// type PoolsEraResponse = PoolsEra;
-
-// pub async fn get_pools_stats() -> Result<Json<PoolsEraResponse>, ApiError> {
-//     let config = CONFIG.clone();
-
-//     let filename = format!(
-//         "{}{}s_era_{}",
-//         config.data_path_read_only,
-//         POOL_FILENAME,
-//         config.chain_name.to_lowercase()
-//     );
-
-//     // Try to read from cached file
-//     if !path::Path::new(&filename).exists() {
-//         return Err(ApiError::InternalServerError(format!(
-//             "Cache ({}) is not available.",
-//             filename
-//         )));
-//     }
-
-//     let serialized = fs::read_to_string(filename)?;
-//     let pools_era: PoolsEra = serde_json::from_str(&serialized).unwrap();
-//     respond_json(pools_era.into())
-// }
-
-// type PoolNominationResponse = PoolNomination;
-
-// pub async fn get_pool_nomination(id: Path<u32>) -> Result<Json<PoolNominationResponse>, ApiError> {
-//     let config = CONFIG.clone();
-
-//     if *id != config.pool_id_1 && *id != config.pool_id_2 {
-//         return Err(ApiError::NotFound(format!(
-//             "Pool with ID: {} not found.",
-//             *id
-//         )));
-//     }
-
-//     let filename = format!(
-//         "{}{}_{}_nomination_{}",
-//         config.data_path_read_only,
-//         POOL_FILENAME,
-//         *id,
-//         config.chain_name.to_lowercase()
-//     );
-
-//     // Try to read from cached file
-//     if !path::Path::new(&filename).exists() {
-//         return Err(ApiError::InternalServerError(format!(
-//             "Cache ({}) is not available.",
-//             filename
-//         )));
-//     }
-
-//     let serialized = fs::read_to_string(filename)?;
-//     let pool_nomination: PoolNomination = serde_json::from_str(&serialized).unwrap();
-//     respond_json(pool_nomination.into())
-// }

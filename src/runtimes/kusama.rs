@@ -315,6 +315,14 @@ pub async fn process_finalized_block(
 
             // Cache session stats records every new session
             try_run_cache_session_stats_records(Some(block_hash), is_loading).await?;
+
+            // Cache nomination pools every new session
+            try_run_cache_nomination_pools(
+                new_session_event.session_index,
+                block_number,
+                Some(block_hash),
+            )
+            .await?;
         }
     }
 
@@ -322,7 +330,7 @@ pub async fn process_finalized_block(
     // Note: this records should be updated after the switch of session
     track_records(&onet, records, block_number, block_hash).await?;
 
-    // Cache pools every minute
+    // Cache pool stats every 10 minutes
     try_run_cache_nomination_pools_stats(block_number, block_hash).await?;
 
     // Cache records at every block
@@ -2195,10 +2203,9 @@ pub async fn try_run_cache_nomination_pools(
             }
         });
 
-        // NOTE: network_report is issued every era so lets use the same config to cache nomination pools APR
-        // let calculate_apr = epoch_index as f64 % config.matrix_network_report_epoch_rate as f64
-        // == config.epoch_rate_threshold as f64;
-
+        // NOTE: network_report is issued every era we could use the same config to cache nomination pools APR
+        // but since the APR is based on the current nominees and these can be changed within the session
+        // we calculate the APR every new session for now
         async_std::task::spawn(async move {
             if let Err(e) = cache_nomination_pools_nominees(block_number, block_hash).await {
                 error!("cache_nomination_pools_stats error: {:?}", e);
@@ -2254,8 +2261,7 @@ pub async fn cache_nomination_pools_nominees(
             if pool_id > last_pool_id {
                 valid_pool = None;
             } else {
-                let mut pool_nominees = PoolNominees::new(pool_id);
-                pool_nominees.session = epoch_index;
+                let mut pool_nominees = PoolNominees::new();
                 pool_nominees.block_number = block_number;
 
                 // fetch pool nominees
@@ -2286,10 +2292,7 @@ pub async fn cache_nomination_pools_nominees(
                             if let Some(individual) =
                                 exposure.others.iter().find(|x| x.who == pool_stash_account)
                             {
-                                active.push(ActiveNominee::with(
-                                    individual.who.clone(),
-                                    individual.value,
-                                ));
+                                active.push(ActiveNominee::with(stash.clone(), individual.value));
                             }
                         }
                     }
@@ -2346,8 +2349,7 @@ pub async fn cache_nomination_pools_stats(
             if pool_id > last_pool_id {
                 valid_pool = None;
             } else {
-                let mut pool_stats = PoolStats::new(pool_id);
-                pool_stats.session = epoch_index;
+                let mut pool_stats = PoolStats::new();
                 pool_stats.block_number = block_number;
 
                 let bonded_pools_addr = node_runtime::storage()
@@ -2409,7 +2411,6 @@ pub async fn cache_nomination_pools(
     let onet: Onet = Onet::new().await;
     let api = onet.client().clone();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-    let config = CONFIG.clone();
 
     // fetch last pool id
     let last_pool_id_addr = node_runtime::storage().nomination_pools().last_pool_id();
@@ -2444,7 +2445,7 @@ pub async fn cache_nomination_pools(
                         let state = match bonded.state {
                             PoolState::Blocked => pools::PoolState::Blocked,
                             PoolState::Destroying => pools::PoolState::Destroying,
-                            PoolState::Open => pools::PoolState::Open,
+                            _ => pools::PoolState::Open,
                         };
                         pool.state = state;
 
@@ -2480,13 +2481,21 @@ pub async fn cache_nomination_pools(
                         // serialize and cache pool
                         let serialized = serde_json::to_string(&pool)?;
                         redis::cmd("SET")
-                            .arg(CacheKey::NominationPoolRecord(epoch_index, pool_id))
+                            .arg(CacheKey::NominationPoolRecord(pool_id))
                             .arg(serialized)
                             .query_async(&mut cache as &mut Connection)
                             .await
                             .map_err(CacheError::RedisCMDError)?;
                     }
                 }
+                // cache pool_id into a sorted set by session
+                redis::cmd("ZADD")
+                    .arg(CacheKey::NominationPoolIdsBySession(epoch_index))
+                    .arg(0)
+                    .arg(pool_id)
+                    .query_async(&mut cache as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?;
 
                 valid_pool = Some(pool_id + 1);
             }

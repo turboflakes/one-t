@@ -99,8 +99,8 @@ pub enum CacheKey {
     ParachainsBySession(EpochIndex),
     ValidatorProfileByAccount(AccountId32),
     // NominationPools
-    NominationPoolRecord(EpochIndex, PoolId),
-    NominationPoolsBySession(EpochIndex),
+    NominationPoolRecord(PoolId),
+    NominationPoolIdsBySession(EpochIndex),
     NominationPoolStatsByPoolAndSession(PoolId, EpochIndex),
     NominationPoolNomineesByPoolAndSession(PoolId, EpochIndex),
 }
@@ -128,7 +128,7 @@ impl std::fmt::Display for CacheKey {
                 write!(f, "{}:{}", authority_key, verbosity)
             }
             Self::AuthorityKeyByAccountAndSession(account, session_index) => {
-                write!(f, "akas:{}:{}", account, session_index)
+                write!(f, "ak:{}:{}", session_index, account)
             }
             Self::AuthorityKeysBySession(session_index) => write!(f, "aks:{}", session_index),
             Self::AuthorityKeysBySessionParaOnly(session_index) => {
@@ -140,15 +140,15 @@ impl std::fmt::Display for CacheKey {
             Self::ValidatorProfileByAccount(account) => {
                 write!(f, "vpa:{}", account)
             }
-            Self::NominationPoolRecord(session_index, pool_id) => {
-                write!(f, "np:{}:{}", session_index, pool_id)
+            Self::NominationPoolRecord(pool_id) => {
+                write!(f, "np:{}", pool_id)
             }
-            Self::NominationPoolsBySession(session_index) => write!(f, "nps:{}", session_index),
+            Self::NominationPoolIdsBySession(session_index) => write!(f, "nps:{}", session_index),
             Self::NominationPoolStatsByPoolAndSession(pool_id, session_index) => {
-                write!(f, "npsps:{}:{}", pool_id, session_index)
+                write!(f, "nps:{}:{}", session_index, pool_id)
             }
             Self::NominationPoolNomineesByPoolAndSession(pool_id, session_index) => {
-                write!(f, "npnps:{}:{}", pool_id, session_index)
+                write!(f, "npn:{}:{}", session_index, pool_id)
             }
         }
     }

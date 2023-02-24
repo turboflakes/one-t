@@ -21,7 +21,7 @@
 
 use crate::config::CONFIG;
 use crate::errors::OnetError;
-use crate::records::{BlockNumber, EpochIndex, EraIndex, Identity};
+use crate::records::{BlockNumber, EpochIndex, EraIndex, Identity, Validity};
 use codec::{Decode, Encode};
 use hex::ToHex;
 use log::{debug, error, info, warn};
@@ -36,7 +36,7 @@ pub type PoolId = u32;
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Pool {
     #[serde(default)]
-    pub id: u32,
+    pub id: PoolId,
     #[serde(default)]
     pub metadata: String,
     #[serde(default)]
@@ -45,13 +45,27 @@ pub struct Pool {
     pub state: PoolState,
     pub block_number: BlockNumber,
 }
+
 impl Pool {
-    pub fn with_id_and_metadata(id: u32, metadata: String) -> Self {
+    pub fn with_id(id: PoolId) -> Self {
+        Self {
+            id,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_id_and_metadata(id: PoolId, metadata: String) -> Self {
         Self {
             id,
             metadata,
             ..Default::default()
         }
+    }
+}
+
+impl Validity for Pool {
+    fn is_empty(&self) -> bool {
+        self.block_number == 0
     }
 }
 
@@ -84,11 +98,21 @@ pub enum PoolState {
     Open,
     Blocked,
     Destroying,
+    NotDefined,
+}
+
+impl PoolState {
+    pub fn is_not_defined(&self) -> bool {
+        match self {
+            Self::NotDefined => true,
+            _ => false,
+        }
+    }
 }
 
 impl Default for PoolState {
     fn default() -> PoolState {
-        PoolState::Open
+        PoolState::NotDefined
     }
 }
 
@@ -98,6 +122,7 @@ impl std::fmt::Display for PoolState {
             Self::Open => write!(f, "open"),
             Self::Blocked => write!(f, "blocked"),
             Self::Destroying => write!(f, "destroying"),
+            Self::NotDefined => write!(f, "nd"),
         }
     }
 }
@@ -106,6 +131,7 @@ impl std::fmt::Display for PoolState {
 pub struct Account {
     pub account: AccountId32,
     #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub identity: Option<Identity>,
 }
 
@@ -121,25 +147,44 @@ impl Account {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct PoolNominees {
     #[serde(default)]
-    pub id: u32,
-    #[serde(default)]
-    pub session: EpochIndex,
-    #[serde(default)]
-    pub block_number: BlockNumber,
-    #[serde(default)]
     pub nominees: Vec<AccountId32>,
     #[serde(default)]
     pub apr: f64,
     #[serde(default)]
     pub active: Vec<ActiveNominee>,
+    #[serde(default)]
+    pub block_number: BlockNumber,
 }
 
 impl PoolNominees {
-    pub fn new(id: u32) -> Self {
+    pub fn new() -> Self {
         Self {
-            id,
             ..Default::default()
         }
+    }
+}
+
+impl Validity for PoolNominees {
+    fn is_empty(&self) -> bool {
+        self.block_number == 0
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct PoolNomineesStats {
+    #[serde(default)]
+    pub nominees: u32,
+    #[serde(default)]
+    pub apr: f64,
+    #[serde(default)]
+    pub active: u32,
+    #[serde(default)]
+    pub block_number: BlockNumber,
+}
+
+impl Validity for PoolNomineesStats {
+    fn is_empty(&self) -> bool {
+        self.block_number == 0
     }
 }
 
@@ -159,12 +204,6 @@ impl ActiveNominee {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct PoolStats {
     #[serde(default)]
-    pub id: u32,
-    #[serde(default)]
-    pub session: EpochIndex,
-    #[serde(default)]
-    pub block_number: BlockNumber,
-    #[serde(default)]
     pub points: u128,
     #[serde(default)]
     pub member_counter: u32,
@@ -172,14 +211,21 @@ pub struct PoolStats {
     pub staked: u128,
     #[serde(default)]
     pub reward: u128,
+    #[serde(default)]
+    pub block_number: BlockNumber,
 }
 
 impl PoolStats {
-    pub fn new(id: u32) -> Self {
+    pub fn new() -> Self {
         Self {
-            id,
             ..Default::default()
         }
+    }
+}
+
+impl Validity for PoolStats {
+    fn is_empty(&self) -> bool {
+        self.block_number == 0
     }
 }
 

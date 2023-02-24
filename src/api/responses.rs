@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::pools::{Pool, PoolNominees, PoolNomineesStats, PoolState, PoolStats, Roles};
 use crate::records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, NetworkSessionStats,
     ParaId, ParaStats, ParachainRecord, SessionStats, ValidatorProfileRecord, Validity,
@@ -387,5 +388,50 @@ pub struct NetworkStatsResult {
 impl From<Vec<NetworkStatResult>> for NetworkStatsResult {
     fn from(data: Vec<NetworkStatResult>) -> Self {
         NetworkStatsResult { data }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct PoolResult {
+    id: u32,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    metadata: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    roles: Option<Roles>,
+    #[serde(skip_serializing_if = "PoolState::is_not_defined")]
+    state: PoolState,
+    #[serde(skip_serializing_if = "EpochIndex::is_empty")]
+    pub session: EpochIndex,
+    #[serde(skip_serializing_if = "BlockNumber::is_empty")]
+    block_number: BlockNumber,
+    #[serde(skip_serializing_if = "PoolStats::is_empty")]
+    pub stats: PoolStats,
+    #[serde(skip_serializing_if = "PoolNominees::is_empty")]
+    pub nominees: PoolNominees,
+    #[serde(skip_serializing_if = "PoolNomineesStats::is_empty")]
+    pub nstats: PoolNomineesStats,
+}
+
+impl From<Pool> for PoolResult {
+    fn from(data: Pool) -> Self {
+        PoolResult {
+            id: data.id,
+            metadata: data.metadata,
+            roles: data.roles,
+            state: data.state,
+            block_number: data.block_number,
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct PoolsResult {
+    pub data: Vec<PoolResult>,
+}
+
+impl From<Vec<PoolResult>> for PoolsResult {
+    fn from(data: Vec<PoolResult>) -> Self {
+        PoolsResult { data }
     }
 }
