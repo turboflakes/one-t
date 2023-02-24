@@ -43,17 +43,37 @@ pub async fn get_pools(
         .await
         .map_err(CacheError::RedisCMDError)?;
 
+    // get current session
+    let requested_session_index: EpochIndex = match &params.session {
+        Index::Str(index) => {
+            if String::from("current") == *index {
+                redis::cmd("GET")
+                    .arg(CacheKey::SessionByIndex(Index::Current))
+                    .query_async(&mut conn as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?
+            } else {
+                index.parse::<EpochIndex>().unwrap_or_default()
+            }
+        }
+        _ => redis::cmd("GET")
+            .arg(CacheKey::SessionByIndex(Index::Current))
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?,
+    };
+
     let mut data: Vec<PoolResult> = Vec::new();
 
     let (start_session, end_session) = if params.from != 0 && params.from < params.to {
         (params.from, params.to)
     } else if params.number_last_sessions != 0 {
         (
-            current_session - params.number_last_sessions,
-            current_session - 1,
+            requested_session_index - params.number_last_sessions,
+            requested_session_index - 1,
         )
     } else {
-        (current_session, current_session)
+        (requested_session_index, requested_session_index)
     };
 
     let mut i = Some(start_session);
@@ -120,7 +140,7 @@ pub async fn get_pools(
                             }
                         }
 
-                        if params.show_nstats {
+                        if params.show_nomstats {
                             if let Ok(serialized_data) = redis::cmd("GET")
                                 .arg(CacheKey::NominationPoolNomineesByPoolAndSession(
                                     *id,
@@ -140,7 +160,7 @@ pub async fn get_pools(
                                     active: pool_nominees.active.len().try_into().unwrap(),
                                     block_number: pool_nominees.block_number,
                                 };
-                                pool_response.nstats = pool_nominees_stats;
+                                pool_response.nomstats = pool_nominees_stats;
                             }
                         }
 

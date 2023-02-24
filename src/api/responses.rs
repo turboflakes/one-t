@@ -409,7 +409,7 @@ pub struct PoolResult {
     #[serde(skip_serializing_if = "PoolNominees::is_empty")]
     pub nominees: PoolNominees,
     #[serde(skip_serializing_if = "PoolNomineesStats::is_empty")]
-    pub nstats: PoolNomineesStats,
+    pub nomstats: PoolNomineesStats,
 }
 
 impl From<Pool> for PoolResult {

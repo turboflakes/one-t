@@ -317,12 +317,7 @@ pub async fn process_finalized_block(
             try_run_cache_session_stats_records(Some(block_hash), is_loading).await?;
 
             // Cache nomination pools every new session
-            try_run_cache_nomination_pools(
-                new_session_event.session_index,
-                block_number,
-                Some(block_hash),
-            )
-            .await?;
+            try_run_cache_nomination_pools(block_number, Some(block_hash)).await?;
         }
     }
 
@@ -1847,7 +1842,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                 == config.epoch_rate_threshold as f64
             {
                 if records.total_full_epochs() >= config.pools_minimum_sessions {
-                    match try_run_nomination_pools(&onet, &records, validators).await {
+                    match try_run_nomination(&onet, &records, validators).await {
                         Ok(message) => {
                             onet.matrix()
                                 .send_public_message(&message, Some(&message))
@@ -1863,9 +1858,6 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                     );
                 }
             }
-            // Note: Only cache pools APR.
-            // TODO: Enable pools report via flag, just skip it in the meantime. Pools report is available online.
-            // try_run_cache_pools_era(active_era_index, false).await?;
         }
     } else {
         let message = format!(
@@ -1984,74 +1976,6 @@ fn define_second_pool_call(
         pool_id
     )))
 }
-
-// pub async fn fetch_pool_data(
-//     onet: &Onet,
-//     pool_id: u32,
-//     block_hash: Option<H256>,
-// ) -> Result<Option<Pool>, OnetError> {
-//     let api = onet.client().clone();
-//     let network = Network::load(&api).await?;
-
-//     // Load chain data
-//     let metadata_addr = node_runtime::storage()
-//         .nomination_pools()
-//         .metadata(&pool_id);
-//     if let Some(BoundedVec(metadata)) = api.storage().fetch(&metadata_addr, block_hash).await? {
-//         let bonded_pools_addr = node_runtime::storage()
-//             .nomination_pools()
-//             .bonded_pools(&pool_id);
-//         if let Some(bounded) = api.storage().fetch(&bonded_pools_addr, block_hash).await? {
-//             let unix_now = SystemTime::now()
-//                 .duration_since(SystemTime::UNIX_EPOCH)
-//                 .unwrap();
-
-//             // NOTE: Remove ONE-T metadata url
-//             let metadata = str(metadata);
-
-//             let pool = Pool {
-//                 id: pool_id,
-//                 metadata: metadata
-//                     .replace("• https://one-t.turboflakes.io", "")
-//                     .trim()
-//                     .to_string(),
-//                 member_counter: bounded.member_counter,
-//                 bonded: format!(
-//                     "{} {}",
-//                     bounded.points / 10u128.pow(network.token_decimals as u32),
-//                     network.token_symbol
-//                 ),
-//                 state: format!("{:?}", bounded.state),
-//                 nominees: None,
-//                 ts: unix_now.as_secs(),
-//             };
-//             return Ok(Some(pool));
-//         }
-//     }
-//     Ok(None)
-// }
-
-// pub async fn try_run_cache_pools_data(
-//     onet: &Onet,
-//     block_number: BlockNumber,
-//     is_loading: bool,
-// ) -> Result<(), OnetError> {
-//     let config = CONFIG.clone();
-//     if config.pools_enabled && !is_loading {
-//         if (block_number as f64 % 10.0_f64) == 0.0_f64 {
-//             cache_pool_data(&onet, config.pool_id_1).await?;
-//             cache_pool_data(&onet, config.pool_id_2).await?;
-//         }
-//     }
-//     Ok(())
-// }
-
-// pub async fn cache_pool_data(onet: &Onet, pool_id: u32) -> Result<(), OnetError> {
-//     if let Some(pool) = fetch_pool_data(&onet, pool_id).await? {
-//         pool.cache()?;
-//     }
-//     Ok(())
-// }
 
 // * APR is the annualized average of all stashes from the last X eras.
 pub async fn calculate_apr_from_stashes(
@@ -2173,11 +2097,7 @@ pub async fn calculate_apr_from_stashes(
             * (1.0 / avg_stake_per_nominee_per_era as f64)
             * config.eras_per_day as f64
             * 365.0;
-        info!(
-            "Nomination pools nominees APR #{} calculated ({:?})",
-            apr,
-            start.elapsed()
-        );
+        debug!("APR: {} calculated ({:?})", apr, start.elapsed());
         Ok(apr)
     } else {
         Ok(0.0_f64)
@@ -2185,7 +2105,6 @@ pub async fn calculate_apr_from_stashes(
 }
 
 pub async fn try_run_cache_nomination_pools(
-    epoch_index: EpochIndex,
     block_number: BlockNumber,
     block_hash: Option<H256>,
 ) -> Result<(), OnetError> {
@@ -2316,7 +2235,7 @@ pub async fn cache_nomination_pools_nominees(
         }
         // Log cache processed duration time
         info!(
-            "Nomination pools nominees #{} cached ({:?})",
+            "Pools nominees #{} cached ({:?})",
             epoch_index,
             start.elapsed()
         );
@@ -2333,7 +2252,6 @@ pub async fn cache_nomination_pools_stats(
     let onet: Onet = Onet::new().await;
     let api = onet.client().clone();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-    let config = CONFIG.clone();
 
     // fetch last pool id
     let last_pool_id_addr = node_runtime::storage().nomination_pools().last_pool_id();
@@ -2369,7 +2287,7 @@ pub async fn cache_nomination_pools_stats(
                     }
 
                     // fetch pool reward account free amount
-                    let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
+                    let stash_account = nomination_pool_account(AccountType::Reward, pool_id);
                     let account_addr = node_runtime::storage().system().account(&stash_account);
                     if let Some(account_info) =
                         api.storage().fetch(&account_addr, block_hash).await?
@@ -2395,7 +2313,7 @@ pub async fn cache_nomination_pools_stats(
         }
         // Log cache processed duration time
         info!(
-            "Nomination pools stats #{} cached ({:?})",
+            "Pools stats #{} cached ({:?})",
             epoch_index,
             start.elapsed()
         );
@@ -2501,16 +2419,12 @@ pub async fn cache_nomination_pools(
             }
         }
         // Log cache processed duration time
-        info!(
-            "Nomination pools #{} cached ({:?})",
-            epoch_index,
-            start.elapsed()
-        );
+        info!("Pools #{} cached ({:?})", epoch_index, start.elapsed());
     }
     Ok(())
 }
 
-async fn try_run_nomination_pools(
+async fn try_run_nomination(
     onet: &Onet,
     records: &Records,
     validators: Validators,

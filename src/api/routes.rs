@@ -84,7 +84,7 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
                 .service(web::scope("/parachains").route("", web::get().to(get_parachains)))
                 // POOL routes
                 .service(
-                    web::scope("/pool")
+                    web::scope("/pools")
                         .route("/{id}", web::get().to(get_pool))
                         // .route("/{id}/nomination", web::get().to(get_pool_nomination))
                         .route("", web::get().to(get_pools)),

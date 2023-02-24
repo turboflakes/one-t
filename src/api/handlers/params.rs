@@ -27,7 +27,7 @@ use serde::{de::Deserializer, Deserialize};
 pub struct Params {
     #[serde(default = "default_index")]
     pub session: Index,
-    #[serde(default = "default_number_last_sessions")]
+    #[serde(default)]
     pub number_last_sessions: u32,
     #[serde(default)]
     #[serde(deserialize_with = "parse_session")]
@@ -47,17 +47,13 @@ pub struct Params {
     // show_nominees indicates whether pool nominees should be retrieved or not, default false
     #[serde(default)]
     pub show_nominees: bool,
-    // show_nstats indicates whether pool nominees stats should be retrieved or not, default false
+    // show_nomstats indicates whether pool nominees stats should be retrieved or not, default false
     #[serde(default)]
-    pub show_nstats: bool,
+    pub show_nomstats: bool,
 }
 
 fn default_index() -> Index {
     Index::Current
-}
-
-fn default_number_last_sessions() -> u32 {
-    48
 }
 
 fn parse_session<'de, D>(d: D) -> Result<EpochIndex, D::Error>
