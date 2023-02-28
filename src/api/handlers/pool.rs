@@ -27,6 +27,7 @@ use crate::errors::{ApiError, CacheError};
 use crate::pools::{Pool, PoolId, PoolNominees, PoolNomineesStats};
 use crate::records::EpochIndex;
 use actix_web::web::{Data, Json, Path, Query};
+use log::{debug, error, info, warn};
 use redis::aio::Connection;
 use std::convert::TryInto;
 use std::result::Result;

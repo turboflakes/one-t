@@ -28,13 +28,14 @@ use crate::api::{
 };
 use crate::cache::{get_conn, CacheKey, Index, RedisPool, Verbosity};
 use crate::errors::{ApiError, CacheError};
+use crate::pools::{Pool, PoolId, PoolNominees, PoolNomineesStats};
 use crate::records::{grade, EpochIndex};
 use actix_web::web::{Data, Json, Path, Query};
 use log::warn;
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
-use std::str::FromStr;
+use std::{collections::HashSet, str::FromStr};
 use subxt::ext::sp_runtime::AccountId32;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
@@ -86,6 +87,9 @@ pub struct Params {
     // show_profile indicates whether validator identity should be retrieved or not, default false
     #[serde(default)]
     show_profile: bool,
+    // nominees_only indicates validators that are present on nomination pools as nominees, dafault false
+    #[serde(default)]
+    nominees_only: bool,
     // fetch_peers indicates whether peers should be also retrieved and included in the response, default false
     #[serde(default)]
     fetch_peers: bool,
@@ -470,6 +474,89 @@ pub async fn get_validators(
                     data.push(val.into());
                 }
                 last = Some(session_index + 1);
+            }
+        }
+
+        return respond_json(ValidatorsResult {
+            data,
+            ..Default::default()
+        });
+    }
+
+    // validators in pools (nominees)
+    //
+    if params.nominees_only {
+        let mut data: Vec<ValidatorResult> = Vec::new();
+        let mut nominees: HashSet<AccountId32> = HashSet::new();
+        if let Ok(session_pool_ids) = redis::cmd("ZRANGE")
+            .arg(CacheKey::NominationPoolIdsBySession(
+                requested_session_index,
+            ))
+            .arg(0) // min
+            .arg(-1) // max
+            .query_async::<Connection, Vec<PoolId>>(&mut conn)
+            .await
+        {
+            if !session_pool_ids.is_empty() {
+                for id in session_pool_ids.iter() {
+                    // pull pool nominees and build a unique set of stashes
+                    if let Ok(serialized_data) = redis::cmd("GET")
+                        .arg(CacheKey::NominationPoolNomineesByPoolAndSession(
+                            *id,
+                            requested_session_index,
+                        ))
+                        .query_async::<Connection, String>(&mut conn)
+                        .await
+                    {
+                        let pool_nominees: PoolNominees =
+                            serde_json::from_str(&serialized_data).unwrap_or_default();
+                        for stash in pool_nominees.nominees {
+                            nominees.insert(stash);
+                        }
+                    }
+                }
+            }
+            //
+            // pull profiles
+            //
+            for stash in nominees {
+                if let Ok(authority_key_data) = redis::cmd("HGETALL")
+                    .arg(CacheKey::AuthorityKeyByAccountAndSession(
+                        stash.clone(),
+                        requested_session_index,
+                    ))
+                    .query_async::<Connection, AuthorityKeyCache>(&mut conn as &mut Connection)
+                    .await
+                {
+                    if authority_key_data.is_empty() {
+                        // pull only profile
+                        if let Ok(serialized_data) = redis::cmd("GET")
+                            .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+                            .query_async::<Connection, String>(&mut conn as &mut Connection)
+                            .await
+                        {
+                            let mut v = ValidatorResult::with_address(stash.to_string());
+                            v.session = requested_session_index;
+                            v.profile = serde_json::from_str(&serialized_data).unwrap_or_default();
+                            data.push(v);
+                        }
+                    } else {
+                        let authority_key: AuthorityKey = authority_key_data.into();
+
+                        if let Ok(v) = get_validator_by_authority_key(
+                            authority_key,
+                            params.show_stats,
+                            params.show_summary,
+                            params.show_profile,
+                            false,
+                            cache.clone(),
+                        )
+                        .await
+                        {
+                            data.push(v);
+                        }
+                    }
+                }
             }
         }
 

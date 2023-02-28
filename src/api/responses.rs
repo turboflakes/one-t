@@ -259,6 +259,15 @@ pub struct ValidatorResult {
     pub para_stats: BTreeMap<ParaId, ParaStats>,
 }
 
+impl ValidatorResult {
+    pub fn with_address(address: String) -> Self {
+        Self {
+            address,
+            ..Default::default()
+        }
+    }
+}
+
 impl From<CacheMap> for ValidatorResult {
     fn from(data: CacheMap) -> Self {
         let zero = "0".to_string();
