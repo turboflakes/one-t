@@ -1302,6 +1302,7 @@ pub struct Identity {
     #[serde(default)]
     name: String,
     #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     sub: Option<String>,
 }
 

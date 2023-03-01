@@ -23,6 +23,7 @@ pub mod blocks;
 pub mod health;
 pub mod info;
 pub mod parachains;
+pub mod params;
 pub mod pool;
 pub mod sessions;
 pub mod validators;

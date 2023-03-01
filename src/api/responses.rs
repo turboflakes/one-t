@@ -19,6 +19,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::pools::{
+    Pool, PoolCounter, PoolNominees, PoolNomineesStats, PoolState, PoolStats, Roles,
+};
 use crate::records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, NetworkSessionStats,
     ParaId, ParaStats, ParachainRecord, SessionStats, ValidatorProfileRecord, Validity,
@@ -256,6 +259,21 @@ pub struct ValidatorResult {
     pub para_summary: ParaStats,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub para_stats: BTreeMap<ParaId, ParaStats>,
+    //
+    #[serde(skip_serializing_if = "PoolCounter::is_empty")]
+    pub pool_counter: PoolCounter,
+    //
+    #[serde(skip_serializing_if = "RankingStats::is_empty")]
+    pub ranking: RankingStats,
+}
+
+impl ValidatorResult {
+    pub fn with_address(address: String) -> Self {
+        Self {
+            address,
+            ..Default::default()
+        }
+    }
 }
 
 impl From<CacheMap> for ValidatorResult {
@@ -301,6 +319,7 @@ impl From<CacheMap> for ValidatorResult {
             para,
             para_summary,
             para_stats,
+            ..Default::default()
         }
     }
 }
@@ -310,6 +329,32 @@ pub struct ValidatorsResult {
     #[serde(skip_serializing_if = "EpochIndex::is_empty")]
     pub session: EpochIndex,
     pub data: Vec<ValidatorResult>,
+}
+
+// Validator RankingStats
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct RankingStats {
+    pub score: u32,
+    pub mvr: f64,
+    pub avg_para_points: u32,
+    pub para_epochs: u32,
+}
+
+impl RankingStats {
+    pub fn with(score: u32, mvr: f64, avg_para_points: u32, para_epochs: u32) -> Self {
+        Self {
+            score,
+            mvr,
+            avg_para_points,
+            para_epochs,
+        }
+    }
+}
+
+impl Validity for RankingStats {
+    fn is_empty(&self) -> bool {
+        self.score == 0 && self.mvr == 0.0 && self.avg_para_points == 0 && self.para_epochs == 0
+    }
 }
 
 // Parachains
@@ -387,5 +432,50 @@ pub struct NetworkStatsResult {
 impl From<Vec<NetworkStatResult>> for NetworkStatsResult {
     fn from(data: Vec<NetworkStatResult>) -> Self {
         NetworkStatsResult { data }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct PoolResult {
+    id: u32,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    metadata: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    roles: Option<Roles>,
+    #[serde(skip_serializing_if = "PoolState::is_not_defined")]
+    state: PoolState,
+    #[serde(skip_serializing_if = "EpochIndex::is_empty")]
+    pub session: EpochIndex,
+    #[serde(skip_serializing_if = "BlockNumber::is_empty")]
+    block_number: BlockNumber,
+    #[serde(skip_serializing_if = "PoolStats::is_empty")]
+    pub stats: PoolStats,
+    #[serde(skip_serializing_if = "PoolNominees::is_empty")]
+    pub nominees: PoolNominees,
+    #[serde(skip_serializing_if = "PoolNomineesStats::is_empty")]
+    pub nomstats: PoolNomineesStats,
+}
+
+impl From<Pool> for PoolResult {
+    fn from(data: Pool) -> Self {
+        PoolResult {
+            id: data.id,
+            metadata: data.metadata,
+            roles: data.roles,
+            state: data.state,
+            block_number: data.block_number,
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct PoolsResult {
+    pub data: Vec<PoolResult>,
+}
+
+impl From<Vec<PoolResult>> for PoolsResult {
+    fn from(data: Vec<PoolResult>) -> Self {
+        PoolsResult { data }
     }
 }

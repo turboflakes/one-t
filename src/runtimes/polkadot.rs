@@ -27,7 +27,6 @@ use crate::onet::{
     get_subscribers, get_subscribers_by_epoch, try_fetch_stashes_from_remote_url,
     write_latest_block_number_processed, Onet, ReportType, EPOCH_FILENAME,
 };
-use crate::pools::{Nominee, Pool, PoolNomination, PoolNominees, PoolsEra};
 use crate::records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EpochKey, EraIndex, Identity,
     NetworkSessionStats, ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records,
@@ -35,7 +34,14 @@ use crate::records::{
 };
 use crate::report::{
     group_by_points, position, Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara,
-    RawDataParachains, RawDataPools, RawDataRank, Report, Subset, Validator, Validators,
+    RawDataParachains, RawDataRank, Report, Subset, Validator, Validators,
+};
+use crate::{
+    pools,
+    pools::{
+        nomination_pool_account, Account, AccountType, ActiveNominee, Pool, PoolNominees,
+        PoolStats, Roles,
+    },
 };
 use async_recursion::async_recursion;
 use futures::StreamExt;
@@ -50,7 +56,7 @@ use std::{
     iter::FromIterator,
     result::Result,
     thread, time,
-    time::{Instant, SystemTime},
+    time::Instant,
 };
 use subxt::{
     events::Events,
@@ -70,11 +76,12 @@ mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        pallet_identity::types::Data, polkadot_parachain::primitives::Id,
-        polkadot_primitives::v2::CoreIndex, polkadot_primitives::v2::DisputeStatement,
-        polkadot_primitives::v2::GroupIndex, polkadot_primitives::v2::ValidatorIndex,
-        polkadot_primitives::v2::ValidityAttestation, sp_arithmetic::per_things::Perbill,
-        sp_consensus_babe::digests::PreDigest, sp_core::bounded::bounded_vec::BoundedVec,
+        pallet_identity::types::Data, pallet_nomination_pools::PoolState,
+        polkadot_parachain::primitives::Id, polkadot_primitives::v2::CoreIndex,
+        polkadot_primitives::v2::DisputeStatement, polkadot_primitives::v2::GroupIndex,
+        polkadot_primitives::v2::ValidatorIndex, polkadot_primitives::v2::ValidityAttestation,
+        sp_arithmetic::per_things::Perbill, sp_consensus_babe::digests::PreDigest,
+        sp_core::bounded::bounded_vec::BoundedVec,
     },
     session::events::NewSession,
     // Event,
@@ -308,6 +315,9 @@ pub async fn process_finalized_block(
 
             // Cache session stats records every new session
             try_run_cache_session_stats_records(Some(block_hash), is_loading).await?;
+
+            // Cache nomination pools every new session
+            try_run_cache_nomination_pools(block_number, Some(block_hash)).await?;
         }
     }
 
@@ -315,9 +325,8 @@ pub async fn process_finalized_block(
     // Note: this records should be updated after the switch of session
     track_records(&onet, records, block_number, block_hash).await?;
 
-    // TODO: include block_hash
-    // Cache pools every minute
-    try_run_cache_pools_data(&onet, block_number, is_loading).await?;
+    // Cache pool stats every 10 minutes
+    try_run_cache_nomination_pools_stats(block_number, block_hash).await?;
 
     // Cache records at every block
     cache_track_records(&onet, &records).await?;
@@ -1833,7 +1842,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                 == config.epoch_rate_threshold as f64
             {
                 if records.total_full_epochs() >= config.pools_minimum_sessions {
-                    match try_run_nomination_pools(&onet, &records, validators).await {
+                    match try_run_nomination(&onet, &records, validators).await {
                         Ok(message) => {
                             onet.matrix()
                                 .send_public_message(&message, Some(&message))
@@ -1849,9 +1858,6 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                     );
                 }
             }
-            // Note: Only cache pools APR.
-            // TODO: Enable pools report via flag, just skip it in the meantime. Pools report is available online.
-            try_run_cache_pools_era(active_era_index, false).await?;
         }
     } else {
         let message = format!(
@@ -1971,78 +1977,19 @@ fn define_second_pool_call(
     )))
 }
 
-pub async fn fetch_pool_data(onet: &Onet, pool_id: u32) -> Result<Option<Pool>, OnetError> {
-    let api = onet.client().clone();
-    let network = Network::load(&api).await?;
-
-    // Load chain data
-    let metadata_addr = node_runtime::storage()
-        .nomination_pools()
-        .metadata(&pool_id);
-    if let Some(BoundedVec(metadata)) = api.storage().fetch(&metadata_addr, None).await? {
-        let bonded_pools_addr = node_runtime::storage()
-            .nomination_pools()
-            .bonded_pools(&pool_id);
-        if let Some(bounded) = api.storage().fetch(&bonded_pools_addr, None).await? {
-            let unix_now = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap();
-
-            // NOTE: Remove ONE-T metadata url
-            let metadata = str(metadata);
-
-            let pool = Pool {
-                id: pool_id,
-                metadata: metadata
-                    .replace("• https://one-t.turboflakes.io", "")
-                    .trim()
-                    .to_string(),
-                member_counter: bounded.member_counter,
-                bonded: format!(
-                    "{} {}",
-                    bounded.points / 10u128.pow(network.token_decimals as u32),
-                    network.token_symbol
-                ),
-                state: format!("{:?}", bounded.state),
-                nominees: None,
-                ts: unix_now.as_secs(),
-            };
-            return Ok(Some(pool));
-        }
-    }
-    Ok(None)
-}
-
-pub async fn try_run_cache_pools_data(
+// * APR is the annualized average of all stashes from the last X eras.
+pub async fn calculate_apr_from_stashes(
     onet: &Onet,
-    block_number: BlockNumber,
-    is_loading: bool,
-) -> Result<(), OnetError> {
-    let config = CONFIG.clone();
-    if config.pools_enabled && !is_loading {
-        if (block_number as f64 % 10.0_f64) == 0.0_f64 {
-            cache_pool_data(&onet, config.pool_id_1).await?;
-            cache_pool_data(&onet, config.pool_id_2).await?;
-        }
-    }
-    Ok(())
-}
-
-pub async fn cache_pool_data(onet: &Onet, pool_id: u32) -> Result<(), OnetError> {
-    if let Some(pool) = fetch_pool_data(&onet, pool_id).await? {
-        pool.cache()?;
-    }
-    Ok(())
-}
-
-// * APR is the annualized average of all targets from the last X eras.
-pub async fn calculate_apr(onet: &Onet, targets: Vec<AccountId32>) -> Result<f64, OnetError> {
+    stashes: Vec<AccountId32>,
+    block_hash: Option<H256>,
+) -> Result<f64, OnetError> {
+    let start = Instant::now();
     let api = onet.client().clone();
     let config = CONFIG.clone();
 
     // Fetch active era index
     let active_era_addr = node_runtime::storage().staking().active_era();
-    let active_era_index = match api.storage().fetch(&active_era_addr, None).await? {
+    let active_era_index = match api.storage().fetch(&active_era_addr, block_hash).await? {
         Some(info) => info.index,
         None => return Err("Active era not defined".into()),
     };
@@ -2055,10 +2002,10 @@ pub async fn calculate_apr(onet: &Onet, targets: Vec<AccountId32>) -> Result<f64
     let mut nominees_total_stake: u128 = 0;
     let mut nominees_total_commission: u128 = 0;
 
-    // Collect nominees commission
-    for nominee in targets.iter() {
-        let validator_addr = node_runtime::storage().staking().validators(nominee);
-        if let Some(validator) = api.storage().fetch(&validator_addr, None).await? {
+    // Collect stash commission
+    for stash in stashes.iter() {
+        let validator_addr = node_runtime::storage().staking().validators(stash);
+        if let Some(validator) = api.storage().fetch(&validator_addr, block_hash).await? {
             let Perbill(commission) = validator.commission;
             nominees_total_commission += commission as u128;
         }
@@ -2072,9 +2019,13 @@ pub async fn calculate_apr(onet: &Onet, targets: Vec<AccountId32>) -> Result<f64
         let era_reward_points_addr = node_runtime::storage()
             .staking()
             .eras_reward_points(&era_index);
-        if let Some(era_reward_points) = api.storage().fetch(&era_reward_points_addr, None).await? {
+        if let Some(era_reward_points) = api
+            .storage()
+            .fetch(&era_reward_points_addr, block_hash)
+            .await?
+        {
             for (stash, points) in era_reward_points.individual.iter() {
-                if targets.contains(stash) {
+                if stashes.contains(stash) {
                     nominees_total_eras += 1;
                     nominees_total_points += *points as u128;
 
@@ -2083,7 +2034,7 @@ pub async fn calculate_apr(onet: &Onet, targets: Vec<AccountId32>) -> Result<f64
                         .staking()
                         .eras_stakers(&era_index, stash);
                     if let Some(eras_stakers) =
-                        api.storage().fetch(&eras_stakers_addr, None).await?
+                        api.storage().fetch(&eras_stakers_addr, block_hash).await?
                     {
                         nominees_total_stake += eras_stakers.total;
                     }
@@ -2098,7 +2049,7 @@ pub async fn calculate_apr(onet: &Onet, targets: Vec<AccountId32>) -> Result<f64
                 .eras_validator_reward(&era_index);
             if let Some(eras_validator_reward) = api
                 .storage()
-                .fetch(&eras_validator_reward_addr, None)
+                .fetch(&eras_validator_reward_addr, block_hash)
                 .await?
             {
                 total_reward += eras_validator_reward;
@@ -2117,179 +2068,363 @@ pub async fn calculate_apr(onet: &Onet, targets: Vec<AccountId32>) -> Result<f64
 
     if nominees_total_eras > 0 {
         let avg_points_per_nominee_per_era = nominees_total_points / nominees_total_eras;
-        info!(
+        debug!(
             "avg_points_per_nominee_per_era: {}",
             avg_points_per_nominee_per_era
         );
         let avg_stake_per_nominee_per_era = nominees_total_stake / nominees_total_eras;
-        info!(
+        debug!(
             "avg_stake_per_nominee_per_era: {}",
             avg_stake_per_nominee_per_era
         );
         let avg_reward_per_era = total_reward / total_eras;
-        info!("avg_reward_per_era: {}", avg_reward_per_era);
+        debug!("avg_reward_per_era: {}", avg_reward_per_era);
         let avg_points_per_era = total_points / total_eras;
-        info!("avg_points_per_era: {}", avg_points_per_era);
+        debug!("avg_points_per_era: {}", avg_points_per_era);
 
         let avg_reward_per_nominee_per_era =
             (avg_points_per_nominee_per_era * avg_reward_per_era) / avg_points_per_era;
-        info!(
+        debug!(
             "avg_reward_per_nominee_per_era: {}",
             avg_reward_per_nominee_per_era
         );
 
-        let avg_commission_per_nominee = nominees_total_commission / targets.len() as u128;
-        info!("avg_commission_per_nominee: {}", avg_commission_per_nominee);
+        let avg_commission_per_nominee = nominees_total_commission / stashes.len() as u128;
+        debug!("avg_commission_per_nominee: {}", avg_commission_per_nominee);
 
         let commission = avg_commission_per_nominee as f64 / 1_000_000_000.0_f64;
         let apr: f64 = (avg_reward_per_nominee_per_era as f64 * (1.0 - commission))
             * (1.0 / avg_stake_per_nominee_per_era as f64)
             * config.eras_per_day as f64
             * 365.0;
-        info!("apr: {}", apr);
+        debug!("APR: {} calculated ({:?})", apr, start.elapsed());
         Ok(apr)
     } else {
         Ok(0.0_f64)
     }
 }
 
-pub async fn try_run_cache_pools_era(
-    era_index: EraIndex,
-    send_report: bool,
+pub async fn try_run_cache_nomination_pools(
+    block_number: BlockNumber,
+    block_hash: Option<H256>,
 ) -> Result<(), OnetError> {
-    async_std::task::spawn(async move {
-        if let Err(e) = run_cache_pools_era(era_index, send_report).await {
-            error!("run_cache_pools_era error: {:?}", e);
-        }
-    });
-
-    Ok(())
-}
-
-pub async fn run_cache_pools_era(era_index: EraIndex, send_report: bool) -> Result<(), OnetError> {
-    let onet: Onet = Onet::new().await;
-    let client = onet.client();
     let config = CONFIG.clone();
-
     if config.pools_enabled {
-        match cache_pools_era(&onet, era_index).await {
-            Ok((onet_pools, pools_avg_apr)) => {
-                if send_report {
-                    let network = Network::load(client).await?;
-
-                    let metadata = Metadata {
-                        active_era_index: era_index,
-                        ..Default::default()
-                    };
-
-                    let data = RawDataPools {
-                        network,
-                        meta: metadata,
-                        report_type: ReportType::NominationPools,
-                        onet_pools,
-                        pools_avg_apr,
-                    };
-
-                    // Send report only if para records available
-                    let report = Report::from(data);
-
-                    onet.matrix()
-                        .send_public_message(&report.message(), Some(&report.formatted_message()))
-                        .await?;
-                }
+        async_std::task::spawn(async move {
+            if let Err(e) = cache_nomination_pools(block_number, block_hash).await {
+                error!("cache_nomination_pools error: {:?}", e);
             }
-            Err(e) => error!("{}", e),
+        });
+
+        async_std::task::spawn(async move {
+            if let Err(e) = cache_nomination_pools_stats(block_number, block_hash).await {
+                error!("cache_nomination_pools_stats error: {:?}", e);
+            }
+        });
+
+        // NOTE: network_report is issued every era we could use the same config to cache nomination pools APR
+        // but since the APR is based on the current nominees and these can be changed within the session
+        // we calculate the APR every new session for now
+        async_std::task::spawn(async move {
+            if let Err(e) = cache_nomination_pools_nominees(block_number, block_hash).await {
+                error!("cache_nomination_pools_stats error: {:?}", e);
+            }
+        });
+    }
+    Ok(())
+}
+
+pub async fn try_run_cache_nomination_pools_stats(
+    block_number: BlockNumber,
+    block_hash: Option<H256>,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if config.pools_enabled {
+        // collect nomination stats every minute
+        if (block_number as f64 % 10.0_f64) == 0.0_f64 {
+            async_std::task::spawn(async move {
+                if let Err(e) = cache_nomination_pools_stats(block_number, block_hash).await {
+                    error!("cache_nomination_pools_stats error: {:?}", e);
+                }
+            });
         }
+    }
+    Ok(())
+}
+
+pub async fn cache_nomination_pools_nominees(
+    block_number: BlockNumber,
+    block_hash: Option<H256>,
+) -> Result<(), OnetError> {
+    let start = Instant::now();
+    let onet: Onet = Onet::new().await;
+    let api = onet.client().clone();
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+    // fetch last pool id
+    let last_pool_id_addr = node_runtime::storage().nomination_pools().last_pool_id();
+    if let Some(last_pool_id) = api.storage().fetch(&last_pool_id_addr, block_hash).await? {
+        let active_era_addr = node_runtime::storage().staking().active_era();
+        let era_index = match api.storage().fetch(&active_era_addr, block_hash).await? {
+            Some(info) => info.index,
+            None => return Err("Active era not defined".into()),
+        };
+        let current_index_addr = node_runtime::storage().session().current_index();
+        let epoch_index = match api.storage().fetch(&current_index_addr, block_hash).await? {
+            Some(index) => index,
+            None => return Err("Current session index not defined".into()),
+        };
+
+        let mut valid_pool = Some(1);
+        while let Some(pool_id) = valid_pool {
+            if pool_id > last_pool_id {
+                valid_pool = None;
+            } else {
+                let mut pool_nominees = PoolNominees::new();
+                pool_nominees.block_number = block_number;
+
+                // fetch pool nominees
+                let pool_stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
+                let nominators_addr = node_runtime::storage()
+                    .staking()
+                    .nominators(&pool_stash_account);
+                if let Some(nominations) = api.storage().fetch(&nominators_addr, block_hash).await?
+                {
+                    // deconstruct targets
+                    let BoundedVec(stashes) = nominations.targets;
+
+                    // calculate APR
+                    pool_nominees.apr =
+                        calculate_apr_from_stashes(&onet, stashes.clone(), block_hash).await?;
+
+                    pool_nominees.nominees = stashes.clone();
+
+                    let mut active = Vec::<ActiveNominee>::new();
+                    // check active nominees
+                    for stash in stashes {
+                        let eras_stakers_addr = node_runtime::storage()
+                            .staking()
+                            .eras_stakers(era_index, &stash);
+                        if let Some(exposure) =
+                            api.storage().fetch(&eras_stakers_addr, block_hash).await?
+                        {
+                            if let Some(individual) =
+                                exposure.others.iter().find(|x| x.who == pool_stash_account)
+                            {
+                                active.push(ActiveNominee::with(stash.clone(), individual.value));
+                            }
+                        }
+                    }
+                    pool_nominees.active = active;
+
+                    // serialize and cache pool
+                    let serialized = serde_json::to_string(&pool_nominees)?;
+                    redis::cmd("SET")
+                        .arg(CacheKey::NominationPoolNomineesByPoolAndSession(
+                            pool_id,
+                            epoch_index,
+                        ))
+                        .arg(serialized)
+                        .query_async(&mut cache as &mut Connection)
+                        .await
+                        .map_err(CacheError::RedisCMDError)?;
+                }
+
+                valid_pool = Some(pool_id + 1);
+            }
+        }
+        // Log cache processed duration time
+        info!(
+            "Pools nominees #{} cached ({:?})",
+            epoch_index,
+            start.elapsed()
+        );
     }
 
     Ok(())
 }
 
-pub async fn cache_pools_era(
-    onet: &Onet,
-    era_index: EraIndex,
-) -> Result<(Vec<(u32, String, f64)>, f64), OnetError> {
+pub async fn cache_nomination_pools_stats(
+    block_number: BlockNumber,
+    block_hash: Option<H256>,
+) -> Result<(), OnetError> {
+    let start = Instant::now();
+    let onet: Onet = Onet::new().await;
     let api = onet.client().clone();
-    let config = CONFIG.clone();
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
-    let mut onet_pools: Vec<(u32, String, f64)> = Vec::new();
+    // fetch last pool id
+    let last_pool_id_addr = node_runtime::storage().nomination_pools().last_pool_id();
+    if let Some(last_pool_id) = api.storage().fetch(&last_pool_id_addr, block_hash).await? {
+        let current_index_addr = node_runtime::storage().session().current_index();
+        let epoch_index = match api.storage().fetch(&current_index_addr, block_hash).await? {
+            Some(index) => index,
+            None => return Err("Current session index not defined".into()),
+        };
 
-    // Pools Eras
-    let mut pools_era = PoolsEra::with_era(era_index);
+        let mut valid_pool = Some(1);
+        while let Some(pool_id) = valid_pool {
+            if pool_id > last_pool_id {
+                valid_pool = None;
+            } else {
+                let mut pool_stats = PoolStats::new();
+                pool_stats.block_number = block_number;
 
-    // Load pools stash accounts
-    let reverse_pool_id_lookup_addr = node_runtime::storage()
-        .nomination_pools()
-        .reverse_pool_id_lookup_root();
+                let bonded_pools_addr = node_runtime::storage()
+                    .nomination_pools()
+                    .bonded_pools(&pool_id);
+                if let Some(bonded) = api.storage().fetch(&bonded_pools_addr, block_hash).await? {
+                    pool_stats.points = bonded.points;
+                    pool_stats.member_counter = bonded.member_counter;
 
-    let mut iter = api
-        .storage()
-        .iter(reverse_pool_id_lookup_addr, 10, None)
-        .await?;
-    while let Some((key, pool_id)) = iter.next().await? {
-        let pool_stash = get_account_id_from_storage_key(key);
+                    // fetch pool stash account staked amount
+                    let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
+                    let account_addr = node_runtime::storage().system().account(&stash_account);
+                    if let Some(account_info) =
+                        api.storage().fetch(&account_addr, block_hash).await?
+                    {
+                        pool_stats.staked = account_info.data.fee_frozen;
+                    }
 
-        // Load chain data
-        let nominators_addr = node_runtime::storage().staking().nominators(&pool_stash);
-        if let Some(nominations) = api.storage().fetch(&nominators_addr, None).await? {
-            // Fetch pool data
-            if let Some(pool) = fetch_pool_data(&onet, pool_id).await? {
-                let mut pool = pool;
-                let mut nominees: Vec<Nominee> = Vec::new();
-                let BoundedVec(targets) = nominations.targets;
-                info!("Calculate APR for pool id: {}", pool_id);
-                let apr = calculate_apr(&onet, targets.clone()).await?;
+                    // fetch pool reward account free amount
+                    let stash_account = nomination_pool_account(AccountType::Reward, pool_id);
+                    let account_addr = node_runtime::storage().system().account(&stash_account);
+                    if let Some(account_info) =
+                        api.storage().fetch(&account_addr, block_hash).await?
+                    {
+                        pool_stats.reward = account_info.data.free;
+                    }
 
-                for nominee in targets.iter() {
-                    // get nominee identity
-                    let nominee = Nominee {
-                        stash: nominee.to_string(),
-                        identity: get_display_name(&onet, &nominee).await?,
-                    };
-                    nominees.push(nominee);
+                    // serialize and cache pool
+                    let serialized = serde_json::to_string(&pool_stats)?;
+                    redis::cmd("SET")
+                        .arg(CacheKey::NominationPoolStatsByPoolAndSession(
+                            pool_id,
+                            epoch_index,
+                        ))
+                        .arg(serialized)
+                        .query_async(&mut cache as &mut Connection)
+                        .await
+                        .map_err(CacheError::RedisCMDError)?;
                 }
-                let unix_now = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap();
-                let pool_nominees = PoolNominees {
-                    id: pool_id,
-                    nominees,
-                    apr,
-                    ts: unix_now.as_secs(),
-                };
 
-                // Cache if one of the config pools
-                if pool_id == config.pool_id_1 || pool_id == config.pool_id_2 {
-                    onet_pools.push((pool_id, pool.metadata.clone(), apr));
-                    pool_nominees.cache()?;
-                }
-                pool.nominees = Some(pool_nominees);
-                pools_era.pools.push(pool);
+                valid_pool = Some(pool_id + 1);
             }
         }
+        // Log cache processed duration time
+        info!(
+            "Pools stats #{} cached ({:?})",
+            epoch_index,
+            start.elapsed()
+        );
     }
-
-    // Calculate all pools average APR
-    let total_pools = pools_era
-        .pools
-        .iter()
-        .filter(|p| p.nominees.is_some())
-        .count();
-    let aprs: Vec<f64> = pools_era
-        .pools
-        .iter()
-        .filter(|p| p.nominees.is_some())
-        .map(|p| p.nominees.as_ref().unwrap().apr)
-        .collect();
-    let pools_avg_apr = aprs.iter().sum::<f64>() / total_pools as f64;
-
-    // Serialize and cache
-    pools_era.cache()?;
-
-    Ok((onet_pools, pools_avg_apr))
+    Ok(())
 }
 
-async fn try_run_nomination_pools(
+pub async fn cache_nomination_pools(
+    block_number: BlockNumber,
+    block_hash: Option<H256>,
+) -> Result<(), OnetError> {
+    let start = Instant::now();
+    let onet: Onet = Onet::new().await;
+    let api = onet.client().clone();
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+    // fetch last pool id
+    let last_pool_id_addr = node_runtime::storage().nomination_pools().last_pool_id();
+    if let Some(last_pool_id) = api.storage().fetch(&last_pool_id_addr, block_hash).await? {
+        let current_index_addr = node_runtime::storage().session().current_index();
+        let epoch_index = match api.storage().fetch(&current_index_addr, block_hash).await? {
+            Some(index) => index,
+            None => return Err("Current session index not defined".into()),
+        };
+
+        let mut valid_pool = Some(1);
+        while let Some(pool_id) = valid_pool {
+            if pool_id > last_pool_id {
+                valid_pool = None;
+            } else {
+                // Load chain data
+                let metadata_addr = node_runtime::storage()
+                    .nomination_pools()
+                    .metadata(&pool_id);
+                if let Some(BoundedVec(metadata)) =
+                    api.storage().fetch(&metadata_addr, block_hash).await?
+                {
+                    let metadata = str(metadata);
+                    let mut pool = Pool::with_id_and_metadata(pool_id, metadata);
+
+                    let bonded_pools_addr = node_runtime::storage()
+                        .nomination_pools()
+                        .bonded_pools(&pool_id);
+                    if let Some(bonded) =
+                        api.storage().fetch(&bonded_pools_addr, block_hash).await?
+                    {
+                        let state = match bonded.state {
+                            PoolState::Blocked => pools::PoolState::Blocked,
+                            PoolState::Destroying => pools::PoolState::Destroying,
+                            _ => pools::PoolState::Open,
+                        };
+                        pool.state = state;
+
+                        // assign roles
+                        let mut depositor = Account::with_address(bonded.roles.depositor.clone());
+                        depositor.identity =
+                            get_identity(&onet, &bonded.roles.depositor, None).await?;
+                        let root = if let Some(root) = bonded.roles.root {
+                            let mut root_acc = Account::with_address(root.clone());
+                            root_acc.identity = get_identity(&onet, &root, None).await?;
+                            Some(root_acc)
+                        } else {
+                            None
+                        };
+                        let nominator = if let Some(acc) = bonded.roles.nominator {
+                            let mut nominator = Account::with_address(acc.clone());
+                            nominator.identity = get_identity(&onet, &acc, None).await?;
+                            Some(nominator)
+                        } else {
+                            None
+                        };
+                        let state_toggler = if let Some(acc) = bonded.roles.state_toggler {
+                            let mut state_toggler = Account::with_address(acc.clone());
+                            state_toggler.identity = get_identity(&onet, &acc, None).await?;
+                            Some(state_toggler)
+                        } else {
+                            None
+                        };
+
+                        pool.roles = Some(Roles::with(depositor, root, nominator, state_toggler));
+                        pool.block_number = block_number;
+
+                        // serialize and cache pool
+                        let serialized = serde_json::to_string(&pool)?;
+                        redis::cmd("SET")
+                            .arg(CacheKey::NominationPoolRecord(pool_id))
+                            .arg(serialized)
+                            .query_async(&mut cache as &mut Connection)
+                            .await
+                            .map_err(CacheError::RedisCMDError)?;
+                    }
+                }
+                // cache pool_id into a sorted set by session
+                redis::cmd("ZADD")
+                    .arg(CacheKey::NominationPoolIdsBySession(epoch_index))
+                    .arg(0)
+                    .arg(pool_id)
+                    .query_async(&mut cache as &mut Connection)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?;
+
+                valid_pool = Some(pool_id + 1);
+            }
+        }
+        // Log cache processed duration time
+        info!("Pools #{} cached ({:?})", epoch_index, start.elapsed());
+    }
+    Ok(())
+}
+
+async fn try_run_nomination(
     onet: &Onet,
     records: &Records,
     validators: Validators,
@@ -2384,26 +2519,26 @@ async fn try_run_nomination_pools(
                 explorer_url,
                 tx_events.extrinsic_hash().to_string()
             ));
-            // Cache pool nomination
-            let unix_now = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap();
-            let pool_nomination = PoolNomination {
-                id: config.pool_id_1,
-                sessions_counter: records.total_full_epochs(),
-                block_number,
-                extrinsic_hash: tx_events.extrinsic_hash(),
-                ts: unix_now.as_secs(),
-            };
-            pool_nomination.cache()?;
-            let pool_nomination = PoolNomination {
-                id: config.pool_id_2,
-                sessions_counter: records.total_full_epochs(),
-                block_number,
-                extrinsic_hash: tx_events.extrinsic_hash(),
-                ts: unix_now.as_secs(),
-            };
-            pool_nomination.cache()?;
+            // // Cache pool nomination
+            // let unix_now = SystemTime::now()
+            //     .duration_since(SystemTime::UNIX_EPOCH)
+            //     .unwrap();
+            // let pool_nomination = PoolNomination {
+            //     id: config.pool_id_1,
+            //     sessions_counter: records.total_full_epochs(),
+            //     block_number,
+            //     extrinsic_hash: tx_events.extrinsic_hash(),
+            //     ts: unix_now.as_secs(),
+            // };
+            // pool_nomination.cache()?;
+            // let pool_nomination = PoolNomination {
+            //     id: config.pool_id_2,
+            //     sessions_counter: records.total_full_epochs(),
+            //     block_number,
+            //     extrinsic_hash: tx_events.extrinsic_hash(),
+            //     ts: unix_now.as_secs(),
+            // };
+            // pool_nomination.cache()?;
             return Ok(message);
         }
     }

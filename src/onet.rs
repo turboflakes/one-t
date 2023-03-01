@@ -140,9 +140,6 @@ pub async fn create_or_await_substrate_node_client(
     loop {
         match create_substrate_node_client(config.clone()).await {
             Ok(client) => {
-                let chain = client.rpc().system_chain().await.unwrap_or_default();
-                let name = client.rpc().system_name().await.unwrap_or_default();
-                let version = client.rpc().system_version().await.unwrap_or_default();
                 let properties = client.rpc().system_properties().await.unwrap_or_default();
 
                 // Display SS58 addresses based on the connected chain
@@ -154,11 +151,6 @@ pub async fn create_or_await_substrate_node_client(
                     };
 
                 crypto::set_default_ss58_version(crypto::Ss58AddressFormat::custom(chain_prefix));
-
-                info!(
-                    "Connected to {} network using {} * Substrate node {} v{}",
-                    chain, config.substrate_ws_url, name, version
-                );
 
                 break (client, SupportedRuntime::from(chain_prefix));
             }
@@ -195,6 +187,24 @@ impl Onet {
             matrix,
             cache: create_or_await_pool(CONFIG.clone()),
         }
+    }
+
+    pub async fn init() -> Onet {
+        let config = CONFIG.clone();
+        let onet: Onet = Onet::new().await;
+        let chain = onet.client().rpc().system_chain().await.unwrap_or_default();
+        let name = onet.client().rpc().system_name().await.unwrap_or_default();
+        let version = onet
+            .client()
+            .rpc()
+            .system_version()
+            .await
+            .unwrap_or_default();
+        info!(
+            "Connected to {} network using {} * Substrate node {} v{}",
+            chain, config.substrate_ws_url, name, version
+        );
+        onet
     }
 
     pub fn client(&self) -> &OnlineClient<PolkadotConfig> {
@@ -289,7 +299,7 @@ fn spawn_and_restart_on_error() {
         let config = CONFIG.clone();
         loop {
             // Initialize a new instance
-            let t = Onet::new().await;
+            let t = Onet::init().await;
             if let Err(e) = t.subscribe_on_chain_events().await {
                 match e {
                     OnetError::SubscriptionFinished => warn!("{}", e),

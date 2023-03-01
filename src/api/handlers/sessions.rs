@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 use crate::api::{
+    handlers::params::Params,
     helpers::respond_json,
     responses::{CacheMap, SessionResult, SessionsResult},
 };
@@ -29,40 +30,6 @@ use crate::records::EpochIndex;
 use actix_web::web::{Data, Json, Path, Query};
 use log::warn;
 use redis::aio::Connection;
-use serde::{de::Deserializer, Deserialize};
-
-#[derive(Debug, Deserialize, Clone, PartialEq)]
-pub struct Params {
-    #[serde(default = "default_number_last_sessions")]
-    number_last_sessions: u32,
-    #[serde(default)]
-    #[serde(deserialize_with = "parse_session")]
-    from: EpochIndex,
-    #[serde(default)]
-    #[serde(deserialize_with = "parse_session")]
-    to: EpochIndex,
-    // show_stats indicates whether session stats should be retrieved or not, default false
-    #[serde(default)]
-    show_stats: bool,
-    // show_netstats indicates whether session network stats should be retrieved or not, default false
-    #[serde(default)]
-    show_netstats: bool,
-}
-
-fn default_number_last_sessions() -> u32 {
-    48
-}
-
-fn parse_session<'de, D>(d: D) -> Result<EpochIndex, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Deserialize::deserialize(d).map(|x: Option<_>| {
-        x.unwrap_or("".to_string())
-            .parse::<EpochIndex>()
-            .unwrap_or_default()
-    })
-}
 
 /// Get a sessions filtered by query params
 pub async fn get_sessions(

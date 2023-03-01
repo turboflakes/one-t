@@ -113,6 +113,7 @@ pub enum Subset {
     TVP,
     NONTVP,
     C100,
+    NotDefined,
 }
 
 impl std::fmt::Display for Subset {
@@ -121,6 +122,7 @@ impl std::fmt::Display for Subset {
             Self::TVP => write!(f, "TVP"),
             Self::NONTVP => write!(f, "OTH"),
             Self::C100 => write!(f, "100C"),
+            Self::NotDefined => write!(f, "not_defined"),
         }
     }
 }
