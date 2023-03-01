@@ -262,6 +262,9 @@ pub struct ValidatorResult {
     //
     #[serde(skip_serializing_if = "PoolCounter::is_empty")]
     pub pool_counter: PoolCounter,
+    //
+    #[serde(skip_serializing_if = "RankingStats::is_empty")]
+    pub ranking: RankingStats,
 }
 
 impl ValidatorResult {
@@ -302,13 +305,6 @@ impl From<CacheMap> for ValidatorResult {
         let serialized = data.get("profile").unwrap_or(&"{}".to_string()).to_string();
         let profile: ValidatorProfileResult = serialized.into();
 
-        // pool counter
-        let pool_counter = data
-            .get("pool_counter")
-            .unwrap_or(&zero)
-            .parse::<PoolCounter>()
-            .unwrap_or_default();
-
         ValidatorResult {
             is_auth: !auth.is_empty(),
             is_para: !para.is_empty(),
@@ -323,7 +319,7 @@ impl From<CacheMap> for ValidatorResult {
             para,
             para_summary,
             para_stats,
-            pool_counter,
+            ..Default::default()
         }
     }
 }
@@ -333,6 +329,32 @@ pub struct ValidatorsResult {
     #[serde(skip_serializing_if = "EpochIndex::is_empty")]
     pub session: EpochIndex,
     pub data: Vec<ValidatorResult>,
+}
+
+// Validator RankingStats
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct RankingStats {
+    pub score: u32,
+    pub mvr: f64,
+    pub avg_para_points: u32,
+    pub para_epochs: u32,
+}
+
+impl RankingStats {
+    pub fn with(score: u32, mvr: f64, avg_para_points: u32, para_epochs: u32) -> Self {
+        Self {
+            score,
+            mvr,
+            avg_para_points,
+            para_epochs,
+        }
+    }
+}
+
+impl Validity for RankingStats {
+    fn is_empty(&self) -> bool {
+        self.score == 0 && self.mvr == 0.0 && self.avg_para_points == 0 && self.para_epochs == 0
+    }
 }
 
 // Parachains
