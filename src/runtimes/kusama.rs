@@ -34,7 +34,7 @@ use crate::records::{
 };
 use crate::report::{
     group_by_points, position, Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara,
-    RawDataParachains, RawDataPools, RawDataRank, Report, Subset, Validator, Validators,
+    RawDataParachains, RawDataRank, Report, Subset, Validator, Validators,
 };
 use crate::{
     pools,
@@ -56,7 +56,7 @@ use std::{
     iter::FromIterator,
     result::Result,
     thread, time,
-    time::{Instant, SystemTime},
+    time::Instant,
 };
 use subxt::{
     events::Events,

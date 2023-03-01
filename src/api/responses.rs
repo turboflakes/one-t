@@ -19,7 +19,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::pools::{Pool, PoolNominees, PoolNomineesStats, PoolState, PoolStats, Roles};
+use crate::pools::{
+    Pool, PoolCounter, PoolNominees, PoolNomineesStats, PoolState, PoolStats, Roles,
+};
 use crate::records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, NetworkSessionStats,
     ParaId, ParaStats, ParachainRecord, SessionStats, ValidatorProfileRecord, Validity,
@@ -257,6 +259,9 @@ pub struct ValidatorResult {
     pub para_summary: ParaStats,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub para_stats: BTreeMap<ParaId, ParaStats>,
+    //
+    #[serde(skip_serializing_if = "PoolCounter::is_empty")]
+    pub pool_counter: PoolCounter,
 }
 
 impl ValidatorResult {
@@ -297,6 +302,13 @@ impl From<CacheMap> for ValidatorResult {
         let serialized = data.get("profile").unwrap_or(&"{}".to_string()).to_string();
         let profile: ValidatorProfileResult = serialized.into();
 
+        // pool counter
+        let pool_counter = data
+            .get("pool_counter")
+            .unwrap_or(&zero)
+            .parse::<PoolCounter>()
+            .unwrap_or_default();
+
         ValidatorResult {
             is_auth: !auth.is_empty(),
             is_para: !para.is_empty(),
@@ -311,6 +323,7 @@ impl From<CacheMap> for ValidatorResult {
             para,
             para_summary,
             para_stats,
+            pool_counter,
         }
     }
 }

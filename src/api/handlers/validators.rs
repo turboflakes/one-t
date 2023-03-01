@@ -28,14 +28,15 @@ use crate::api::{
 };
 use crate::cache::{get_conn, CacheKey, Index, RedisPool, Verbosity};
 use crate::errors::{ApiError, CacheError};
-use crate::pools::{Pool, PoolId, PoolNominees, PoolNomineesStats};
+use crate::pools::{PoolId, PoolNominees};
 use crate::records::{grade, EpochIndex};
 use actix_web::web::{Data, Json, Path, Query};
 use log::warn;
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
-use std::{collections::HashSet, str::FromStr};
+use std::{collections::BTreeMap, str::FromStr};
+use std::{convert::TryInto, iter::FromIterator};
 use subxt::ext::sp_runtime::AccountId32;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
@@ -101,6 +102,9 @@ pub struct Params {
     #[serde(default = "default_sessions")]
     #[serde(deserialize_with = "parse_sessions")]
     sessions: Sessions,
+    // size indicates the number of validators requested, default 0
+    #[serde(default)]
+    size: u32,
 }
 
 fn default_role() -> Role {
@@ -487,7 +491,7 @@ pub async fn get_validators(
     //
     if params.nominees_only {
         let mut data: Vec<ValidatorResult> = Vec::new();
-        let mut nominees: HashSet<AccountId32> = HashSet::new();
+        let mut nominees: BTreeMap<AccountId32, u32> = BTreeMap::new();
         if let Ok(session_pool_ids) = redis::cmd("ZRANGE")
             .arg(CacheKey::NominationPoolIdsBySession(
                 requested_session_index,
@@ -511,15 +515,23 @@ pub async fn get_validators(
                         let pool_nominees: PoolNominees =
                             serde_json::from_str(&serialized_data).unwrap_or_default();
                         for stash in pool_nominees.nominees {
-                            nominees.insert(stash);
+                            nominees.entry(stash).and_modify(|s| *s += 1).or_insert(1);
                         }
                     }
                 }
             }
+
+            // Convert map to vec to be easily sortable
+            let mut nominees_vec = Vec::from_iter(nominees);
+            // Check if only a subset is requested
+            if params.size > 0 {
+                nominees_vec.sort_by(|(_, a), (_, b)| b.cmp(&a));
+                nominees_vec.truncate(params.size.try_into().unwrap());
+            }
             //
-            // pull profiles
+            // Pull profiles
             //
-            for stash in nominees {
+            for (stash, counter) in nominees_vec {
                 if let Ok(authority_key_data) = redis::cmd("HGETALL")
                     .arg(CacheKey::AuthorityKeyByAccountAndSession(
                         stash.clone(),
@@ -538,12 +550,13 @@ pub async fn get_validators(
                             let mut v = ValidatorResult::with_address(stash.to_string());
                             v.session = requested_session_index;
                             v.profile = serde_json::from_str(&serialized_data).unwrap_or_default();
+                            v.pool_counter = counter;
                             data.push(v);
                         }
                     } else {
                         let authority_key: AuthorityKey = authority_key_data.into();
 
-                        if let Ok(v) = get_validator_by_authority_key(
+                        if let Ok(mut v) = get_validator_by_authority_key(
                             authority_key,
                             params.show_stats,
                             params.show_summary,
@@ -553,6 +566,7 @@ pub async fn get_validators(
                         )
                         .await
                         {
+                            v.pool_counter = counter;
                             data.push(v);
                         }
                     }

@@ -19,19 +19,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::config::CONFIG;
-use crate::errors::OnetError;
-use crate::records::{BlockNumber, EpochIndex, EraIndex, Identity, Validity};
+use crate::records::{BlockNumber, Identity, Validity};
 use codec::{Decode, Encode};
 use hex::ToHex;
-use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
-use std::{fs, result::Result, time::SystemTime};
-use subxt::ext::{sp_core::H256, sp_runtime::AccountId32};
-// pub const POOL_FILENAME: &str = ".pool";
+use subxt::ext::sp_runtime::AccountId32;
 
 pub type PoolId = u32;
+pub type PoolCounter = u32;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Pool {

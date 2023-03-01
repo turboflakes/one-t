@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 use crate::cache::Index;
+use crate::pools::PoolId;
 use crate::records::EpochIndex;
 use serde::{de::Deserializer, Deserialize};
 
@@ -27,6 +28,8 @@ use serde::{de::Deserializer, Deserialize};
 pub struct Params {
     #[serde(default = "default_index")]
     pub session: Index,
+    #[serde(default)]
+    pub pool: PoolId,
     #[serde(default)]
     pub number_last_sessions: u32,
     #[serde(default)]
