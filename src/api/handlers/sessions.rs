@@ -25,17 +25,23 @@ use crate::api::{
     responses::{CacheMap, SessionResult, SessionsResult},
 };
 use crate::cache::{get_conn, CacheKey, Index, RedisPool};
+use crate::config::CONFIG;
 use crate::errors::{ApiError, CacheError};
 use crate::records::EpochIndex;
-use actix_web::web::{Data, Json, Path, Query};
+use actix_web::{
+    web::{Data, Json, Path, Query},
+    HttpRequest,
+};
 use log::warn;
 use redis::aio::Connection;
 
 /// Get a sessions filtered by query params
 pub async fn get_sessions(
+    req: HttpRequest,
     params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<SessionsResult>, ApiError> {
+    let config = CONFIG.clone();
     let mut conn = get_conn(&cache).await?;
 
     let current_session: EpochIndex = redis::cmd("GET")
@@ -43,8 +49,6 @@ pub async fn get_sessions(
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
-
-    let mut data: Vec<SessionResult> = Vec::new();
 
     let (start_session, end_session) = if params.from != 0 && params.from < params.to {
         (params.from, params.to)
@@ -57,6 +61,20 @@ pub async fn get_sessions(
         (current_session, current_session)
     };
 
+    // Try if query exists in cache
+    if params.from != 0 && params.from < params.to && params.show_netstats {
+        // Check if query is already cached
+        if let Ok(serialized_data) = redis::cmd("GET")
+            .arg(CacheKey::QuerySessions(req.query_string().to_string()))
+            .query_async::<Connection, String>(&mut conn)
+            .await
+        {
+            let data: Vec<SessionResult> = serde_json::from_str(&serialized_data).unwrap();
+            return respond_json(data.into());
+        }
+    }
+
+    let mut data: Vec<SessionResult> = Vec::new();
     let mut i = Some(start_session);
     while let Some(session_index) = i {
         if session_index > end_session {
@@ -100,6 +118,21 @@ pub async fn get_sessions(
 
             i = Some(session_index + 1);
         }
+    }
+
+    // Cache specific query
+    if params.from != 0 && params.from < params.to && params.show_netstats {
+        // Serialize data and cache for one session
+        // 1 hour kusama, 4 hours polkadot
+        let serialized = serde_json::to_string(&data)?;
+        redis::cmd("SET")
+            .arg(CacheKey::QuerySessions(req.query_string().to_string()))
+            .arg(serialized.to_string())
+            .arg("ex")
+            .arg(config.blocks_per_session * 6)
+            .query_async::<Connection, String>(&mut conn)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
     }
 
     respond_json(data.into())

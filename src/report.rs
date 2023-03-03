@@ -122,7 +122,7 @@ impl std::fmt::Display for Subset {
             Self::TVP => write!(f, "TVP"),
             Self::NONTVP => write!(f, "OTH"),
             Self::C100 => write!(f, "100C"),
-            Self::NotDefined => write!(f, "not_defined"),
+            Self::NotDefined => write!(f, "NotDefined"),
         }
     }
 }

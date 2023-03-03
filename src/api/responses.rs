@@ -26,7 +26,10 @@ use crate::records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, NetworkSessionStats,
     ParaId, ParaStats, ParachainRecord, SessionStats, ValidatorProfileRecord, Validity,
 };
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{Deserializer, MapAccess, Visitor},
+    Deserialize, Serialize,
+};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -160,7 +163,7 @@ impl From<Vec<BlockResult>> for BlocksResult {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct SessionResult {
     six: EpochIndex,
     eix: EraIndex,
@@ -230,6 +233,154 @@ impl From<CacheMap> for SessionResult {
     }
 }
 
+// https://serde.rs/deserialize-struct.html
+// NOTE: SessionResult is manually deserialized because some of the fields might not exist
+// and rather than rasing error just set default values
+//
+impl<'de> Deserialize<'de> for SessionResult {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize, Debug)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Six,
+            Eix,
+            Sbix,
+            Ebix,
+            Esix,
+            IsCurrent,
+            Stats,
+            Netstats,
+        }
+
+        struct SessionResultVisitor;
+
+        impl<'de> Visitor<'de> for SessionResultVisitor {
+            type Value = SessionResult;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct SessionResult")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<SessionResult, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut six: Option<EpochIndex> = None;
+                let mut eix: Option<EraIndex> = None;
+                let mut sbix: Option<BlockNumber> = None;
+                let mut ebix: Option<BlockNumber> = None;
+                let mut esix: Option<u8> = None;
+                let mut is_current: Option<bool> = None;
+                let mut stats: Option<SessionStats> = None;
+                let mut netstats: Option<NetworkSessionStats> = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Six => {
+                            if six.is_some() {
+                                return Err(serde::de::Error::duplicate_field("six"));
+                            }
+                            six = Some(map.next_value()?);
+                        }
+                        Field::Eix => {
+                            if eix.is_some() {
+                                return Err(serde::de::Error::duplicate_field("eix"));
+                            }
+                            eix = Some(map.next_value()?);
+                        }
+                        Field::Sbix => {
+                            if sbix.is_some() {
+                                return Err(serde::de::Error::duplicate_field("sbix"));
+                            }
+                            sbix = Some(map.next_value()?);
+                        }
+                        Field::Ebix => {
+                            if ebix.is_some() {
+                                return Err(serde::de::Error::duplicate_field("ebix"));
+                            }
+                            ebix = Some(map.next_value()?);
+                        }
+                        Field::Esix => {
+                            if esix.is_some() {
+                                return Err(serde::de::Error::duplicate_field("esix"));
+                            }
+                            esix = Some(map.next_value()?);
+                        }
+                        Field::IsCurrent => {
+                            if is_current.is_some() {
+                                return Err(serde::de::Error::duplicate_field("is_current"));
+                            }
+                            is_current = Some(map.next_value()?);
+                        }
+                        Field::Stats => {
+                            if stats.is_some() {
+                                return Err(serde::de::Error::duplicate_field("stats"));
+                            }
+                            stats = Some(map.next_value()?);
+                        }
+                        Field::Netstats => {
+                            if netstats.is_some() {
+                                return Err(serde::de::Error::duplicate_field("netstats"));
+                            }
+                            netstats = Some(map.next_value()?);
+                        }
+                    }
+                }
+                let six = six.unwrap_or_default();
+                let eix = eix.unwrap_or_default();
+                let sbix = sbix.unwrap_or_default();
+                let ebix = ebix.unwrap_or_default();
+                let esix = esix.unwrap_or_default();
+                let is_current = is_current.unwrap_or_default();
+                let stats = stats.unwrap_or_default();
+                let netstats = netstats.unwrap_or_default();
+                Ok(SessionResult::new(
+                    six, eix, sbix, ebix, esix, is_current, stats, netstats,
+                ))
+            }
+        }
+
+        const FIELDS: &'static [&'static str] = &[
+            "six",
+            "eix",
+            "sbix",
+            "ebix",
+            "esix",
+            "is_current",
+            "stats",
+            "netstats",
+        ];
+        deserializer.deserialize_struct("SessionResult", FIELDS, SessionResultVisitor)
+    }
+}
+
+impl SessionResult {
+    pub fn new(
+        six: EpochIndex,
+        eix: EraIndex,
+        sbix: BlockNumber,
+        ebix: BlockNumber,
+        esix: u8,
+        is_current: bool,
+        stats: SessionStats,
+        netstats: NetworkSessionStats,
+    ) -> Self {
+        Self {
+            six,
+            eix,
+            sbix,
+            ebix,
+            esix,
+            is_current,
+            stats,
+            netstats,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct SessionsResult {
     pub data: Vec<SessionResult>,
@@ -241,7 +392,7 @@ impl From<Vec<SessionResult>> for SessionsResult {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Clone, Debug, Default)]
 pub struct ValidatorResult {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub address: String,
@@ -267,7 +418,199 @@ pub struct ValidatorResult {
     pub ranking: RankingStats,
 }
 
+// https://serde.rs/deserialize-struct.html
+// NOTE: ValidatorResult is manually deserialized because some of the fields might not exist
+// and rather than rasing error just set default values
+//
+impl<'de> Deserialize<'de> for ValidatorResult {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize, Debug)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Address,
+            Profile,
+            Session,
+            IsAuth,
+            IsPara,
+            Auth,
+            Para,
+            ParaSummary,
+            ParaStats,
+            PoolCounter,
+            Ranking,
+        }
+
+        struct ValidatorResultVisitor;
+
+        impl<'de> Visitor<'de> for ValidatorResultVisitor {
+            type Value = ValidatorResult;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct ValidatorResult")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<ValidatorResult, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut address: Option<String> = None;
+                let mut profile: Option<ValidatorProfileResult> = None;
+                let mut session: Option<EpochIndex> = None;
+                let mut is_auth: Option<bool> = None;
+                let mut is_para: Option<bool> = None;
+                let mut auth: Option<AuthorityRecord> = None;
+                let mut para: Option<BTreeMap<String, Value>> = None;
+                let mut para_summary: Option<ParaStats> = None;
+                let mut para_stats: Option<BTreeMap<ParaId, ParaStats>> = None;
+                let mut pool_counter: Option<PoolCounter> = None;
+                let mut ranking: Option<RankingStats> = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Address => {
+                            if address.is_some() {
+                                return Err(serde::de::Error::duplicate_field("address"));
+                            }
+                            address = Some(map.next_value()?);
+                        }
+                        Field::Profile => {
+                            if profile.is_some() {
+                                return Err(serde::de::Error::duplicate_field("profile"));
+                            }
+                            profile = Some(map.next_value()?);
+                        }
+                        Field::Session => {
+                            if session.is_some() {
+                                return Err(serde::de::Error::duplicate_field("session"));
+                            }
+                            session = Some(map.next_value()?);
+                        }
+                        Field::IsAuth => {
+                            if is_auth.is_some() {
+                                return Err(serde::de::Error::duplicate_field("is_auth"));
+                            }
+                            is_auth = Some(map.next_value()?);
+                        }
+                        Field::IsPara => {
+                            if is_para.is_some() {
+                                return Err(serde::de::Error::duplicate_field("is_para"));
+                            }
+                            is_para = Some(map.next_value()?);
+                        }
+                        Field::Auth => {
+                            if auth.is_some() {
+                                return Err(serde::de::Error::duplicate_field("auth"));
+                            }
+                            auth = Some(map.next_value()?);
+                        }
+                        Field::Para => {
+                            if para.is_some() {
+                                return Err(serde::de::Error::duplicate_field("para"));
+                            }
+                            para = Some(map.next_value()?);
+                        }
+                        Field::ParaSummary => {
+                            if para_summary.is_some() {
+                                return Err(serde::de::Error::duplicate_field("para_summary"));
+                            }
+                            para_summary = Some(map.next_value()?);
+                        }
+                        Field::ParaStats => {
+                            if para_stats.is_some() {
+                                return Err(serde::de::Error::duplicate_field("para_stats"));
+                            }
+                            para_stats = Some(map.next_value()?);
+                        }
+                        Field::PoolCounter => {
+                            if pool_counter.is_some() {
+                                return Err(serde::de::Error::duplicate_field("pool_counter"));
+                            }
+                            pool_counter = Some(map.next_value()?);
+                        }
+                        Field::Ranking => {
+                            if ranking.is_some() {
+                                return Err(serde::de::Error::duplicate_field("ranking"));
+                            }
+                            ranking = Some(map.next_value()?);
+                        }
+                    }
+                }
+                let address = address.unwrap_or_default();
+                let profile = profile.unwrap_or_default();
+                let session = session.unwrap_or_default();
+                let is_auth = is_auth.unwrap_or_default();
+                let is_para = is_para.unwrap_or_default();
+                let auth = auth.unwrap_or_default();
+                let para = para.unwrap_or_default();
+                let para_summary = para_summary.unwrap_or_default();
+                let para_stats = para_stats.unwrap_or_default();
+                let pool_counter = pool_counter.unwrap_or_default();
+                let ranking = ranking.unwrap_or_default();
+                Ok(ValidatorResult::new(
+                    address,
+                    profile,
+                    session,
+                    is_auth,
+                    is_para,
+                    auth,
+                    para,
+                    para_summary,
+                    para_stats,
+                    pool_counter,
+                    ranking,
+                ))
+            }
+        }
+
+        const FIELDS: &'static [&'static str] = &[
+            "address",
+            "profile",
+            "session",
+            "is_auth",
+            "is_para",
+            "auth",
+            "para",
+            "para_summary",
+            "para_stats",
+            "pool_counter",
+            "ranking",
+        ];
+        deserializer.deserialize_struct("ValidatorResult", FIELDS, ValidatorResultVisitor)
+    }
+}
+
 impl ValidatorResult {
+    pub fn new(
+        address: String,
+        profile: ValidatorProfileResult,
+        session: EpochIndex,
+        is_auth: bool,
+        is_para: bool,
+        auth: AuthorityRecord,
+        para: BTreeMap<String, Value>,
+        para_summary: ParaStats,
+        para_stats: BTreeMap<ParaId, ParaStats>,
+        pool_counter: PoolCounter,
+        ranking: RankingStats,
+    ) -> Self {
+        Self {
+            address,
+            profile,
+            session,
+            is_auth,
+            is_para,
+            auth,
+            para,
+            para_summary,
+            para_stats,
+            pool_counter,
+            ranking,
+        }
+    }
+
     pub fn with_address(address: String) -> Self {
         Self {
             address,

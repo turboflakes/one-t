@@ -28,7 +28,7 @@ use actix_web::web;
 use log::{error, info};
 use mobc::{Connection, Pool};
 use mobc_redis::RedisConnectionManager;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use std::{thread, time};
 use subxt::ext::sp_runtime::AccountId32;
@@ -41,7 +41,7 @@ const CACHE_POOL_EXPIRE_SECONDS: u64 = 60;
 pub type RedisPool = Pool<RedisConnectionManager>;
 pub type RedisConn = Connection<RedisConnectionManager>;
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum Index {
     Num(u64),
@@ -80,6 +80,8 @@ impl std::fmt::Display for Verbosity {
     }
 }
 
+pub type QueryString = String;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CacheKey {
     Network,
@@ -103,6 +105,9 @@ pub enum CacheKey {
     NominationPoolIdsBySession(EpochIndex),
     NominationPoolStatsByPoolAndSession(PoolId, EpochIndex),
     NominationPoolNomineesByPoolAndSession(PoolId, EpochIndex),
+    // Queries
+    QueryValidators(QueryString),
+    QuerySessions(QueryString),
 }
 
 impl std::fmt::Display for CacheKey {
@@ -150,6 +155,9 @@ impl std::fmt::Display for CacheKey {
             Self::NominationPoolNomineesByPoolAndSession(pool_id, session_index) => {
                 write!(f, "npn:{}:{}", session_index, pool_id)
             }
+            //
+            Self::QueryValidators(params) => write!(f, "qry:val:{}", params),
+            Self::QuerySessions(params) => write!(f, "qry:ses:{}", params),
         }
     }
 }

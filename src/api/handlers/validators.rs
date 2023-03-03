@@ -27,11 +27,15 @@ use crate::api::{
     },
 };
 use crate::cache::{get_conn, CacheKey, Index, RedisPool, Verbosity};
+use crate::config::CONFIG;
 use crate::errors::{ApiError, CacheError};
 use crate::pools::{PoolId, PoolNominees};
 use crate::records::{grade, EpochIndex};
 use crate::report::Subset;
-use actix_web::web::{Data, Json, Path, Query};
+use actix_web::{
+    web::{Data, Json, Path, Query},
+    HttpRequest,
+};
 use log::warn;
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize};
@@ -409,9 +413,11 @@ async fn get_validator_by_stash_and_index(
 
 /// Get a validators filtered by query params
 pub async fn get_validators(
+    req: HttpRequest,
     params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorsResult>, ApiError> {
+    let config = CONFIG.clone();
     let mut conn = get_conn(&cache).await?;
 
     let requested_session_index: EpochIndex = match &params.session {
@@ -561,122 +567,151 @@ pub async fn get_validators(
     //
     //
     if params.from != 0 && params.from < params.to && params.ranking == Ranking::Performance {
-        //
-        // NOTE: the score is based on 5 key values, which will be aggregated in the following map tupple.
-        // NOTE: the tupple has a subset, 5 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_vote, score)
-        //
-        let mut aggregator: BTreeMap<String, (Subset, u32, u32, u32, u32, u32, u32)> =
-            BTreeMap::new();
-        let mut validators: BTreeMap<String, ValidatorResult> = BTreeMap::new();
-        let mut total_epochs: u32 = 0;
-        let mut i = Some(start_session);
-        while let Some(session_index) = i {
-            if session_index > end_session {
-                i = None;
-            } else {
-                let authority_keys: Vec<String> = redis::cmd("SMEMBERS")
-                    .arg(CacheKey::AuthorityKeysBySessionParaOnly(session_index))
-                    .query_async(&mut conn as &mut Connection)
-                    .await
-                    .map_err(CacheError::RedisCMDError)?;
-
-                for key in authority_keys.iter() {
-                    let val = get_validator_by_authority_key(
-                        (*key).clone().into(),
-                        params.show_stats,
-                        true,
-                        true,
-                        false,
-                        cache.clone(),
-                    )
-                    .await?;
-                    // NOTE: the tupple with 5 counters plus the score is defined as: (para_epochs, para_points, explicit_votes, implicit_votes, missed_votes, score)
-                    aggregator
-                        .entry(val.address.clone())
-                        .and_modify(|(subset, para_epochs, para_points, ev, iv, mv, _)| {
-                            *subset = val.profile.subset.clone();
-                            *para_epochs += 1;
-                            *para_points += val.auth.para_points();
-                            *ev += val.para_summary.explicit_votes();
-                            *iv += val.para_summary.implicit_votes();
-                            *mv += val.para_summary.missed_votes();
-                        })
-                        .or_insert((Subset::NotDefined, 0, 0, 0, 0, 0, 0));
-                    validators.insert(val.address.clone(), val);
-                }
-                total_epochs += 1;
-                i = Some(session_index + 1);
-            }
-        }
-
-        // Convert map to vec to be easily sortable and truncated
-        let mut aggregator_vec = Vec::from_iter(aggregator);
-
-        // Normalize avg_para_points
-        let avg_para_points: Vec<u32> = aggregator_vec
-            .iter()
-            .filter(|(_, (_, para_epochs, _, _, _, _, _))| *para_epochs >= 1)
-            .map(|(_, (_, para_epochs, para_points, _, _, _, _))| para_points / para_epochs)
-            .collect();
-        let max = avg_para_points.iter().max().unwrap_or_else(|| &0);
-        let min = avg_para_points.iter().min().unwrap_or_else(|| &0);
-
-        // Calculate scores & mutate validator result
-        // NOTE: the tupple with 5 counters plus the score is defined as: (para_epochs, para_points, explicit_votes, implicit_votes, missed_votes, score)
-        //
-        aggregator_vec
-            .iter_mut()
-            .filter(|(_, (_, para_epochs, _, _, _, _, _))| *para_epochs >= 1)
-            .for_each(|(stash, (_, para_epochs, para_points, ev, iv, mv, s))| {
-                let mvr = *mv as f64 / (*ev + *iv + *mv) as f64;
-                let avg_para_points = *para_points / *para_epochs;
-                let score = if max - min > 0 {
-                    (((1.0_f64 - mvr) * 0.75_f64
-                        + ((avg_para_points - *min) as f64 / (*max - *min) as f64) * 0.18_f64
-                        + (*para_epochs as f64 / total_epochs as f64) * 0.07_f64)
-                        * 1000000.0_f64) as u32
-                } else {
-                    0
-                };
-                *s = score;
-                // Add ranking stats to the validator result
-                validators.entry(stash.clone()).and_modify(|v| {
-                    v.ranking = RankingStats::with(score, mvr, avg_para_points, *para_epochs);
-                });
+        // Check if query is already cached
+        if let Ok(serialized_data) = redis::cmd("GET")
+            .arg(CacheKey::QueryValidators(req.query_string().to_string()))
+            .query_async::<Connection, String>(&mut conn)
+            .await
+        {
+            let data: Vec<ValidatorResult> = serde_json::from_str(&serialized_data).unwrap();
+            return respond_json(ValidatorsResult {
+                data,
+                ..Default::default()
             });
-        // Sort ranking validators by score
-        aggregator_vec.sort_by(|(_, (_, _, _, _, _, _, a)), (_, (_, _, _, _, _, _, b))| b.cmp(&a));
+        } else {
+            // let serialized = serde_json::to_string(params)?;
+            // warn!("__serialized: {:?}", serialized);
 
-        // Filter by subset
-        if params.subset != Subset::NotDefined {
-            let mut i = 0;
-            while i < aggregator_vec.len() {
-                let (_, (subset, _, _, _, _, _, _)) = &mut aggregator_vec[i];
-                if *subset != params.subset {
-                    aggregator_vec.remove(i);
+            //
+            // NOTE: the score is based on 5 key values, which will be aggregated in the following map tupple.
+            // NOTE: the tupple has a subset, 5 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_vote, score)
+            //
+            let mut aggregator: BTreeMap<String, (Subset, u32, u32, u32, u32, u32, u32)> =
+                BTreeMap::new();
+            let mut validators: BTreeMap<String, ValidatorResult> = BTreeMap::new();
+            let mut total_epochs: u32 = 0;
+            let mut i = Some(start_session);
+            while let Some(session_index) = i {
+                if session_index > end_session {
+                    i = None;
                 } else {
-                    i += 1;
+                    let authority_keys: Vec<String> = redis::cmd("SMEMBERS")
+                        .arg(CacheKey::AuthorityKeysBySessionParaOnly(session_index))
+                        .query_async(&mut conn as &mut Connection)
+                        .await
+                        .map_err(CacheError::RedisCMDError)?;
+
+                    for key in authority_keys.iter() {
+                        let val = get_validator_by_authority_key(
+                            (*key).clone().into(),
+                            params.show_stats,
+                            true,
+                            true,
+                            false,
+                            cache.clone(),
+                        )
+                        .await?;
+                        // NOTE: the tupple with 5 counters plus the score is defined as: (para_epochs, para_points, explicit_votes, implicit_votes, missed_votes, score)
+                        aggregator
+                            .entry(val.address.clone())
+                            .and_modify(|(subset, para_epochs, para_points, ev, iv, mv, _)| {
+                                *subset = val.profile.subset.clone();
+                                *para_epochs += 1;
+                                *para_points += val.auth.para_points();
+                                *ev += val.para_summary.explicit_votes();
+                                *iv += val.para_summary.implicit_votes();
+                                *mv += val.para_summary.missed_votes();
+                            })
+                            .or_insert((Subset::NotDefined, 0, 0, 0, 0, 0, 0));
+                        validators.insert(val.address.clone(), val);
+                    }
+                    total_epochs += 1;
+                    i = Some(session_index + 1);
                 }
             }
-        }
 
-        // Truncate aggregator
-        if params.size > 0 {
-            aggregator_vec.truncate(params.size.try_into().unwrap());
-        }
+            // Convert map to vec to be easily sortable and truncated
+            let mut aggregator_vec = Vec::from_iter(aggregator);
 
-        // Create data response
-        let mut data: Vec<ValidatorResult> = Vec::new();
-        for (stash, _) in aggregator_vec {
-            if let Some(val) = validators.get(&stash) {
-                data.push(val.clone().into());
+            // Normalize avg_para_points
+            let avg_para_points: Vec<u32> = aggregator_vec
+                .iter()
+                .filter(|(_, (_, para_epochs, _, _, _, _, _))| *para_epochs >= 1)
+                .map(|(_, (_, para_epochs, para_points, _, _, _, _))| para_points / para_epochs)
+                .collect();
+            let max = avg_para_points.iter().max().unwrap_or_else(|| &0);
+            let min = avg_para_points.iter().min().unwrap_or_else(|| &0);
+
+            // Calculate scores & mutate validator result
+            // NOTE: the tupple with 5 counters plus the score is defined as: (para_epochs, para_points, explicit_votes, implicit_votes, missed_votes, score)
+            //
+            aggregator_vec
+                .iter_mut()
+                .filter(|(_, (_, para_epochs, _, _, _, _, _))| *para_epochs >= 1)
+                .for_each(|(stash, (_, para_epochs, para_points, ev, iv, mv, s))| {
+                    let mvr = *mv as f64 / (*ev + *iv + *mv) as f64;
+                    let avg_para_points = *para_points / *para_epochs;
+                    let score = if max - min > 0 {
+                        (((1.0_f64 - mvr) * 0.75_f64
+                            + ((avg_para_points - *min) as f64 / (*max - *min) as f64) * 0.18_f64
+                            + (*para_epochs as f64 / total_epochs as f64) * 0.07_f64)
+                            * 1000000.0_f64) as u32
+                    } else {
+                        0
+                    };
+                    *s = score;
+                    // Add ranking stats to the validator result
+                    validators.entry(stash.clone()).and_modify(|v| {
+                        v.ranking = RankingStats::with(score, mvr, avg_para_points, *para_epochs);
+                    });
+                });
+            // Sort ranking validators by score
+            aggregator_vec
+                .sort_by(|(_, (_, _, _, _, _, _, a)), (_, (_, _, _, _, _, _, b))| b.cmp(&a));
+
+            // Filter by subset
+            if params.subset != Subset::NotDefined {
+                let mut i = 0;
+                while i < aggregator_vec.len() {
+                    let (_, (subset, _, _, _, _, _, _)) = &mut aggregator_vec[i];
+                    if *subset != params.subset {
+                        aggregator_vec.remove(i);
+                    } else {
+                        i += 1;
+                    }
+                }
             }
-        }
 
-        return respond_json(ValidatorsResult {
-            data,
-            ..Default::default()
-        });
+            // Truncate aggregator
+            if params.size > 0 {
+                aggregator_vec.truncate(params.size.try_into().unwrap());
+            }
+
+            // Create data response
+            let mut data: Vec<ValidatorResult> = Vec::new();
+            for (stash, _) in aggregator_vec {
+                if let Some(val) = validators.get(&stash) {
+                    data.push(val.clone().into());
+                }
+            }
+
+            // Serialize data and cache for one session
+            // 1 hour kusama, 4 hours polkadot
+            let serialized = serde_json::to_string(&data)?;
+            redis::cmd("SET")
+                .arg(CacheKey::QueryValidators(req.query_string().to_string()))
+                .arg(serialized.to_string())
+                .arg("ex")
+                .arg(config.blocks_per_session * 6)
+                .query_async::<Connection, String>(&mut conn)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+
+            return respond_json(ValidatorsResult {
+                data,
+                ..Default::default()
+            });
+        }
     }
 
     // ******************
