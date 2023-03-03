@@ -611,7 +611,7 @@ pub async fn get_validators(
                             cache.clone(),
                         )
                         .await?;
-                        // NOTE: the tupple with 5 counters plus the score is defined as: (para_epochs, para_points, explicit_votes, implicit_votes, missed_votes, score)
+                        // NOTE: the tupple has a subset, 5 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_vote, score)
                         aggregator
                             .entry(val.address.clone())
                             .and_modify(|(subset, para_epochs, para_points, ev, iv, mv, _)| {
@@ -643,7 +643,7 @@ pub async fn get_validators(
             let min = avg_para_points.iter().min().unwrap_or_else(|| &0);
 
             // Calculate scores & mutate validator result
-            // NOTE: the tupple with 5 counters plus the score is defined as: (para_epochs, para_points, explicit_votes, implicit_votes, missed_votes, score)
+            // NOTE: the tupple has a subset, 5 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_vote, score)
             //
             aggregator_vec
                 .iter_mut()
@@ -665,22 +665,30 @@ pub async fn get_validators(
                         v.ranking = RankingStats::with(score, mvr, avg_para_points, *para_epochs);
                     });
                 });
+
+            // Filter by subset and min para epochs
+            // min_para_epochs = 1 if total_full_epochs < 12;
+            // min_para_epochs = 2 if total_full_epochs < 24;
+            // min_para_epochs = 3 if total_full_epochs < 36;
+            // min_para_epochs = 4 if total_full_epochs < 48;
+            // min_para_epochs = 5 if total_full_epochs = 48;
+            let min_para_epochs = (total_epochs / 12) + 1;
+
+            let mut i = 0;
+            while i < aggregator_vec.len() {
+                let (_, (subset, para_epochs, _, _, _, _, _)) = &mut aggregator_vec[i];
+                if (*subset != params.subset && params.subset != Subset::NotDefined)
+                    || *para_epochs < min_para_epochs
+                {
+                    aggregator_vec.remove(i);
+                } else {
+                    i += 1;
+                }
+            }
+
             // Sort ranking validators by score
             aggregator_vec
                 .sort_by(|(_, (_, _, _, _, _, _, a)), (_, (_, _, _, _, _, _, b))| b.cmp(&a));
-
-            // Filter by subset
-            if params.subset != Subset::NotDefined {
-                let mut i = 0;
-                while i < aggregator_vec.len() {
-                    let (_, (subset, _, _, _, _, _, _)) = &mut aggregator_vec[i];
-                    if *subset != params.subset {
-                        aggregator_vec.remove(i);
-                    } else {
-                        i += 1;
-                    }
-                }
-            }
 
             // Truncate aggregator
             if params.size > 0 {
