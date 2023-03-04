@@ -61,18 +61,20 @@ pub async fn get_sessions(
         (current_session, current_session)
     };
 
+    // TODO: cache only when new session sync is complete
+    // 
     // Try if query exists in cache
-    if params.from != 0 && params.from < params.to && params.show_netstats {
-        // Check if query is already cached
-        if let Ok(serialized_data) = redis::cmd("GET")
-            .arg(CacheKey::QuerySessions(req.query_string().to_string()))
-            .query_async::<Connection, String>(&mut conn)
-            .await
-        {
-            let data: Vec<SessionResult> = serde_json::from_str(&serialized_data).unwrap();
-            return respond_json(data.into());
-        }
-    }
+    // if params.from != 0 && params.from < params.to && params.show_netstats {
+    //     // Check if query is already cached
+    //     if let Ok(serialized_data) = redis::cmd("GET")
+    //         .arg(CacheKey::QuerySessions(req.query_string().to_string()))
+    //         .query_async::<Connection, String>(&mut conn)
+    //         .await
+    //     {
+    //         let data: Vec<SessionResult> = serde_json::from_str(&serialized_data).unwrap();
+    //         return respond_json(data.into());
+    //     }
+    // }
 
     let mut data: Vec<SessionResult> = Vec::new();
     let mut i = Some(start_session);
@@ -120,20 +122,22 @@ pub async fn get_sessions(
         }
     }
 
+
+    // // TODO: cache only when new session sync is complete
     // Cache specific query
-    if params.from != 0 && params.from < params.to && params.show_netstats {
-        // Serialize data and cache for one session
-        // 1 hour kusama, 4 hours polkadot
-        let serialized = serde_json::to_string(&data)?;
-        redis::cmd("SET")
-            .arg(CacheKey::QuerySessions(req.query_string().to_string()))
-            .arg(serialized.to_string())
-            .arg("ex")
-            .arg(config.blocks_per_session * 6)
-            .query_async::<Connection, String>(&mut conn)
-            .await
-            .map_err(CacheError::RedisCMDError)?;
-    }
+    // if params.from != 0 && params.from < params.to && params.show_netstats {
+    //     // Serialize data and cache for one session
+    //     // 1 hour kusama, 4 hours polkadot
+    //     let serialized = serde_json::to_string(&data)?;
+    //     redis::cmd("SET")
+    //         .arg(CacheKey::QuerySessions(req.query_string().to_string()))
+    //         .arg(serialized.to_string())
+    //         .arg("ex")
+    //         .arg(config.blocks_per_session * 6)
+    //         .query_async::<Connection, String>(&mut conn)
+    //         .await
+    //         .map_err(CacheError::RedisCMDError)?;
+    // }
 
     respond_json(data.into())
 }
