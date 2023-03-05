@@ -206,6 +206,8 @@ pub struct PoolStats {
     #[serde(default)]
     pub staked: u128,
     #[serde(default)]
+    pub unbonding: u128,
+    #[serde(default)]
     pub reward: u128,
     #[serde(default)]
     pub block_number: BlockNumber,

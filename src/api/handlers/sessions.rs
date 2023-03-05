@@ -62,7 +62,7 @@ pub async fn get_sessions(
     };
 
     // TODO: cache only when new session sync is complete
-    // 
+    //
     // Try if query exists in cache
     // if params.from != 0 && params.from < params.to && params.show_netstats {
     //     // Check if query is already cached
@@ -121,7 +121,6 @@ pub async fn get_sessions(
             i = Some(session_index + 1);
         }
     }
-
 
     // // TODO: cache only when new session sync is complete
     // Cache specific query

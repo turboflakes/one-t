@@ -2278,12 +2278,20 @@ pub async fn cache_nomination_pools_stats(
                     pool_stats.member_counter = bonded.member_counter;
 
                     // fetch pool stash account staked amount
+                    // let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
+                    // let account_addr = node_runtime::storage().system().account(&stash_account);
+                    // if let Some(account_info) =
+                    //     api.storage().fetch(&account_addr, block_hash).await?
+                    // {
+                    //     pool_stats.staked = account_info.data.fee_frozen;
+                    // }
+
+                    // fetch pool stash account staked amount from staking pallet
                     let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
-                    let account_addr = node_runtime::storage().system().account(&stash_account);
-                    if let Some(account_info) =
-                        api.storage().fetch(&account_addr, block_hash).await?
-                    {
-                        pool_stats.staked = account_info.data.fee_frozen;
+                    let ledger_addr = node_runtime::storage().staking().ledger(&stash_account);
+                    if let Some(data) = api.storage().fetch(&ledger_addr, block_hash).await? {
+                        pool_stats.staked = data.active;
+                        pool_stats.unbonding = data.total - data.active;
                     }
 
                     // fetch pool reward account free amount
