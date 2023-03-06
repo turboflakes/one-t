@@ -1342,6 +1342,7 @@ pub struct ValidatorProfileRecord {
     pub subset: Subset,
     pub is_oversubscribed: bool,
     pub is_active: bool,
+    pub is_chilled: bool,
 }
 
 impl ValidatorProfileRecord {
@@ -1354,8 +1355,9 @@ impl ValidatorProfileRecord {
             own_stake: 0,
             points: 0,
             subset: Subset::NONTVP,
-            is_active: false,
             is_oversubscribed: false,
+            is_active: false,
+            is_chilled: false,
         }
     }
 }
@@ -1394,6 +1396,27 @@ impl Validity for SessionStats {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Eq, Hash, PartialEq, Debug)]
+pub enum SyncStatus {
+    Syncing,
+    Finished,
+}
+
+impl std::fmt::Display for SyncStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Syncing => write!(f, "syncing"),
+            Self::Finished => write!(f, "finished"),
+        }
+    }
+}
+
+impl Default for SyncStatus {
+    fn default() -> SyncStatus {
+        SyncStatus::Syncing
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct NetworkSessionStats {
     pub session: EpochIndex,
@@ -1403,6 +1426,7 @@ pub struct NetworkSessionStats {
     pub total_reward_points: u32,
     pub total_staked: u128,
     pub last_rewarded: u128,
+    pub total_vals_chilled: u32,
 }
 
 impl Validity for NetworkSessionStats {
@@ -1421,6 +1445,7 @@ impl NetworkSessionStats {
             total_reward_points: 0,
             total_staked: 0,
             last_rewarded: 0,
+            total_vals_chilled: 0,
         }
     }
 }

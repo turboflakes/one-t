@@ -176,6 +176,7 @@ pub struct SessionResult {
     stats: SessionStats,
     #[serde(skip_serializing_if = "NetworkSessionStats::is_empty")]
     netstats: NetworkSessionStats,
+    is_syncing: bool,
 }
 
 fn default<T: Default + PartialEq>(t: &T) -> bool {
@@ -227,6 +228,11 @@ impl From<CacheMap> for SessionResult {
                 .unwrap_or(&zero)
                 .parse::<bool>()
                 .unwrap_or_default(),
+            is_syncing: data
+                .get("is_syncing")
+                .unwrap_or(&zero)
+                .parse::<bool>()
+                .unwrap_or_default(),
             stats,
             netstats,
         }
@@ -253,6 +259,7 @@ impl<'de> Deserialize<'de> for SessionResult {
             IsCurrent,
             Stats,
             Netstats,
+            IsSyncing,
         }
 
         struct SessionResultVisitor;
@@ -276,6 +283,7 @@ impl<'de> Deserialize<'de> for SessionResult {
                 let mut is_current: Option<bool> = None;
                 let mut stats: Option<SessionStats> = None;
                 let mut netstats: Option<NetworkSessionStats> = None;
+                let mut is_syncing: Option<bool> = None;
 
                 while let Some(key) = map.next_key()? {
                     match key {
@@ -327,6 +335,12 @@ impl<'de> Deserialize<'de> for SessionResult {
                             }
                             netstats = Some(map.next_value()?);
                         }
+                        Field::IsSyncing => {
+                            if is_syncing.is_some() {
+                                return Err(serde::de::Error::duplicate_field("is_syncing"));
+                            }
+                            is_syncing = Some(map.next_value()?);
+                        }
                     }
                 }
                 let six = six.unwrap_or_default();
@@ -337,8 +351,9 @@ impl<'de> Deserialize<'de> for SessionResult {
                 let is_current = is_current.unwrap_or_default();
                 let stats = stats.unwrap_or_default();
                 let netstats = netstats.unwrap_or_default();
+                let is_syncing = is_syncing.unwrap_or_default();
                 Ok(SessionResult::new(
-                    six, eix, sbix, ebix, esix, is_current, stats, netstats,
+                    six, eix, sbix, ebix, esix, is_current, stats, netstats, is_syncing,
                 ))
             }
         }
@@ -352,6 +367,7 @@ impl<'de> Deserialize<'de> for SessionResult {
             "is_current",
             "stats",
             "netstats",
+            "is_syncing",
         ];
         deserializer.deserialize_struct("SessionResult", FIELDS, SessionResultVisitor)
     }
@@ -367,6 +383,7 @@ impl SessionResult {
         is_current: bool,
         stats: SessionStats,
         netstats: NetworkSessionStats,
+        is_syncing: bool,
     ) -> Self {
         Self {
             six,
@@ -377,6 +394,7 @@ impl SessionResult {
             is_current,
             stats,
             netstats,
+            is_syncing,
         }
     }
 }

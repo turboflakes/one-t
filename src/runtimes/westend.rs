@@ -30,7 +30,7 @@ use crate::onet::{
 use crate::records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EpochKey, EraIndex, Identity,
     NetworkSessionStats, ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records,
-    SessionStats, Subscribers, SubsetStats, ValidatorProfileRecord,
+    SessionStats, Subscribers, SubsetStats, SyncStatus, ValidatorProfileRecord,
 };
 use crate::report::{
     group_by_points, position, Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara,
@@ -2278,12 +2278,20 @@ pub async fn cache_nomination_pools_stats(
                     pool_stats.member_counter = bonded.member_counter;
 
                     // fetch pool stash account staked amount
+                    // let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
+                    // let account_addr = node_runtime::storage().system().account(&stash_account);
+                    // if let Some(account_info) =
+                    //     api.storage().fetch(&account_addr, block_hash).await?
+                    // {
+                    //     pool_stats.staked = account_info.data.fee_frozen;
+                    // }
+
+                    // fetch pool stash account staked amount from staking pallet
                     let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
-                    let account_addr = node_runtime::storage().system().account(&stash_account);
-                    if let Some(account_info) =
-                        api.storage().fetch(&account_addr, block_hash).await?
-                    {
-                        pool_stats.staked = account_info.data.fee_frozen;
+                    let ledger_addr = node_runtime::storage().staking().ledger(&stash_account);
+                    if let Some(data) = api.storage().fetch(&ledger_addr, block_hash).await? {
+                        pool_stats.staked = data.active;
+                        pool_stats.unbonding = data.total - data.active;
                     }
 
                     // fetch pool reward account free amount
@@ -2743,12 +2751,6 @@ pub async fn cache_session_stats_records(
     // ---
     // cache all validators profile every new session and snapshot session stats
 
-    // Initialize validators vec
-    let mut validators: Vec<ValidatorProfileRecord> = Vec::new();
-
-    // Load TVP stashes
-    let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url(is_loading).await?;
-
     if let Some(block) = api.rpc().header(block_hash).await? {
         let active_era_addr = node_runtime::storage().staking().active_era();
         let era_index = match api
@@ -2769,6 +2771,15 @@ pub async fn cache_session_stats_records(
             Some(index) => index,
             None => return Err("Current session index not defined".into()),
         };
+
+        // initialize network stats (cached syncing status)
+        let mut nss = NetworkSessionStats::new(epoch_index, (block.number - 1) as u64);
+
+        // Initialize validators vec
+        let mut validators: Vec<ValidatorProfileRecord> = Vec::new();
+
+        // Load TVP stashes
+        let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url(is_loading).await?;
 
         // Fetch active validators
         let authorities_addr = node_runtime::storage().session().validators();
@@ -2840,8 +2851,40 @@ pub async fn cache_session_stats_records(
                 }
             }
 
-            // cache points from the parent_block_hash of the session
-            let mut nss = NetworkSessionStats::new(epoch_index, (block.number - 1) as u64);
+            // track chilled nodes
+            for stash in authorities.iter() {
+                if validators
+                    .iter()
+                    .find(|&p| p.stash.as_ref().unwrap() == stash)
+                    .is_none()
+                {
+                    // mark validator has chilled
+                    let v: ValidatorProfileRecord = if let Ok(serialized_data) = redis::cmd("GET")
+                        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+                        .query_async::<Connection, String>(&mut cache as &mut Connection)
+                        .await
+                    {
+                        let mut v: ValidatorProfileRecord =
+                            serde_json::from_str(&serialized_data).unwrap_or_default();
+                        v.is_chilled = true;
+                        v
+                    } else {
+                        let mut v = ValidatorProfileRecord::new(stash.clone());
+                        v.identity = get_identity(&onet, &stash, None).await?;
+                        v.is_chilled = true;
+                        v
+                    };
+                    let serialized = serde_json::to_string(&v)?;
+                    redis::cmd("SET")
+                        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+                        .arg(serialized)
+                        .query_async(&mut cache as &mut Connection)
+                        .await
+                        .map_err(CacheError::RedisCMDError)?;
+                    //
+                    validators.push(v);
+                }
+            }
 
             // Fetch Era reward points
             let era_reward_points_addr = node_runtime::storage()
