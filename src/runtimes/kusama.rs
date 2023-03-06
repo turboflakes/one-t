@@ -30,7 +30,7 @@ use crate::onet::{
 use crate::records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EpochKey, EraIndex, Identity,
     NetworkSessionStats, ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records,
-    SessionStats, Subscribers, SubsetStats, SyncStatus, ValidatorProfileRecord,
+    SessionStats, Subscribers, SubsetStats, ValidatorProfileRecord,
 };
 use crate::report::{
     group_by_points, position, Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara,
@@ -2885,6 +2885,13 @@ pub async fn cache_session_stats_records(
                     validators.push(v);
                 }
             }
+
+            nss.total_vals_chilled = validators
+                .iter_mut()
+                .filter(|v| v.is_chilled)
+                .count()
+                .try_into()
+                .unwrap();
 
             // Fetch Era reward points
             let era_reward_points_addr = node_runtime::storage()
