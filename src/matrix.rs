@@ -969,6 +969,7 @@ impl Matrix {
                     "{}{}.{}",
                     config.data_path, MATRIX_NEXT_TOKEN_FILENAME, room_id
                 );
+                debug!("next_token_filename: {}", next_token_filename);
 
                 // If token is None try to read from cached file
                 let from_token = match from_token {
@@ -999,107 +1000,120 @@ impl Matrix {
                         MATRIX_URL, room_id_encoded, access_token, filter_encoded
                     )
                 };
-                let res = client.get(url).send().await?;
-                match res.status() {
-                    reqwest::StatusCode::OK => {
-                        let events = res.json::<RoomEventsResponse>().await?;
-                        let mut commands: Vec<Commands> = Vec::new();
-                        // Parse message to commands
-                        for message in events.chunk.iter() {
-                            if message.content.msgtype == "m.text" {
-                                let body = message.content.body.trim();
-                                match body.split_once(' ') {
-                                    None => {
-                                        if body == "!help" {
-                                            commands.push(Commands::Help);
-                                        } else if body == "!legends" {
-                                            commands.push(Commands::Legends);
+
+                match client.get(url.to_string()).send().await {
+                    Ok(res) => match res.status() {
+                        reqwest::StatusCode::OK => {
+                            let events = res.json::<RoomEventsResponse>().await?;
+                            let mut commands: Vec<Commands> = Vec::new();
+                            // Parse message to commands
+                            for message in events.chunk.iter() {
+                                if message.content.msgtype == "m.text" {
+                                    let body = message.content.body.trim();
+                                    match body.split_once(' ') {
+                                        None => {
+                                            if body == "!help" {
+                                                commands.push(Commands::Help);
+                                            } else if body == "!legends" {
+                                                commands.push(Commands::Legends);
+                                            }
                                         }
-                                    }
-                                    Some((cmd, value)) => match cmd {
-                                        "!subscribe" => match value {
-                                            "groups" => commands.push(Commands::Subscribe(
-                                                ReportType::Groups,
-                                                message.sender.to_string(),
-                                                None,
-                                            )),
-                                            "parachains" => commands.push(Commands::Subscribe(
-                                                ReportType::Parachains,
-                                                message.sender.to_string(),
-                                                None,
-                                            )),
-                                            "insights" => commands.push(Commands::Subscribe(
-                                                ReportType::Insights,
-                                                message.sender.to_string(),
-                                                None,
-                                            )),
-                                            other => match other.split_once(' ') {
-                                                None => {
-                                                    // other = stash
-                                                    commands.push(Commands::Subscribe(
-                                                        ReportType::Validator(None),
-                                                        message.sender.to_string(),
-                                                        Some(other.to_string()),
-                                                    ))
-                                                }
-                                                Some((stash, param)) => match param {
-                                                    "short" => commands.push(Commands::Subscribe(
-                                                        ReportType::Validator(Some(
-                                                            param.to_string(),
-                                                        )),
-                                                        message.sender.to_string(),
-                                                        Some(stash.to_string()),
-                                                    )),
-                                                    _ => commands.push(Commands::NotSupported),
-                                                },
-                                            },
-                                        },
-                                        "!unsubscribe" => match value {
-                                            "insights" => commands.push(Commands::Unsubscribe(
-                                                ReportType::Insights,
-                                                message.sender.to_string(),
-                                                None,
-                                            )),
-                                            other => match other.split_once(' ') {
-                                                None => {
-                                                    // other = stash
-                                                    commands.push(Commands::Unsubscribe(
-                                                        ReportType::Validator(None),
-                                                        message.sender.to_string(),
-                                                        Some(other.to_string()),
-                                                    ))
-                                                }
-                                                Some((stash, param)) => match param {
-                                                    "short" => {
-                                                        commands.push(Commands::Unsubscribe(
-                                                            ReportType::Validator(Some(
-                                                                param.to_string(),
-                                                            )),
+                                        Some((cmd, value)) => match cmd {
+                                            "!subscribe" => match value {
+                                                "groups" => commands.push(Commands::Subscribe(
+                                                    ReportType::Groups,
+                                                    message.sender.to_string(),
+                                                    None,
+                                                )),
+                                                "parachains" => commands.push(Commands::Subscribe(
+                                                    ReportType::Parachains,
+                                                    message.sender.to_string(),
+                                                    None,
+                                                )),
+                                                "insights" => commands.push(Commands::Subscribe(
+                                                    ReportType::Insights,
+                                                    message.sender.to_string(),
+                                                    None,
+                                                )),
+                                                other => match other.split_once(' ') {
+                                                    None => {
+                                                        // other = stash
+                                                        commands.push(Commands::Subscribe(
+                                                            ReportType::Validator(None),
                                                             message.sender.to_string(),
-                                                            Some(stash.to_string()),
+                                                            Some(other.to_string()),
                                                         ))
                                                     }
-                                                    _ => commands.push(Commands::NotSupported),
+                                                    Some((stash, param)) => match param {
+                                                        "short" => {
+                                                            commands.push(Commands::Subscribe(
+                                                                ReportType::Validator(Some(
+                                                                    param.to_string(),
+                                                                )),
+                                                                message.sender.to_string(),
+                                                                Some(stash.to_string()),
+                                                            ))
+                                                        }
+                                                        _ => commands.push(Commands::NotSupported),
+                                                    },
                                                 },
                                             },
+                                            "!unsubscribe" => match value {
+                                                "insights" => commands.push(Commands::Unsubscribe(
+                                                    ReportType::Insights,
+                                                    message.sender.to_string(),
+                                                    None,
+                                                )),
+                                                other => match other.split_once(' ') {
+                                                    None => {
+                                                        // other = stash
+                                                        commands.push(Commands::Unsubscribe(
+                                                            ReportType::Validator(None),
+                                                            message.sender.to_string(),
+                                                            Some(other.to_string()),
+                                                        ))
+                                                    }
+                                                    Some((stash, param)) => match param {
+                                                        "short" => {
+                                                            commands.push(Commands::Unsubscribe(
+                                                                ReportType::Validator(Some(
+                                                                    param.to_string(),
+                                                                )),
+                                                                message.sender.to_string(),
+                                                                Some(stash.to_string()),
+                                                            ))
+                                                        }
+                                                        _ => commands.push(Commands::NotSupported),
+                                                    },
+                                                },
+                                            },
+                                            _ => commands.push(Commands::NotSupported),
                                         },
-                                        _ => commands.push(Commands::NotSupported),
-                                    },
-                                };
+                                    };
+                                }
                             }
+                            // Cache next token
+                            let next_token = if events.end == "" {
+                                events.start
+                            } else {
+                                events.end
+                            };
+                            fs::write(&next_token_filename, next_token)?;
+                            Ok(Some(commands))
                         }
-                        // Cache next token
-                        let next_token = if events.end == "" {
-                            events.start
-                        } else {
-                            events.end
-                        };
-                        fs::write(&next_token_filename, next_token)?;
-                        Ok(Some(commands))
-                    }
-                    _ => {
-                        let response = res.json::<ErrorResponse>().await?;
-                        Err(MatrixError::Other(response.error))
+                        _ => {
+                            warn!("next_token_filename: {}", next_token_filename);
+                            warn!("filter: {:?}", filter);
+                            warn!("matrix_url: {}", url);
+                            let response = res.json::<ErrorResponse>().await?;
+                            Err(MatrixError::Other(response.error))
+                        }
+                    },
+                    Err(e) => {
+                        warn!("next_token_filename: {}", next_token_filename);
+                        warn!("filter: {:?}", filter);
+                        warn!("matrix_url: {}", url.to_string());
+                        Err(MatrixError::ReqwestError(e))
                     }
                 }
             }
@@ -1141,32 +1155,42 @@ impl Matrix {
                     ),
                 };
 
-                let res = client.get(url).send().await?;
-                match res.status() {
-                    reqwest::StatusCode::OK => {
-                        let events = res.json::<RoomEventsResponse>().await?;
-                        let mut members: Vec<UserID> = Vec::new();
-                        // Parse message to commands
-                        for message in events.chunk.iter() {
-                            // skip bot user
-                            if message.content.membership == "join"
-                                && message.user_id != config.matrix_bot_user
-                            {
-                                members.push(message.user_id.to_string());
+                match client.get(url.to_string()).send().await {
+                    Ok(res) => match res.status() {
+                        reqwest::StatusCode::OK => {
+                            let events = res.json::<RoomEventsResponse>().await?;
+                            let mut members: Vec<UserID> = Vec::new();
+                            // Parse message to commands
+                            for message in events.chunk.iter() {
+                                // skip bot user
+                                if message.content.membership == "join"
+                                    && message.user_id != config.matrix_bot_user
+                                {
+                                    members.push(message.user_id.to_string());
+                                }
                             }
+                            // Cache next token
+                            let next_token = if events.end == "" {
+                                events.start
+                            } else {
+                                events.end
+                            };
+                            fs::write(&next_token_filename, next_token)?;
+                            Ok(Some(members))
                         }
-                        // Cache next token
-                        let next_token = if events.end == "" {
-                            events.start
-                        } else {
-                            events.end
-                        };
-                        fs::write(&next_token_filename, next_token)?;
-                        Ok(Some(members))
-                    }
-                    _ => {
-                        let response = res.json::<ErrorResponse>().await?;
-                        Err(MatrixError::Other(response.error))
+                        _ => {
+                            warn!("next_token_filename: {}", next_token_filename);
+                            warn!("filter: {:?}", filter);
+                            warn!("matrix_url: {}", url);
+                            let response = res.json::<ErrorResponse>().await?;
+                            Err(MatrixError::Other(response.error))
+                        }
+                    },
+                    Err(e) => {
+                        warn!("next_token_filename: {}", next_token_filename);
+                        warn!("filter: {:?}", filter);
+                        warn!("Matrix url: {}", url.to_string());
+                        Err(MatrixError::ReqwestError(e))
                     }
                 }
             }
