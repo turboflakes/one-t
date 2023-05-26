@@ -43,6 +43,7 @@ use std::{
     path::Path,
     result::Result,
     str::FromStr,
+    sync::mpsc,
     thread, time,
 };
 use subxt::{
@@ -52,6 +53,13 @@ use subxt::{
     },
     OnlineClient, PolkadotConfig,
 };
+
+use crate::api::{routes::routes, ws::server};
+use crate::cache::add_pool;
+use actix::Actor;
+use actix_cors::Cors;
+use actix_web::{dev::ServerHandle, http, middleware, rt, web, App, HttpServer};
+use std::env;
 
 const TVP_VALIDATORS_FILENAME: &str = ".tvp";
 pub const BLOCK_FILENAME: &str = ".block";
@@ -216,12 +224,45 @@ impl Onet {
         &self.matrix
     }
 
-    /// Spawn and restart on error
-    pub fn spawn() {
-        // Authenticate matrix and spawn lazy load commands
-        spawn_and_restart_matrix_lazy_load_on_error();
-        // Subscribe on-chain events
-        spawn_and_restart_on_error();
+    pub fn start() {
+        let config = CONFIG.clone();
+        info!("starting ONET");
+        let (ctrlc_tx, ctrlc_rx) = mpsc::channel();
+
+        ctrlc::set_handler(move || {
+            ctrlc_tx
+                .send(())
+                .expect("Could not send signal on channel.")
+        })
+        .expect("Error setting Ctrl-C handler");
+
+        if config.api_enabled {
+            let (server_tx, server_rx) = mpsc::channel();
+            // start one-t API as a standalone service without depending on other services
+            spawn_api(server_tx);
+            let server_handle = server_rx
+                .recv()
+                .expect("could not receive server handle from channel.");
+
+            // wait for SIGINT, SIGTERM, SIGHUP
+            ctrlc_rx
+                .recv()
+                .expect("could not receive signal from channel.");
+
+            // close gracefully http server api
+            rt::System::new().block_on(server_handle.stop(true));
+        } else {
+            // Authenticate matrix and spawn lazy load commands
+            spawn_and_restart_matrix_lazy_load_on_error();
+
+            // Subscribe on-chain events
+            spawn_and_restart_on_chain_events_on_error();
+
+            // wait for SIGINT, SIGTERM, SIGHUP
+            ctrlc_rx
+                .recv()
+                .expect("could not receive signal from channel.");
+        }
     }
 
     async fn subscribe_on_chain_events(&self) -> Result<(), OnetError> {
@@ -240,7 +281,7 @@ impl Onet {
     // cache methods
     async fn cache_network(&self) -> Result<(), OnetError> {
         let config = CONFIG.clone();
-        if config.api_enabled {
+        if config.cache_writer_enabled {
             let mut conn = self.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
             let client = self.client();
@@ -273,6 +314,48 @@ impl Onet {
     }
 }
 
+pub async fn run_api(tx: mpsc::Sender<ServerHandle>) -> std::io::Result<()> {
+    let config = CONFIG.clone();
+    // start http server with an websocket /ws endpoint
+    let addr = format!("{}:{}", config.api_host, config.api_port);
+    info!("Starting HTTP server at http://{}", addr);
+    let server = HttpServer::new(move || {
+        let cors = Cors::default()
+            .allowed_origin_fn(|origin, _req_head| {
+                let allowed_origins =
+                    env::var("ONET_API_CORS_ALLOW_ORIGIN").unwrap_or("*".to_string());
+                let allowed_origins = allowed_origins.split(",").collect::<Vec<_>>();
+                allowed_origins
+                    .iter()
+                    .any(|e| e.as_bytes() == origin.as_bytes())
+            })
+            .allowed_methods(vec!["GET", "OPTIONS"])
+            .allowed_headers(vec![http::header::CONTENT_TYPE])
+            .supports_credentials()
+            .max_age(3600);
+        App::new()
+            .app_data(web::Data::new(server::Server::new().start()))
+            .wrap(middleware::Logger::default())
+            .wrap(cors)
+            .configure(add_pool)
+            .configure(routes)
+    })
+    .bind(addr)?
+    .run();
+
+    // Send server handle back to the main thread
+    let _ = tx.send(server.handle());
+
+    server.await
+}
+
+pub fn spawn_api(tx: mpsc::Sender<ServerHandle>) {
+    async_std::task::spawn(async {
+        let server_future = run_api(tx);
+        rt::System::new().block_on(server_future)
+    });
+}
+
 fn spawn_and_restart_matrix_lazy_load_on_error() {
     async_std::task::spawn(async {
         let config = CONFIG.clone();
@@ -294,7 +377,7 @@ fn spawn_and_restart_matrix_lazy_load_on_error() {
     });
 }
 
-fn spawn_and_restart_on_error() {
+fn spawn_and_restart_on_chain_events_on_error() {
     async_std::task::spawn(async {
         let config = CONFIG.clone();
         loop {
@@ -409,6 +492,10 @@ pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID, Option<Param>)>, On
     let config = CONFIG.clone();
     let subscribers_filename = format!("{}{}", config.data_path, MATRIX_SUBSCRIBERS_FILENAME);
     let mut out: Vec<(AccountId32, UserID, Option<Param>)> = Vec::new();
+    if config.matrix_disabled {
+        return Ok(out);
+    }
+
     let file = File::open(&subscribers_filename)?;
 
     // Read each subscriber (stash,user_id) and parse stash to AccountId

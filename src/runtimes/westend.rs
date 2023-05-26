@@ -251,7 +251,7 @@ pub async fn process_best_block(
 
     // if api enabled cache best block
     let config = CONFIG.clone();
-    if config.api_enabled {
+    if config.cache_writer_enabled {
         let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
         redis::cmd("SET")
             .arg(CacheKey::BestBlock)
@@ -343,7 +343,7 @@ pub async fn process_finalized_block(
 // cache_track_records is called once at every block
 pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.api_enabled {
+    if config.cache_writer_enabled {
         let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
         // cache records every new block
@@ -385,13 +385,21 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
 
                             // cache para.stats as a different cache key
                             let serialized = serde_json::to_string(&para_record.para_stats())?;
-                            redis::cmd("HSET")
+                            redis::pipe()
+                                .atomic()
+                                .cmd("HSET")
                                 .arg(CacheKey::AuthorityRecordVerbose(
                                     authority_key.to_string(),
                                     Verbosity::Stats,
                                 ))
                                 .arg(String::from("para_stats"))
                                 .arg(serialized)
+                                .cmd("EXPIRE")
+                                .arg(CacheKey::AuthorityRecordVerbose(
+                                    authority_key.to_string(),
+                                    Verbosity::Stats,
+                                ))
+                                .arg(config.cache_writer_prunning)
                                 .query_async(&mut cache as &mut Connection)
                                 .await
                                 .map_err(CacheError::RedisCMDError)?;
@@ -406,13 +414,21 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                                 missed_votes: para_record.total_missed_votes(),
                             };
                             let serialized = serde_json::to_string(&summary)?;
-                            redis::cmd("HSET")
+                            redis::pipe()
+                                .atomic()
+                                .cmd("HSET")
                                 .arg(CacheKey::AuthorityRecordVerbose(
                                     authority_key.to_string(),
                                     Verbosity::Summary,
                                 ))
                                 .arg(String::from("para_summary"))
                                 .arg(serialized)
+                                .cmd("EXPIRE")
+                                .arg(CacheKey::AuthorityRecordVerbose(
+                                    authority_key.to_string(),
+                                    Verbosity::Summary,
+                                ))
+                                .arg(config.cache_writer_prunning)
                                 .query_async(&mut cache as &mut Connection)
                                 .await
                                 .map_err(CacheError::RedisCMDError)?;
@@ -449,37 +465,42 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                         }
                         let serialized = serde_json::to_string(&authority_record)?;
                         data.insert(String::from("auth"), serialized);
-                        redis::cmd("HSET")
-                            .arg(authority_key)
+                        redis::pipe()
+                            .atomic()
+                            .cmd("HSET")
+                            .arg(authority_key.to_string())
                             .arg(data)
+                            .cmd("EXPIRE")
+                            .arg(authority_key.to_string())
+                            .arg(config.cache_writer_prunning)
                             .query_async(&mut cache as &mut Connection)
                             .await
                             .map_err(CacheError::RedisCMDError)?;
                     }
                 }
             }
-            // cache current_block / finalized block
-            redis::cmd("SET")
+            let serialized = serde_json::to_string(&session_stats)?;
+
+            redis::pipe()
+                .atomic()
+                // cache current_block / finalized block
+                .cmd("SET")
                 .arg(CacheKey::FinalizedBlock)
                 .arg(*current_block)
-                .query_async(&mut cache as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
-
-            // cache current_block / finalized block into a sorted set by session
-            redis::cmd("ZADD")
+                // cache current_block / finalized block into a sorted set by session
+                .cmd("ZADD")
                 .arg(CacheKey::BlocksBySession(Index::Num(current_epoch.into())))
                 .arg(0)
                 .arg(*current_block)
-                .query_async(&mut cache as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
-
-            // cache session_stats at every block
-            let serialized = serde_json::to_string(&session_stats)?;
-            redis::cmd("SET")
+                .cmd("EXPIRE")
+                .arg(CacheKey::BlocksBySession(Index::Num(current_epoch.into())))
+                .arg(config.cache_writer_prunning)
+                // cache session_stats at every block
+                .cmd("SET")
                 .arg(CacheKey::BlockByIndexStats(Index::Num(*current_block)))
                 .arg(serialized)
+                .arg("EX")
+                .arg(config.cache_writer_prunning)
                 .query_async(&mut cache as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
@@ -487,10 +508,15 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
             // cache parachains stats
             for (para_id, records) in parachains_map.iter() {
                 let serialized = serde_json::to_string(&records)?;
-                redis::cmd("HSET")
+                redis::pipe()
+                    .atomic()
+                    .cmd("HSET")
                     .arg(CacheKey::ParachainsBySession(current_epoch))
                     .arg(para_id.to_string())
                     .arg(serialized)
+                    .cmd("EXPIRE")
+                    .arg(CacheKey::ParachainsBySession(current_epoch))
+                    .arg(config.cache_writer_prunning)
                     .query_async(&mut cache as &mut Connection)
                     .await
                     .map_err(CacheError::RedisCMDError)?;
@@ -502,11 +528,18 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                     let mut data: BTreeMap<String, String> = BTreeMap::new();
                     data.insert(String::from("current_block"), (*current_block).to_string());
                     // by `epoch_index`
-                    redis::cmd("HSET")
+                    redis::pipe()
+                        .atomic()
+                        .cmd("HSET")
                         .arg(CacheKey::SessionByIndex(Index::Num(
                             records.current_epoch().into(),
                         )))
                         .arg(data)
+                        .cmd("EXPIRE")
+                        .arg(CacheKey::SessionByIndex(Index::Num(
+                            records.current_epoch().into(),
+                        )))
+                        .arg(config.cache_writer_prunning)
                         .query_async(&mut cache as &mut Connection)
                         .await
                         .map_err(CacheError::RedisCMDError)?;
@@ -523,7 +556,7 @@ pub async fn try_run_cache_session_records(
     block_hash: Option<H256>,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.api_enabled {
+    if config.cache_writer_enabled {
         let records_cloned = records.clone();
         async_std::task::spawn(async move {
             if let Err(e) = cache_session_records(&records_cloned, block_hash).await {
@@ -541,7 +574,7 @@ pub async fn cache_session_records(
     block_hash: Option<H256>,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.api_enabled {
+    if config.cache_writer_enabled {
         let start = Instant::now();
         let onet: Onet = Onet::new().await;
         let api = onet.client().clone();
@@ -579,32 +612,37 @@ pub async fn cache_session_records(
                     String::from("era_session_index"),
                     era_session_index.to_string(),
                 );
-                // by `epoch_index`
-                redis::cmd("HSET")
+
+                redis::pipe()
+                    .atomic()
+                    // by `epoch_index`
+                    .cmd("HSET")
                     .arg(CacheKey::SessionByIndex(Index::Num(
                         records.current_epoch().into(),
                     )))
                     .arg(data)
-                    .query_async(&mut cache as &mut Connection)
-                    .await
-                    .map_err(CacheError::RedisCMDError)?;
-
-                // by `current`
-                redis::cmd("SET")
+                    .cmd("EXPIRE")
+                    .arg(CacheKey::SessionByIndex(Index::Num(
+                        records.current_epoch().into(),
+                    )))
+                    .arg(config.cache_writer_prunning)
+                    // by `current`
+                    .cmd("SET")
                     .arg(CacheKey::SessionByIndex(Index::Str(String::from(
                         "current",
                     ))))
                     .arg(records.current_epoch().to_string())
-                    .query_async(&mut cache as &mut Connection)
-                    .await
-                    .map_err(CacheError::RedisCMDError)?;
-
-                //NOTE: make session_stats available to previous session by copying stats from previous block
-                redis::cmd("COPY")
+                    //NOTE: make session_stats available to previous session by copying stats from previous block
+                    .cmd("COPY")
                     .arg(CacheKey::BlockByIndexStats(Index::Num(*current_block - 1)))
                     .arg(CacheKey::SessionByIndexStats(Index::Num(
                         (current_epoch - 1).into(),
                     )))
+                    .cmd("EXPIRE")
+                    .arg(CacheKey::SessionByIndexStats(Index::Num(
+                        (current_epoch - 1).into(),
+                    )))
+                    .arg(config.cache_writer_prunning)
                     .query_async(&mut cache as &mut Connection)
                     .await
                     .map_err(CacheError::RedisCMDError)?;
@@ -621,13 +659,22 @@ pub async fn cache_session_records(
                         // along with data_type and identity
                         let mut data: BTreeMap<String, String> = BTreeMap::new();
                         data.insert(String::from("address"), stash.to_string());
-                        redis::cmd("HSET")
+                        redis::pipe()
+                            .atomic()
+                            .cmd("HSET")
                             .arg(CacheKey::AuthorityRecord(
                                 current_era,
                                 current_epoch,
                                 *authority_idx,
                             ))
                             .arg(data)
+                            .cmd("EXPIRE")
+                            .arg(CacheKey::AuthorityRecord(
+                                current_era,
+                                current_epoch,
+                                *authority_idx,
+                            ))
+                            .arg(config.cache_writer_prunning)
                             .query_async(&mut cache as &mut Connection)
                             .await
                             .map_err(CacheError::RedisCMDError)?;
@@ -637,18 +684,28 @@ pub async fn cache_session_records(
                         data.insert(String::from("era"), current_era.to_string());
                         data.insert(String::from("session"), current_epoch.to_string());
                         data.insert(String::from("authority"), (*authority_idx).to_string());
-                        redis::cmd("HSET")
+                        redis::pipe()
+                            .atomic()
+                            .cmd("HSET")
                             .arg(CacheKey::AuthorityKeyByAccountAndSession(
                                 stash.clone(),
                                 current_epoch,
                             ))
                             .arg(data)
+                            .cmd("EXPIRE")
+                            .arg(CacheKey::AuthorityKeyByAccountAndSession(
+                                stash.clone(),
+                                current_epoch,
+                            ))
+                            .arg(config.cache_writer_prunning)
                             .query_async(&mut cache as &mut Connection)
                             .await
                             .map_err(CacheError::RedisCMDError)?;
 
                         // cache authority key into authorities by session to be easily filtered
-                        let _: () = redis::cmd("SADD")
+                        let _: () = redis::pipe()
+                            .atomic()
+                            .cmd("SADD")
                             .arg(CacheKey::AuthorityKeysBySession(current_epoch))
                             .arg(
                                 CacheKey::AuthorityRecord(
@@ -658,13 +715,18 @@ pub async fn cache_session_records(
                                 )
                                 .to_string(),
                             )
+                            .cmd("EXPIRE")
+                            .arg(CacheKey::AuthorityKeysBySession(current_epoch))
+                            .arg(config.cache_writer_prunning)
                             .query_async(&mut cache as &mut Connection)
                             .await
                             .map_err(CacheError::RedisCMDError)?;
 
                         if records.get_para_record(*authority_idx, None).is_some() {
                             // cache authority key into authorities by session (only para_validators) to be easily filtered
-                            let _: () = redis::cmd("SADD")
+                            let _: () = redis::pipe()
+                                .atomic()
+                                .cmd("SADD")
                                 .arg(CacheKey::AuthorityKeysBySessionParaOnly(current_epoch))
                                 .arg(
                                     CacheKey::AuthorityRecord(
@@ -674,6 +736,9 @@ pub async fn cache_session_records(
                                     )
                                     .to_string(),
                                 )
+                                .cmd("EXPIRE")
+                                .arg(CacheKey::AuthorityKeysBySessionParaOnly(current_epoch))
+                                .arg(config.cache_writer_prunning)
                                 .query_async(&mut cache as &mut Connection)
                                 .await
                                 .map_err(CacheError::RedisCMDError)?;
@@ -2726,7 +2791,7 @@ pub async fn try_run_cache_session_stats_records(
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.api_enabled {
+    if config.cache_writer_enabled {
         async_std::task::spawn(async move {
             if let Err(e) = cache_session_stats_records(block_hash, is_loading).await {
                 error!("try_run_cache_session_stats_records error: {:?}", e);

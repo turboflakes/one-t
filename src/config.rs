@@ -178,6 +178,12 @@ fn default_api_cors_allow_origin() -> String {
     "*".into()
 }
 
+/// provides default value for cache_prunning if ONET_CACHE_WRITER_PRUNNING env var is not set
+/// value is given in seconds 1 day = 24*60*60 = 86400
+fn default_cache_writer_prunning() -> u32 {
+    86400
+}
+
 /// provides default value for redis_host if ONET_REDIS_HOST env var is not set
 fn default_redis_host() -> String {
     "127.0.0.1".into()
@@ -283,6 +289,10 @@ pub struct Config {
     #[serde(default = "default_api_cors_allow_origin")]
     pub api_cors_allow_origin: String,
     // redis configuration
+    #[serde(default)]
+    pub cache_writer_enabled: bool,
+    #[serde(default = "default_cache_writer_prunning")]
+    pub cache_writer_prunning: u32,
     #[serde(default = "default_redis_host")]
     pub redis_hostname: String,
     #[serde(default)]

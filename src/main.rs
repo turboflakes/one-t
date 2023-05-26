@@ -31,18 +31,13 @@ mod report;
 mod runtimes;
 mod stats;
 
-use crate::api::{routes::routes, ws::server};
-use crate::cache::add_pool;
 use crate::config::CONFIG;
 use crate::onet::Onet;
-use actix::*;
-use actix_cors::Cors;
-use actix_web::{http, middleware, web, App, HttpServer};
 use log::info;
 use std::env;
 
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
+// #[actix_web::main]
+fn main() {
     // load configuration
     let config = CONFIG.clone();
 
@@ -63,33 +58,5 @@ async fn main() -> std::io::Result<()> {
         env!("CARGO_PKG_DESCRIPTION")
     );
 
-    // start chain subscription service
-    Onet::spawn();
-
-    // start http server with an websocket /ws endpoint
-    let addr = format!("{}:{}", config.api_host, config.api_port);
-    HttpServer::new(move || {
-        let cors = Cors::default()
-            .allowed_origin_fn(|origin, _req_head| {
-                let allowed_origins =
-                    env::var("ONET_API_CORS_ALLOW_ORIGIN").unwrap_or("*".to_string());
-                let allowed_origins = allowed_origins.split(",").collect::<Vec<_>>();
-                allowed_origins
-                    .iter()
-                    .any(|e| e.as_bytes() == origin.as_bytes())
-            })
-            .allowed_methods(vec!["GET", "OPTIONS"])
-            .allowed_headers(vec![http::header::CONTENT_TYPE])
-            .supports_credentials()
-            .max_age(3600);
-        App::new()
-            .app_data(web::Data::new(server::Server::new().start()))
-            .wrap(middleware::Logger::default())
-            .wrap(cors)
-            .configure(add_pool)
-            .configure(routes)
-    })
-    .bind(addr)?
-    .run()
-    .await
+    Onet::start();
 }
