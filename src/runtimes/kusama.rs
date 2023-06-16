@@ -291,6 +291,7 @@ pub async fn process_finalized_block(
     };
 
     let metadata = api.rpc().metadata(block_hash_metadata).await?;
+    warn!("__metadata: {:?}", metadata);
     if let Some(block_hash) = block_hash {
         let events = Events::new_from_client(metadata, block_hash, api.clone()).await?;
         if let Some(new_session_event) = events.find_first::<NewSession>()? {

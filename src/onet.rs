@@ -25,9 +25,10 @@ use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
 use crate::records::EpochIndex;
 use crate::report::Network;
 use crate::runtimes::{
-    kusama, polkadot,
+    polkadot,
+    // kusama,
     support::{ChainPrefix, SupportedRuntime},
-    westend,
+    // westend,
 };
 use log::{debug, error, info, warn};
 use redis::aio::Connection;
@@ -273,9 +274,9 @@ impl Onet {
 
         match self.runtime {
             SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
-            SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
-            SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
-            // _ => unreachable!(),
+            // SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
+            // SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
+            _ => unreachable!(),
         }
     }
     // cache methods
@@ -557,14 +558,14 @@ pub fn get_from_seed(seed: &str, pass: Option<&str>) -> sr25519::Pair {
         .expect("constructed from known-good static value; qed")
 }
 
-pub fn get_latest_block_number_processed() -> Result<Option<u64>, OnetError> {
+pub fn get_latest_block_number_processed() -> Result<u64, OnetError> {
     let config = CONFIG.clone();
     let filename = format!("{}{}", config.data_path, BLOCK_FILENAME);
     if let Ok(number) = fs::read_to_string(&filename) {
-        Ok(Some(number.parse().unwrap_or(config.initial_block_number)))
+        Ok(number.parse().unwrap_or(config.initial_block_number))
     } else {
         fs::write(&filename, config.initial_block_number.to_string())?;
-        Ok(Some(config.initial_block_number))
+        Ok(config.initial_block_number)
     }
 }
 
