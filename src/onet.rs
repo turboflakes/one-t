@@ -226,7 +226,7 @@ impl Onet {
 
     pub fn start() {
         let config = CONFIG.clone();
-        info!("starting ONET");
+        info!("Starting ONET");
         let (ctrlc_tx, ctrlc_rx) = mpsc::channel();
 
         ctrlc::set_handler(move || {
