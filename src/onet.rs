@@ -316,6 +316,10 @@ impl Onet {
 
 pub async fn run_api(tx: mpsc::Sender<ServerHandle>) -> std::io::Result<()> {
     let config = CONFIG.clone();
+    // set ss58 version globally based on config.chain_name
+    crypto::set_default_ss58_version(crypto::Ss58AddressFormat::custom(
+        SupportedRuntime::from(config.chain_name).chain_prefix(),
+    ));
     // start http server with an websocket /ws endpoint
     let addr = format!("{}:{}", config.api_host, config.api_port);
     info!("Starting HTTP server at http://{}", addr);

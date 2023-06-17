@@ -28,6 +28,16 @@ pub enum SupportedRuntime {
     Westend,
 }
 
+impl SupportedRuntime {
+    pub fn chain_prefix(&self) -> ChainPrefix {
+        match &self {
+            Self::Polkadot => 0,
+            Self::Kusama => 2,
+            Self::Westend => 42,
+        }
+    }
+}
+
 impl From<String> for SupportedRuntime {
     fn from(v: String) -> Self {
         match v.as_str() {
