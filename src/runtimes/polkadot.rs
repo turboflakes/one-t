@@ -2213,7 +2213,7 @@ pub async fn try_run_cache_nomination_pools_stats(
     block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.cache_writer_enabled {
+    if config.cache_writer_enabled && config.pools_enabled {
         // collect nomination stats every minute
         if (block_number as f64 % 10.0_f64) == 0.0_f64 {
             async_std::task::spawn(async move {

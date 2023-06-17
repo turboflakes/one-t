@@ -76,12 +76,12 @@ mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        pallet_identity::types::Data, pallet_nomination_pools::PoolState,
-        polkadot_parachain::primitives::Id, polkadot_primitives::v4::CoreIndex,
-        polkadot_primitives::v4::DisputeStatement, polkadot_primitives::v4::GroupIndex,
-        polkadot_primitives::v4::ValidatorIndex, polkadot_primitives::v4::ValidityAttestation,
-        sp_arithmetic::per_things::Perbill, sp_consensus_babe::digests::PreDigest,
-        bounded_collections::bounded_vec::BoundedVec
+        bounded_collections::bounded_vec::BoundedVec, pallet_identity::types::Data,
+        pallet_nomination_pools::PoolState, polkadot_parachain::primitives::Id,
+        polkadot_primitives::v4::CoreIndex, polkadot_primitives::v4::DisputeStatement,
+        polkadot_primitives::v4::GroupIndex, polkadot_primitives::v4::ValidatorIndex,
+        polkadot_primitives::v4::ValidityAttestation, sp_arithmetic::per_things::Perbill,
+        sp_consensus_babe::digests::PreDigest,
     },
     session::events::NewSession,
     // Event,
@@ -2174,7 +2174,7 @@ pub async fn try_run_cache_nomination_pools(
     block_hash: Option<H256>,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.cache_writer_enabled {
+    if config.cache_writer_enabled && config.pools_enabled {
         async_std::task::spawn(async move {
             if let Err(e) = cache_nomination_pools(block_number, block_hash).await {
                 error!("cache_nomination_pools error: {:?}", e);
@@ -2204,7 +2204,7 @@ pub async fn try_run_cache_nomination_pools_stats(
     block_hash: Option<H256>,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.cache_writer_enabled {
+    if config.cache_writer_enabled && config.pools_enabled {
         // collect nomination stats every minute
         if (block_number as f64 % 10.0_f64) == 0.0_f64 {
             async_std::task::spawn(async move {
