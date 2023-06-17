@@ -76,12 +76,12 @@ mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        pallet_identity::types::Data, pallet_nomination_pools::PoolState,
-        polkadot_parachain::primitives::Id, polkadot_primitives::v4::CoreIndex,
-        polkadot_primitives::v4::DisputeStatement, polkadot_primitives::v4::GroupIndex,
-        polkadot_primitives::v4::ValidatorIndex, polkadot_primitives::v4::ValidityAttestation,
-        sp_arithmetic::per_things::Perbill, sp_consensus_babe::digests::PreDigest,
-        bounded_collections::bounded_vec::BoundedVec
+        bounded_collections::bounded_vec::BoundedVec, pallet_identity::types::Data,
+        pallet_nomination_pools::PoolState, polkadot_parachain::primitives::Id,
+        polkadot_primitives::v4::CoreIndex, polkadot_primitives::v4::DisputeStatement,
+        polkadot_primitives::v4::GroupIndex, polkadot_primitives::v4::ValidatorIndex,
+        polkadot_primitives::v4::ValidityAttestation, sp_arithmetic::per_things::Perbill,
+        sp_consensus_babe::digests::PreDigest,
     },
     session::events::NewSession,
     // Event,
