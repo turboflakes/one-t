@@ -25,10 +25,9 @@ use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
 use crate::records::EpochIndex;
 use crate::report::Network;
 use crate::runtimes::{
-    polkadot,
-    // kusama,
+    kusama, polkadot,
     support::{ChainPrefix, SupportedRuntime},
-    // westend,
+    westend,
 };
 use log::{debug, error, info, warn};
 use redis::aio::Connection;
@@ -48,10 +47,9 @@ use std::{
     thread, time,
 };
 use subxt::{
-    ext::{
-        sp_core::{crypto, sr25519, storage::StorageKey, Pair},
-        sp_runtime::AccountId32,
-    },
+    ext::sp_core::{crypto, sr25519, Pair},
+    storage::StorageKey,
+    utils::AccountId32,
     OnlineClient, PolkadotConfig,
 };
 
@@ -274,9 +272,9 @@ impl Onet {
 
         match self.runtime {
             SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
-            // SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
-            // SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
-            _ => unreachable!(),
+            SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
+            SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
+            // _ => unreachable!(),
         }
     }
     // cache methods
@@ -490,7 +488,7 @@ pub async fn try_fetch_stashes_from_remote_url(
 pub fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {
     let s = &key.0[key.0.len() - 32..];
     let v: [u8; 32] = s.try_into().expect("slice with incorrect length");
-    AccountId32::new(v)
+    v.into()
 }
 
 pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID, Option<Param>)>, OnetError> {
@@ -507,7 +505,9 @@ pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID, Option<Param>)>, On
     for line in BufReader::new(file).lines() {
         if let Ok(s) = line {
             let v: Vec<&str> = s.split(',').collect();
-            let acc = AccountId32::from_str(&v[0])?;
+            let acc = AccountId32::from_str(&v[0]).map_err(|e| {
+                OnetError::Other(format!("Invalid account: {:?} error: {e:?}", &v[0]))
+            })?;
             if let Some(param) = v.get(2) {
                 out.push((acc, v[1].to_string(), Some(param.to_string())));
             } else {

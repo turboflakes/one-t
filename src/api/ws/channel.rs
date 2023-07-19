@@ -28,15 +28,15 @@ use crate::api::{
 };
 use crate::cache::{create_or_await_pool, get_conn, CacheKey, Index, RedisPool, Verbosity};
 use crate::config::CONFIG;
-use crate::records::{BlockNumber, EpochIndex};
+use crate::records::{BlockNumber, EpochIndex, SS58};
 
 use actix::prelude::*;
 
 use futures::executor::block_on;
 use log::{info, warn};
 use redis::aio::Connection;
-use std::{collections::HashMap, time::Duration};
-use subxt::ext::sp_runtime::AccountId32;
+use std::{collections::HashMap, str::FromStr, time::Duration};
+use subxt::utils::AccountId32;
 
 const BLOCK_INTERVAL: Duration = Duration::from_secs(6);
 
@@ -46,7 +46,7 @@ pub enum Topic {
     BestBlock,
     Block(BlockNumber),
     NewSession,
-    Validator(AccountId32),
+    Validator(SS58),
     ParaAuthorities(EpochIndex, Verbosity),
     Parachains(EpochIndex),
 }
@@ -401,7 +401,7 @@ impl Channel {
                                             {
                                                 if let Ok(data) = redis::cmd("HGETALL")
                                                     .arg(CacheKey::AuthorityKeyByAccountAndSession(
-                                                        account.clone(),
+                                                        AccountId32::from_str(account).unwrap(),
                                                         current_session,
                                                     ))
                                                     .query_async::<Connection, AuthorityKeyCache>(

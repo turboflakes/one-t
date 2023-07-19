@@ -58,13 +58,16 @@ use std::{
     thread, time,
     time::Instant,
 };
+
 use subxt::{
-    events::Events,
-    ext::{
-        sp_core::{sr25519, H256},
-        sp_runtime::{AccountId32, Digest, DigestItem},
+    config::{
+        substrate::{Digest, DigestItem},
+        Header,
     },
+    events::Events,
+    ext::sp_core::{sr25519, H256},
     tx::PairSigner,
+    utils::AccountId32,
     PolkadotConfig,
 };
 
@@ -96,129 +99,131 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     let api = onet.client().clone();
 
     // Initialize from the first block of the session of last block processed
-    if let Some(latest_block_number) = get_latest_block_number_processed()? {
-        let latest_block_hash = api
-            .rpc()
-            .block_hash(Some(latest_block_number.into()))
-            .await?;
+    let latest_block_number = get_latest_block_number_processed()?;
+    let latest_block_hash = api
+        .rpc()
+        .block_hash(Some(latest_block_number.into()))
+        .await?
+        .unwrap();
 
-        // Fetch ParaSession start block for the latest block processed
-        let session_start_block_addr = node_runtime::storage()
-            .para_scheduler()
-            .session_start_block();
-        let mut start_block_number = if let Some(start_block_number) = api
-            .storage()
-            .fetch(&session_start_block_addr, latest_block_hash)
-            .await?
-        {
-            start_block_number
-        } else {
-            0
-        };
+    // Fetch ParaSession start block for the latest block processed
+    let session_start_block_addr = node_runtime::storage()
+        .para_scheduler()
+        .session_start_block();
+    let mut start_block_number = api
+        .storage()
+        .at(latest_block_hash)
+        .fetch(&session_start_block_addr)
+        .await?
+        .unwrap();
 
-        // Note: We want to start sync in the first block of a session.
-        // For that we get the first block of a ParaSession and remove 1 block,
-        // since ParaSession starts always at the the second block of a new session
-        start_block_number -= 1;
-        // Load into memory the minimum initial eras defined (default=0)
-        start_block_number -= config.minimum_initial_eras * 6 * config.blocks_per_session;
-        info!(
-            "Start loading blocks since block number: {}",
-            start_block_number
-        );
+    // Note: We want to start sync in the first block of a session.
+    // For that we get the first block of a ParaSession and remove 1 block,
+    // since ParaSession starts always at the the second block of a new session
+    start_block_number -= 1;
+    // Load into memory the minimum initial eras defined (default=0)
+    start_block_number -= config.minimum_initial_eras * 6 * config.blocks_per_session;
+    info!(
+        "Start loading blocks since block number: {}",
+        start_block_number
+    );
 
-        // get block hash from the start block
-        let block_hash = api
-            .rpc()
-            .block_hash(Some(start_block_number.into()))
-            .await?;
+    // get block hash from the start block
+    let block_hash = api
+        .rpc()
+        .block_hash(Some(start_block_number.into()))
+        .await?
+        .unwrap();
 
-        // Fetch active era index
-        let active_era_addr = node_runtime::storage().staking().active_era();
-        let era_index = match api.storage().fetch(&active_era_addr, block_hash).await? {
-            Some(info) => info.index,
-            None => return Err("Active era not defined".into()),
-        };
+    // Fetch active era index
+    let active_era_addr = node_runtime::storage().staking().active_era();
+    let era_index = match api.storage().at(block_hash).fetch(&active_era_addr).await? {
+        Some(info) => info.index,
+        None => return Err(format!("Active Era not found for block_hash: {block_hash}").into()),
+    };
 
-        // Cache Nomination pools
-        // try_run_cache_pools_era(era_index, false).await?;
+    // Cache Nomination pools
+    // try_run_cache_pools_era(era_index, false).await?;
 
-        // Fetch current session index
-        let session_index_addr = node_runtime::storage().session().current_index();
-        let session_index = if let Some(session_index) =
-            api.storage().fetch(&session_index_addr, block_hash).await?
-        {
-            session_index
-        } else {
-            0
-        };
+    // Fetch current session index
+    let session_index_addr = node_runtime::storage().session().current_index();
+    let session_index = match api
+        .storage()
+        .at(block_hash)
+        .fetch(&session_index_addr)
+        .await?
+    {
+        Some(session_index) => session_index,
+        None => return Err(format!("Session Index not found for block_hash: {block_hash}").into()),
+    };
 
-        // Cache current epoch
-        let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
-        fs::write(&epoch_filename, session_index.to_string())?;
+    // Cache current epoch
+    let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
+    fs::write(&epoch_filename, session_index.to_string())?;
 
-        // Subscribers
-        let mut subscribers = Subscribers::with_era_and_epoch(era_index, session_index);
-        // Initialized subscribers
-        if let Ok(subs) = get_subscribers() {
-            for (account, user_id, param) in subs.iter() {
-                subscribers.subscribe(account.clone(), user_id.to_string(), param.clone());
-            }
+    // Subscribers
+    let mut subscribers = Subscribers::with_era_and_epoch(era_index, session_index);
+    // Initialized subscribers
+    if let Ok(subs) = get_subscribers() {
+        for (account, user_id, param) in subs.iter() {
+            subscribers.subscribe(account.clone(), user_id.to_string(), param.clone());
         }
+    }
 
-        // Records
-        let mut records =
-            Records::with_era_epoch_and_block(era_index, session_index, start_block_number.into());
+    // Records
+    let mut records =
+        Records::with_era_epoch_and_block(era_index, session_index, start_block_number.into());
 
-        // Initialize subscribers records
-        initialize_records(&onet, &mut records, block_hash).await?;
+    // Initialize subscribers records
+    initialize_records(&onet, &mut records, block_hash).await?;
 
-        // Initialize cache
-        cache_session_records(&records, block_hash).await?;
-        cache_track_records(&onet, &records).await?;
+    // Initialize cache
+    cache_session_records(&records, block_hash).await?;
+    cache_track_records(&onet, &records).await?;
 
-        // Start indexing from the start_block_number
-        let mut latest_block_number_processed: Option<u64> = Some(start_block_number.into());
-        let mut is_loading = true;
+    // Start indexing from the start_block_number
+    let mut latest_block_number_processed: Option<u64> = Some(start_block_number.into());
+    let mut is_loading = true;
 
-        // Subscribe head
-        // NOTE: the reason why we subscribe head and not finalized_head,
-        // is just because head is in sync more frequently.
-        // finalized_head can always be queried so as soon as it changes we process th repective block_hash
-        let mut blocks_sub = api.blocks().subscribe_best().await?;
-        while let Some(Ok(best_block)) = blocks_sub.next().await {
-            debug!("block head {:?} received", best_block.number());
-            // update records best_block number
-            process_best_block(&onet, &mut records, best_block.number().into()).await?;
+    // Subscribe head
+    // NOTE: the reason why we subscribe head and not finalized_head,
+    // is just because head is in sync more frequently.
+    // finalized_head can always be queried so as soon as it changes we process th repective block_hash
+    let mut blocks_sub = api.blocks().subscribe_best().await?;
+    while let Some(Ok(best_block)) = blocks_sub.next().await {
+        debug!("block head {:?} received", best_block.number());
+        // update records best_block number
+        process_best_block(&onet, &mut records, best_block.number().into()).await?;
 
-            // fetch latest finalized block
-            let finalized_block_hash = api.rpc().finalized_head().await?;
-            if let Some(block) = api.rpc().header(Some(finalized_block_hash)).await? {
-                debug!("finalized block head {:?} in storage", block.number);
-                // process older blocks that have not been processed first
-                while let Some(processed_block_number) = latest_block_number_processed {
-                    if block.number as u64 == processed_block_number {
-                        latest_block_number_processed = None;
-                        is_loading = false;
+        // fetch latest finalized block
+        let finalized_block_hash = api.rpc().finalized_head().await?;
+        if let Some(block) = api.rpc().header(Some(finalized_block_hash)).await? {
+            debug!("finalized block head {:?} in storage", block.number);
+            // process older blocks that have not been processed first
+            while let Some(processed_block_number) = latest_block_number_processed {
+                if block.number as u64 == processed_block_number {
+                    latest_block_number_processed = None;
+                    is_loading = false;
+                } else {
+                    // process the next block
+                    let block_number = processed_block_number + 1;
+
+                    // if finalized_head process block otherwise fetch block_hash and process the pending block
+                    if block.number as u64 == block_number {
+                        process_finalized_block(
+                            &onet,
+                            &mut subscribers,
+                            &mut records,
+                            block_number,
+                            block.hash(),
+                            is_loading,
+                        )
+                        .await?;
                     } else {
-                        // process the next block
-                        let block_number = processed_block_number + 1;
-
-                        // if finalized_head process block otherwise fetch block_hash and process the pending block
-                        if block.number as u64 == block_number {
-                            process_finalized_block(
-                                &onet,
-                                &mut subscribers,
-                                &mut records,
-                                block_number,
-                                Some(block.hash()),
-                                is_loading,
-                            )
-                            .await?;
-                        } else {
-                            // fetch block_hash if not the finalized head
-                            let block_hash =
-                                api.rpc().block_hash(Some(block_number.into())).await?;
+                        // fetch block_hash if not the finalized head
+                        if let Some(block_hash) =
+                            api.rpc().block_hash(Some(block_number.into())).await?
+                        {
                             process_finalized_block(
                                 &onet,
                                 &mut subscribers,
@@ -228,16 +233,17 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                                 is_loading,
                             )
                             .await?;
-                        };
+                        }
+                    };
 
-                        //
-                        latest_block_number_processed = Some(block_number);
-                    }
+                    //
+                    latest_block_number_processed = Some(block_number);
                 }
             }
-            latest_block_number_processed = get_latest_block_number_processed()?;
         }
+        latest_block_number_processed = Some(get_latest_block_number_processed()?);
     }
+
     Err(OnetError::SubscriptionFinished)
 }
 
@@ -269,7 +275,7 @@ pub async fn process_finalized_block(
     subscribers: &mut Subscribers,
     records: &mut Records,
     block_number: BlockNumber,
-    block_hash: Option<H256>,
+    block_hash: H256,
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
@@ -287,38 +293,38 @@ pub async fn process_finalized_block(
             .block_hash(Some((block_number - 1).into()))
             .await?
     } else {
-        block_hash
+        Some(block_hash)
     };
 
-    let metadata = api.rpc().metadata(block_hash_metadata).await?;
-    if let Some(block_hash) = block_hash {
-        let events = Events::new_from_client(metadata, block_hash, api.clone()).await?;
-        if let Some(new_session_event) = events.find_first::<NewSession>()? {
-            info!("{:?}", new_session_event);
+    let metadata = api.rpc().metadata_legacy(block_hash_metadata).await?;
+    debug!("metadata_legacy: {:?}", metadata);
 
-            switch_new_session(
-                &onet,
-                block_number,
-                new_session_event.session_index,
-                subscribers,
-                records,
-                Some(block_hash),
-                is_loading,
-            )
-            .await?;
+    let events = Events::new_from_client(metadata, block_hash, api.clone()).await?;
+    if let Some(new_session_event) = events.find_first::<NewSession>()? {
+        info!("{:?}", new_session_event);
 
-            // Network public report
-            try_run_network_report(new_session_event.session_index, &records, is_loading).await?;
+        switch_new_session(
+            &onet,
+            block_number,
+            new_session_event.session_index,
+            subscribers,
+            records,
+            block_hash,
+            is_loading,
+        )
+        .await?;
 
-            // Cache session records every new session
-            try_run_cache_session_records(&records, Some(block_hash)).await?;
+        // Network public report
+        try_run_network_report(new_session_event.session_index, &records, is_loading).await?;
 
-            // Cache session stats records every new session
-            try_run_cache_session_stats_records(Some(block_hash), is_loading).await?;
+        // Cache session records every new session
+        try_run_cache_session_records(&records, block_hash).await?;
 
-            // Cache nomination pools every new session
-            try_run_cache_nomination_pools(block_number, Some(block_hash)).await?;
-        }
+        // Cache session stats records every new session
+        try_run_cache_session_stats_records(block_hash, is_loading).await?;
+
+        // Cache nomination pools every new session
+        try_run_cache_nomination_pools(block_number, block_hash).await?;
     }
 
     // Update records
@@ -553,7 +559,7 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
 
 pub async fn try_run_cache_session_records(
     records: &Records,
-    block_hash: Option<H256>,
+    block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if config.cache_writer_enabled {
@@ -569,10 +575,7 @@ pub async fn try_run_cache_session_records(
 }
 
 // cache_session_records is called once at every new session
-pub async fn cache_session_records(
-    records: &Records,
-    block_hash: Option<H256>,
-) -> Result<(), OnetError> {
+pub async fn cache_session_records(records: &Records, block_hash: H256) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if config.cache_writer_enabled {
         let start = Instant::now();
@@ -593,7 +596,8 @@ pub async fn cache_session_records(
                     .eras_start_session_index(&current_era);
                 let start_session_index = match api
                     .storage()
-                    .fetch(&eras_start_session_index_addr, block_hash)
+                    .at(block_hash)
+                    .fetch(&eras_start_session_index_addr)
                     .await?
                 {
                     Some(index) => index,
@@ -757,7 +761,7 @@ pub async fn cache_session_records(
 pub async fn initialize_records(
     onet: &Onet,
     records: &mut Records,
-    block_hash: Option<H256>,
+    block_hash: H256,
 ) -> Result<(), OnetError> {
     let api = onet.client().clone();
 
@@ -767,7 +771,8 @@ pub async fn initialize_records(
         .eras_reward_points(&records.current_era());
     let era_reward_points = api
         .storage()
-        .fetch(&era_reward_points_addr, block_hash)
+        .at(block_hash)
+        .fetch(&era_reward_points_addr)
         .await?;
 
     if era_reward_points.is_none() {
@@ -780,12 +785,18 @@ pub async fn initialize_records(
 
     // Fetch active validators
     let authorities_addr = node_runtime::storage().session().validators();
-    if let Some(authorities) = api.storage().fetch(&authorities_addr, block_hash).await? {
+    if let Some(authorities) = api
+        .storage()
+        .at(block_hash)
+        .fetch(&authorities_addr)
+        .await?
+    {
         // Fetch para validator groups
         let validator_groups_addr = node_runtime::storage().para_scheduler().validator_groups();
         if let Some(validator_groups) = api
             .storage()
-            .fetch(&validator_groups_addr, block_hash)
+            .at(block_hash)
+            .fetch(&validator_groups_addr)
             .await?
         {
             // Fetch para validator indices
@@ -794,7 +805,8 @@ pub async fn initialize_records(
                 .active_validator_indices();
             if let Some(active_validator_indices) = api
                 .storage()
-                .fetch(&active_validator_indices_addr, block_hash)
+                .at(block_hash)
+                .fetch(&active_validator_indices_addr)
                 .await?
             {
                 // Update records groups with respective authorities
@@ -939,7 +951,7 @@ pub async fn switch_new_session(
     new_session_index: EpochIndex,
     subscribers: &mut Subscribers,
     records: &mut Records,
-    block_hash: Option<H256>,
+    block_hash: H256,
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
@@ -950,7 +962,7 @@ pub async fn switch_new_session(
 
     // Fetch active era index
     let active_era_addr = node_runtime::storage().staking().active_era();
-    let current_era_index = match api.storage().fetch(&active_era_addr, block_hash).await? {
+    let current_era_index = match api.storage().at(block_hash).fetch(&active_era_addr).await? {
         Some(info) => info.index,
         None => return Err("Active era not defined".into()),
     };
@@ -1030,7 +1042,7 @@ pub async fn track_records(
     onet: &Onet,
     records: &mut Records,
     block_number: BlockNumber,
-    block_hash: Option<H256>,
+    block_hash: H256,
 ) -> Result<(), OnetError> {
     let api = onet.client().clone();
 
@@ -1038,17 +1050,17 @@ pub async fn track_records(
     records.set_current_block_number(block_number.into());
 
     // Extract authority from the block header
-    if let Some(authority_index) = get_authority_index(&onet, block_hash).await? {
+    if let Some(authority_index) = get_authority_index(&onet, Some(block_hash)).await? {
         // Fetch session index for the specified
-        let session_index = if block_hash.is_some() {
-            let current_index_addr = node_runtime::storage().session().current_index();
-            let current_index = match api.storage().fetch(&current_index_addr, block_hash).await? {
-                Some(index) => index,
-                None => return Err("Current session index not defined".into()),
-            };
-            current_index
-        } else {
-            records.current_epoch()
+        let current_index_addr = node_runtime::storage().session().current_index();
+        let session_index = match api
+            .storage()
+            .at(block_hash)
+            .fetch(&current_index_addr)
+            .await?
+        {
+            Some(index) => index,
+            None => return Err("Current session index not defined".into()),
         };
 
         // Track block authored
@@ -1062,7 +1074,8 @@ pub async fn track_records(
         let scheduled_cores_addr = node_runtime::storage().para_scheduler().scheduled();
         if let Some(scheduled_cores) = api
             .storage()
-            .fetch(&scheduled_cores_addr, block_hash)
+            .at(block_hash)
+            .fetch(&scheduled_cores_addr)
             .await?
         {
             // Update records para_group
@@ -1087,14 +1100,16 @@ pub async fn track_records(
             .eras_reward_points(&records.current_era());
         if let Some(era_reward_points) = api
             .storage()
-            .fetch(&era_reward_points_addr, block_hash)
+            .at(block_hash)
+            .fetch(&era_reward_points_addr)
             .await?
         {
             // Fetch para validator groups
             let validator_groups_addr = node_runtime::storage().para_scheduler().validator_groups();
             if let Some(validator_groups) = api
                 .storage()
-                .fetch(&validator_groups_addr, block_hash)
+                .at(block_hash)
+                .fetch(&validator_groups_addr)
                 .await?
             {
                 // Fetch on chain votes
@@ -1102,7 +1117,8 @@ pub async fn track_records(
 
                 if let Some(backing_votes) = api
                     .storage()
-                    .fetch(&on_chain_votes_addr, block_hash)
+                    .at(block_hash)
+                    .fetch(&on_chain_votes_addr)
                     .await?
                 {
                     if let Some(&era_idx) = records.get_era_index(Some(backing_votes.session)) {
@@ -1221,7 +1237,8 @@ pub async fn track_records(
                                             .active_validator_indices();
                                         if let Some(active_validator_indices) = api
                                             .storage()
-                                            .fetch(&active_validator_indices_addr, block_hash)
+                                            .at(block_hash)
+                                            .fetch(&active_validator_indices_addr)
                                             .await?
                                         {
                                             if let Some(ValidatorIndex(auth_idx)) =
@@ -1308,7 +1325,13 @@ pub async fn run_val_perf_report(
     // TODO: get parachains names
     let mut parachains: Vec<ParaId> = Vec::new();
     let parachains_addr = node_runtime::storage().paras().parachains();
-    if let Some(paras) = api.storage().fetch(&parachains_addr, None).await? {
+    if let Some(paras) = api
+        .storage()
+        .at_latest()
+        .await?
+        .fetch(&parachains_addr)
+        .await?
+    {
         for Id(para_id) in paras {
             parachains.push(para_id);
         }
@@ -1646,14 +1669,26 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
     // Fetch active era index
     let active_era_addr = node_runtime::storage().staking().active_era();
-    let active_era_index = match api.storage().fetch(&active_era_addr, None).await? {
+    let active_era_index = match api
+        .storage()
+        .at_latest()
+        .await?
+        .fetch(&active_era_addr)
+        .await?
+    {
         Some(info) => info.index,
         None => return Err("Active era not defined".into()),
     };
 
     // Fetch current epoch
     let current_index_addr = node_runtime::storage().session().current_index();
-    let current_session_index = match api.storage().fetch(&current_index_addr, None).await? {
+    let current_session_index = match api
+        .storage()
+        .at_latest()
+        .await?
+        .fetch(&current_index_addr)
+        .await?
+    {
         Some(index) => index,
         None => return Err("Current session index not defined".into()),
     };
@@ -1662,7 +1697,13 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     let eras_total_stake_addr = node_runtime::storage()
         .staking()
         .eras_total_stake(&active_era_index);
-    let active_era_total_stake = match api.storage().fetch(&eras_total_stake_addr, None).await? {
+    let active_era_total_stake = match api
+        .storage()
+        .at_latest()
+        .await?
+        .fetch(&eras_total_stake_addr)
+        .await?
+    {
         Some(total_stake) => total_stake,
         None => return Err("Current session index not defined".into()),
     };
@@ -1682,10 +1723,21 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
 
     // Fetch active validators
     let authorities_addr = node_runtime::storage().session().validators();
-    if let Some(authorities) = api.storage().fetch(&authorities_addr, None).await? {
+    if let Some(authorities) = api
+        .storage()
+        .at_latest()
+        .await?
+        .fetch(&authorities_addr)
+        .await?
+    {
         // Fetch all validators
         let validators_addr = node_runtime::storage().staking().validators_root();
-        let mut iter = api.storage().iter(validators_addr, 10, None).await?;
+        let mut iter = api
+            .storage()
+            .at_latest()
+            .await?
+            .iter(validators_addr, 10)
+            .await?;
         while let Some((key, validator_prefs)) = iter.next().await? {
             let stash = get_account_id_from_storage_key(key);
             let mut v = Validator::new(stash.clone());
@@ -1707,7 +1759,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             v.is_active = authorities.contains(&stash);
 
             // Fetch own stake
-            v.own_stake = get_own_stake_via_stash(&onet, &stash, None).await?;
+            v.own_stake = get_own_stake_via_stash(&onet, &stash).await?;
 
             // Get performance data from all eras available
             if let Some(((active_epochs, authored_blocks, mut pattern), para_data)) =
@@ -1756,7 +1808,13 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         let era_reward_points_addr = node_runtime::storage()
             .staking()
             .eras_reward_points(&era_index);
-        if let Some(era_reward_points) = api.storage().fetch(&era_reward_points_addr, None).await? {
+        if let Some(era_reward_points) = api
+            .storage()
+            .at_latest()
+            .await?
+            .fetch(&era_reward_points_addr)
+            .await?
+        {
             for (stash, points) in era_reward_points.individual.iter() {
                 validators
                     .iter_mut()
@@ -2046,7 +2104,7 @@ fn define_second_pool_call(
 pub async fn calculate_apr_from_stashes(
     onet: &Onet,
     stashes: Vec<AccountId32>,
-    block_hash: Option<H256>,
+    block_hash: H256,
 ) -> Result<f64, OnetError> {
     let start = Instant::now();
     let api = onet.client().clone();
@@ -2054,7 +2112,7 @@ pub async fn calculate_apr_from_stashes(
 
     // Fetch active era index
     let active_era_addr = node_runtime::storage().staking().active_era();
-    let active_era_index = match api.storage().fetch(&active_era_addr, block_hash).await? {
+    let active_era_index = match api.storage().at(block_hash).fetch(&active_era_addr).await? {
         Some(info) => info.index,
         None => return Err("Active era not defined".into()),
     };
@@ -2070,7 +2128,7 @@ pub async fn calculate_apr_from_stashes(
     // Collect stash commission
     for stash in stashes.iter() {
         let validator_addr = node_runtime::storage().staking().validators(stash);
-        if let Some(validator) = api.storage().fetch(&validator_addr, block_hash).await? {
+        if let Some(validator) = api.storage().at(block_hash).fetch(&validator_addr).await? {
             let Perbill(commission) = validator.commission;
             nominees_total_commission += commission as u128;
         }
@@ -2086,7 +2144,8 @@ pub async fn calculate_apr_from_stashes(
             .eras_reward_points(&era_index);
         if let Some(era_reward_points) = api
             .storage()
-            .fetch(&era_reward_points_addr, block_hash)
+            .at(block_hash)
+            .fetch(&era_reward_points_addr)
             .await?
         {
             for (stash, points) in era_reward_points.individual.iter() {
@@ -2098,8 +2157,11 @@ pub async fn calculate_apr_from_stashes(
                     let eras_stakers_addr = node_runtime::storage()
                         .staking()
                         .eras_stakers(&era_index, stash);
-                    if let Some(eras_stakers) =
-                        api.storage().fetch(&eras_stakers_addr, block_hash).await?
+                    if let Some(eras_stakers) = api
+                        .storage()
+                        .at(block_hash)
+                        .fetch(&eras_stakers_addr)
+                        .await?
                     {
                         nominees_total_stake += eras_stakers.total;
                     }
@@ -2114,7 +2176,8 @@ pub async fn calculate_apr_from_stashes(
                 .eras_validator_reward(&era_index);
             if let Some(eras_validator_reward) = api
                 .storage()
-                .fetch(&eras_validator_reward_addr, block_hash)
+                .at(block_hash)
+                .fetch(&eras_validator_reward_addr)
                 .await?
             {
                 total_reward += eras_validator_reward;
@@ -2171,7 +2234,7 @@ pub async fn calculate_apr_from_stashes(
 
 pub async fn try_run_cache_nomination_pools(
     block_number: BlockNumber,
-    block_hash: Option<H256>,
+    block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if config.cache_writer_enabled && config.pools_enabled {
@@ -2201,7 +2264,7 @@ pub async fn try_run_cache_nomination_pools(
 
 pub async fn try_run_cache_nomination_pools_stats(
     block_number: BlockNumber,
-    block_hash: Option<H256>,
+    block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if config.cache_writer_enabled && config.pools_enabled {
@@ -2219,7 +2282,7 @@ pub async fn try_run_cache_nomination_pools_stats(
 
 pub async fn cache_nomination_pools_nominees(
     block_number: BlockNumber,
-    block_hash: Option<H256>,
+    block_hash: H256,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
@@ -2228,14 +2291,24 @@ pub async fn cache_nomination_pools_nominees(
 
     // fetch last pool id
     let last_pool_id_addr = node_runtime::storage().nomination_pools().last_pool_id();
-    if let Some(last_pool_id) = api.storage().fetch(&last_pool_id_addr, block_hash).await? {
+    if let Some(last_pool_id) = api
+        .storage()
+        .at(block_hash)
+        .fetch(&last_pool_id_addr)
+        .await?
+    {
         let active_era_addr = node_runtime::storage().staking().active_era();
-        let era_index = match api.storage().fetch(&active_era_addr, block_hash).await? {
+        let era_index = match api.storage().at(block_hash).fetch(&active_era_addr).await? {
             Some(info) => info.index,
             None => return Err("Active era not defined".into()),
         };
         let current_index_addr = node_runtime::storage().session().current_index();
-        let epoch_index = match api.storage().fetch(&current_index_addr, block_hash).await? {
+        let epoch_index = match api
+            .storage()
+            .at(block_hash)
+            .fetch(&current_index_addr)
+            .await?
+        {
             Some(index) => index,
             None => return Err("Current session index not defined".into()),
         };
@@ -2253,7 +2326,8 @@ pub async fn cache_nomination_pools_nominees(
                 let nominators_addr = node_runtime::storage()
                     .staking()
                     .nominators(&pool_stash_account);
-                if let Some(nominations) = api.storage().fetch(&nominators_addr, block_hash).await?
+                if let Some(nominations) =
+                    api.storage().at(block_hash).fetch(&nominators_addr).await?
                 {
                     // deconstruct targets
                     let BoundedVec(stashes) = nominations.targets;
@@ -2270,8 +2344,11 @@ pub async fn cache_nomination_pools_nominees(
                         let eras_stakers_addr = node_runtime::storage()
                             .staking()
                             .eras_stakers(era_index, &stash);
-                        if let Some(exposure) =
-                            api.storage().fetch(&eras_stakers_addr, block_hash).await?
+                        if let Some(exposure) = api
+                            .storage()
+                            .at(block_hash)
+                            .fetch(&eras_stakers_addr)
+                            .await?
                         {
                             if let Some(individual) =
                                 exposure.others.iter().find(|x| x.who == pool_stash_account)
@@ -2311,7 +2388,7 @@ pub async fn cache_nomination_pools_nominees(
 
 pub async fn cache_nomination_pools_stats(
     block_number: BlockNumber,
-    block_hash: Option<H256>,
+    block_hash: H256,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
@@ -2320,9 +2397,19 @@ pub async fn cache_nomination_pools_stats(
 
     // fetch last pool id
     let last_pool_id_addr = node_runtime::storage().nomination_pools().last_pool_id();
-    if let Some(last_pool_id) = api.storage().fetch(&last_pool_id_addr, block_hash).await? {
+    if let Some(last_pool_id) = api
+        .storage()
+        .at(block_hash)
+        .fetch(&last_pool_id_addr)
+        .await?
+    {
         let current_index_addr = node_runtime::storage().session().current_index();
-        let epoch_index = match api.storage().fetch(&current_index_addr, block_hash).await? {
+        let epoch_index = match api
+            .storage()
+            .at(block_hash)
+            .fetch(&current_index_addr)
+            .await?
+        {
             Some(index) => index,
             None => return Err("Current session index not defined".into()),
         };
@@ -2338,7 +2425,12 @@ pub async fn cache_nomination_pools_stats(
                 let bonded_pools_addr = node_runtime::storage()
                     .nomination_pools()
                     .bonded_pools(&pool_id);
-                if let Some(bonded) = api.storage().fetch(&bonded_pools_addr, block_hash).await? {
+                if let Some(bonded) = api
+                    .storage()
+                    .at(block_hash)
+                    .fetch(&bonded_pools_addr)
+                    .await?
+                {
                     pool_stats.points = bonded.points;
                     pool_stats.member_counter = bonded.member_counter;
 
@@ -2354,7 +2446,7 @@ pub async fn cache_nomination_pools_stats(
                     // fetch pool stash account staked amount from staking pallet
                     let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
                     let ledger_addr = node_runtime::storage().staking().ledger(&stash_account);
-                    if let Some(data) = api.storage().fetch(&ledger_addr, block_hash).await? {
+                    if let Some(data) = api.storage().at(block_hash).fetch(&ledger_addr).await? {
                         pool_stats.staked = data.active;
                         pool_stats.unbonding = data.total - data.active;
                     }
@@ -2363,7 +2455,7 @@ pub async fn cache_nomination_pools_stats(
                     let stash_account = nomination_pool_account(AccountType::Reward, pool_id);
                     let account_addr = node_runtime::storage().system().account(&stash_account);
                     if let Some(account_info) =
-                        api.storage().fetch(&account_addr, block_hash).await?
+                        api.storage().at(block_hash).fetch(&account_addr).await?
                     {
                         pool_stats.reward = account_info.data.free;
                     }
@@ -2396,7 +2488,7 @@ pub async fn cache_nomination_pools_stats(
 
 pub async fn cache_nomination_pools(
     block_number: BlockNumber,
-    block_hash: Option<H256>,
+    block_hash: H256,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
@@ -2405,9 +2497,19 @@ pub async fn cache_nomination_pools(
 
     // fetch last pool id
     let last_pool_id_addr = node_runtime::storage().nomination_pools().last_pool_id();
-    if let Some(last_pool_id) = api.storage().fetch(&last_pool_id_addr, block_hash).await? {
+    if let Some(last_pool_id) = api
+        .storage()
+        .at(block_hash)
+        .fetch(&last_pool_id_addr)
+        .await?
+    {
         let current_index_addr = node_runtime::storage().session().current_index();
-        let epoch_index = match api.storage().fetch(&current_index_addr, block_hash).await? {
+        let epoch_index = match api
+            .storage()
+            .at(block_hash)
+            .fetch(&current_index_addr)
+            .await?
+        {
             Some(index) => index,
             None => return Err("Current session index not defined".into()),
         };
@@ -2422,7 +2524,7 @@ pub async fn cache_nomination_pools(
                     .nomination_pools()
                     .metadata(&pool_id);
                 if let Some(BoundedVec(metadata)) =
-                    api.storage().fetch(&metadata_addr, block_hash).await?
+                    api.storage().at(block_hash).fetch(&metadata_addr).await?
                 {
                     let metadata = str(metadata);
                     let mut pool = Pool::with_id_and_metadata(pool_id, metadata);
@@ -2430,8 +2532,11 @@ pub async fn cache_nomination_pools(
                     let bonded_pools_addr = node_runtime::storage()
                         .nomination_pools()
                         .bonded_pools(&pool_id);
-                    if let Some(bonded) =
-                        api.storage().fetch(&bonded_pools_addr, block_hash).await?
+                    if let Some(bonded) = api
+                        .storage()
+                        .at(block_hash)
+                        .fetch(&bonded_pools_addr)
+                        .await?
                     {
                         let state = match bonded.state {
                             PoolState::Blocked => pools::PoolState::Blocked,
@@ -2629,11 +2734,30 @@ async fn verify_oversubscribed(
 ) -> Result<bool, OnetError> {
     let api = onet.client().clone();
 
+    let max_addr = node_runtime::constants()
+        .staking()
+        .max_nominator_rewarded_per_validator();
+    let max: u32 = api.constants().at(&max_addr)?;
+
+    let block_hash = match block_hash {
+        Some(bh) => bh,
+        None => api
+            .rpc()
+            .block_hash(None)
+            .await?
+            .expect("didn't pass a block number; qed"),
+    };
+
     let eras_stakers_addr = node_runtime::storage()
         .staking()
         .eras_stakers(&era_index, stash);
-    if let Some(exposure) = api.storage().fetch(&eras_stakers_addr, block_hash).await? {
-        return Ok(exposure.others.len() > 256);
+    if let Some(exposure) = api
+        .storage()
+        .at(block_hash)
+        .fetch(&eras_stakers_addr)
+        .await?
+    {
+        return Ok(exposure.others.len() > max.try_into().unwrap());
     }
     return Ok(false);
 }
@@ -2641,28 +2765,24 @@ async fn verify_oversubscribed(
 async fn get_own_stake_via_controller(
     onet: &Onet,
     controller: &AccountId32,
-    block_hash: Option<H256>,
+    block_hash: H256,
 ) -> Result<u128, OnetError> {
     let api = onet.client().clone();
 
     let ledger_addr = node_runtime::storage().staking().ledger(controller);
-    if let Some(ledger) = api.storage().fetch(&ledger_addr, block_hash).await? {
+    if let Some(ledger) = api.storage().at(block_hash).fetch(&ledger_addr).await? {
         return Ok(ledger.active);
     }
     return Ok(0);
 }
 
-async fn get_own_stake_via_stash(
-    onet: &Onet,
-    stash: &AccountId32,
-    block_hash: Option<H256>,
-) -> Result<u128, OnetError> {
+async fn get_own_stake_via_stash(onet: &Onet, stash: &AccountId32) -> Result<u128, OnetError> {
     let api = onet.client().clone();
 
     let bonded_addr = node_runtime::storage().staking().bonded(stash);
-    if let Some(controller) = api.storage().fetch(&bonded_addr, block_hash).await? {
+    if let Some(controller) = api.storage().at_latest().await?.fetch(&bonded_addr).await? {
         let ledger_addr = node_runtime::storage().staking().ledger(controller);
-        if let Some(ledger) = api.storage().fetch(&ledger_addr, block_hash).await? {
+        if let Some(ledger) = api.storage().at_latest().await?.fetch(&ledger_addr).await? {
             return Ok(ledger.active);
         }
     }
@@ -2687,7 +2807,13 @@ async fn get_identity(
     let api = onet.client().clone();
 
     let identity_of_addr = node_runtime::storage().identity().identity_of(stash);
-    match api.storage().fetch(&identity_of_addr, None).await? {
+    match api
+        .storage()
+        .at_latest()
+        .await?
+        .fetch(&identity_of_addr)
+        .await?
+    {
         Some(identity) => {
             debug!("identity {:?}", identity);
             let parent = parse_identity_data(identity.info.display);
@@ -2699,7 +2825,13 @@ async fn get_identity(
         }
         None => {
             let super_of_addr = node_runtime::storage().identity().super_of(stash);
-            if let Some((parent_account, data)) = api.storage().fetch(&super_of_addr, None).await? {
+            if let Some((parent_account, data)) = api
+                .storage()
+                .at_latest()
+                .await?
+                .fetch(&super_of_addr)
+                .await?
+            {
                 let sub_account_name = parse_identity_data(data);
                 return get_identity(&onet, &parent_account, Some(sub_account_name.to_string()))
                     .await;
@@ -2787,7 +2919,7 @@ async fn get_authority_index(
 }
 
 pub async fn try_run_cache_session_stats_records(
-    block_hash: Option<H256>,
+    block_hash: H256,
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
@@ -2805,7 +2937,7 @@ pub async fn try_run_cache_session_stats_records(
 /// ---
 /// cache all validators profile and snapshot session stats at the last block of the session
 pub async fn cache_session_stats_records(
-    block_hash: Option<H256>,
+    block_hash: H256,
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
@@ -2816,11 +2948,12 @@ pub async fn cache_session_stats_records(
     // ---
     // cache all validators profile every new session and snapshot session stats
 
-    if let Some(block) = api.rpc().header(block_hash).await? {
+    if let Some(block) = api.rpc().header(Some(block_hash)).await? {
         let active_era_addr = node_runtime::storage().staking().active_era();
         let era_index = match api
             .storage()
-            .fetch(&active_era_addr, Some(block.parent_hash))
+            .at(block.parent_hash)
+            .fetch(&active_era_addr)
             .await?
         {
             Some(info) => info.index,
@@ -2830,7 +2963,8 @@ pub async fn cache_session_stats_records(
         let current_index_addr = node_runtime::storage().session().current_index();
         let epoch_index = match api
             .storage()
-            .fetch(&current_index_addr, Some(block.parent_hash))
+            .at(block.parent_hash)
+            .fetch(&current_index_addr)
             .await?
         {
             Some(index) => index,
@@ -2850,14 +2984,16 @@ pub async fn cache_session_stats_records(
         let authorities_addr = node_runtime::storage().session().validators();
         if let Some(authorities) = api
             .storage()
-            .fetch(&authorities_addr, Some(block.parent_hash))
+            .at(block.parent_hash)
+            .fetch(&authorities_addr)
             .await?
         {
             // Fetch all validators
             let validators_addr = node_runtime::storage().staking().validators_root();
             let mut iter = api
                 .storage()
-                .iter(validators_addr, 10, Some(block.parent_hash))
+                .at(block.parent_hash)
+                .iter(validators_addr, 10)
                 .await?;
             while let Some((key, validator_prefs)) = iter.next().await? {
                 // validator stash address
@@ -2868,14 +3004,14 @@ pub async fn cache_session_stats_records(
                 let bonded_addr = node_runtime::storage().staking().bonded(&stash);
                 if let Some(controller) = api
                     .storage()
-                    .fetch(&bonded_addr, Some(block.parent_hash))
+                    .at(block.parent_hash)
+                    .fetch(&bonded_addr)
                     .await?
                 {
                     v.controller = Some(controller.clone());
                     // get own stake
                     v.own_stake =
-                        get_own_stake_via_controller(&onet, &controller, Some(block.parent_hash))
-                            .await?;
+                        get_own_stake_via_controller(&onet, &controller, block.parent_hash).await?;
 
                     // deconstruct commisssion
                     let Perbill(commission) = validator_prefs.commission;
@@ -2964,7 +3100,8 @@ pub async fn cache_session_stats_records(
                 .eras_reward_points(&era_index);
             if let Some(era_reward_points) = api
                 .storage()
-                .fetch(&era_reward_points_addr, Some(block.parent_hash))
+                .at(block.parent_hash)
+                .fetch(&era_reward_points_addr)
                 .await?
             {
                 nss.total_reward_points = era_reward_points.total;
@@ -2987,7 +3124,8 @@ pub async fn cache_session_stats_records(
             let total_issuance_addr = node_runtime::storage().balances().total_issuance();
             if let Some(total_issuance) = api
                 .storage()
-                .fetch(&total_issuance_addr, Some(block.parent_hash))
+                .at(block.parent_hash)
+                .fetch(&total_issuance_addr)
                 .await?
             {
                 nss.total_issuance = total_issuance;
@@ -2999,7 +3137,8 @@ pub async fn cache_session_stats_records(
                 .eras_total_stake(&era_index);
             if let Some(total_staked) = api
                 .storage()
-                .fetch(&eras_total_stake_addr, Some(block.parent_hash))
+                .at(block.parent_hash)
+                .fetch(&eras_total_stake_addr)
                 .await?
             {
                 nss.total_staked = total_staked;
@@ -3011,7 +3150,8 @@ pub async fn cache_session_stats_records(
                 .eras_validator_reward(&era_index - 1);
             if let Some(last_rewarded) = api
                 .storage()
-                .fetch(&eras_total_reward_addr, Some(block.parent_hash))
+                .at(block.parent_hash)
+                .fetch(&eras_total_reward_addr)
                 .await?
             {
                 nss.last_rewarded = last_rewarded;

@@ -42,7 +42,7 @@ use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, str::FromStr};
 use std::{convert::TryInto, iter::FromIterator};
-use subxt::ext::sp_runtime::AccountId32;
+use subxt::utils::AccountId32;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -269,10 +269,12 @@ async fn get_session_authorities(
                 .await
                 .map_err(CacheError::RedisCMDError)?;
 
+            let acc = AccountId32::from_str(&address).map_err(|e| {
+                ApiError::BadRequest(format!("Invalid account: {:?} error: {e:?}", &address))
+            })?;
+
             let profile: String = redis::cmd("GET")
-                .arg(CacheKey::ValidatorProfileByAccount(AccountId32::from_str(
-                    &address,
-                )?))
+                .arg(CacheKey::ValidatorProfileByAccount(acc))
                 .query_async(&mut conn as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
@@ -455,7 +457,12 @@ pub async fn get_validators(
     // validators by address and last sessions
     //
     if &params.address != "" && params.number_last_sessions != 0 {
-        let stash = AccountId32::from_str(&params.address)?;
+        let stash = AccountId32::from_str(&params.address).map_err(|e| {
+            ApiError::BadRequest(format!(
+                "Invalid account: {:?} error: {e:?}",
+                &params.address
+            ))
+        })?;
         let mut data: Vec<ValidatorResult> = Vec::new();
 
         let mut i = Some(start_session);
@@ -844,7 +851,12 @@ pub async fn get_validator_by_stash(
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
-    let stash = AccountId32::from_str(&*stash.to_string())?;
+    let stash = AccountId32::from_str(&*stash.to_string()).map_err(|e| {
+        ApiError::BadRequest(format!(
+            "Invalid account: {:?} error: {e:?}",
+            &*stash.to_string()
+        ))
+    })?;
 
     let session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
@@ -886,7 +898,12 @@ pub async fn get_peer_by_authority(
     let mut conn = get_conn(&cache).await?;
     let (stash, peer_authority_index) = path.into_inner();
 
-    let stash = AccountId32::from_str(&*stash.to_string())?;
+    let stash = AccountId32::from_str(&*stash.to_string()).map_err(|e| {
+        ApiError::BadRequest(format!(
+            "Invalid account: {:?} error: {e:?}",
+            &*stash.to_string()
+        ))
+    })?;
 
     let session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
@@ -949,7 +966,12 @@ pub async fn get_validator_profile_by_stash(
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorProfileResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
-    let stash = AccountId32::from_str(&*stash.to_string())?;
+    let stash = AccountId32::from_str(&*stash.to_string()).map_err(|e| {
+        ApiError::BadRequest(format!(
+            "Invalid account: {:?} error: {e:?}",
+            &*stash.to_string()
+        ))
+    })?;
 
     let serialized_data: String = redis::cmd("GET")
         .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
@@ -967,7 +989,12 @@ pub async fn get_validator_grade_by_stash(
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorGradeResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
-    let stash = AccountId32::from_str(&*stash.to_string())?;
+    let stash = AccountId32::from_str(&*stash.to_string()).map_err(|e| {
+        ApiError::BadRequest(format!(
+            "Invalid account: {:?} error: {e:?}",
+            &*stash.to_string()
+        ))
+    })?;
 
     // get current session
     let requested_session_index: EpochIndex = match &params.session {

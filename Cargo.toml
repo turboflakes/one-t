@@ -37,8 +37,6 @@ ctrlc = { version = "3.0", features = ["termination"] }
 
 # subxt dependencies
 subxt = "0.29.0"
-#subxt = "0.25.0"
-#subxt = { git = "https://github.com/turboflakes/subxt", rev = "a44ce9a" }
 
 async-std = { version = "1.11.0", features = ["attributes", "tokio1"] }
 env_logger = "0.9.0"

@@ -66,6 +66,13 @@ impl From<&str> for OnetError {
     }
 }
 
+/// Convert String to OnetError
+impl From<String> for OnetError {
+    fn from(error: String) -> Self {
+        OnetError::Other(error)
+    }
+}
+
 /// Convert OnetError to String
 impl From<OnetError> for String {
     fn from(error: OnetError) -> Self {
