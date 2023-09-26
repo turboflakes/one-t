@@ -35,9 +35,11 @@ mobc = { version = "0.7", default-features = false, features = ["async-std"] }
 mobc-redis = { version = "0.7", default-features = false, features = ["async-std-comp"] }
 ctrlc = { version = "3.0", features = ["termination"] }
 
-# subxt dependencies
-subxt = "0.29.0"
+# Subxt crates:
+subxt = { version = "0.31.0", features = ["substrate-compat", "native"] }
+subxt-signer = { version = "0.31.0", features = ["subxt"] }
 
+#
 async-std = { version = "1.11.0", features = ["attributes", "tokio1"] }
 env_logger = "0.9.0"
 futures = "0.3.13"

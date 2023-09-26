@@ -23,7 +23,7 @@ use crate::config::CONFIG;
 use crate::errors::{CacheError, OnetError};
 use crate::matrix::FileInfo;
 use crate::onet::{
-    get_account_id_from_storage_key, get_from_seed, get_latest_block_number_processed,
+    get_account_id_from_storage_key, get_latest_block_number_processed, get_signer_from_seed,
     get_subscribers, get_subscribers_by_epoch, try_fetch_stashes_from_remote_url,
     write_latest_block_number_processed, Onet, ReportType, EPOCH_FILENAME,
 };
@@ -65,11 +65,11 @@ use subxt::{
         Header,
     },
     events::Events,
-    ext::sp_core::{sr25519, H256},
-    tx::PairSigner,
+    ext::sp_core::H256,
     utils::AccountId32,
-    PolkadotConfig,
 };
+
+use subxt_signer::sr25519::Keypair;
 
 #[subxt::subxt(
     runtime_metadata_path = "metadata/polkadot_metadata.scale",
@@ -2613,8 +2613,7 @@ async fn try_run_nomination(
     // Load nominator seed account
     let seed = fs::read_to_string(config.pools_nominator_seed_path)
         .expect("Something went wrong reading the pool nominator seed file");
-    let seed_account: sr25519::Pair = get_from_seed(&seed, None);
-    let signer = PairSigner::<PolkadotConfig, sr25519::Pair>::new(seed_account);
+    let signer: Keypair = get_signer_from_seed(&seed, None);
 
     // create a batch call to nominate both pools
     let mut calls: Vec<Call> = vec![];
