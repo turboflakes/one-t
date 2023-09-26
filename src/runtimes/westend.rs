@@ -2756,7 +2756,7 @@ async fn verify_oversubscribed(
         .fetch(&eras_stakers_addr)
         .await?
     {
-        return Ok(exposure.others.len() > max.try_into().unwrap());
+        return Ok(exposure.others.len() as u32 > max);
     }
     return Ok(false);
 }
