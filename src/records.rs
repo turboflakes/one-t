@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap, collections::HashMap, collections::HashSet, convert::TryInto, hash::Hash,
 };
-use subxt::ext::sp_runtime::AccountId32;
+use subxt::utils::AccountId32;
 
 pub trait Validity {
     fn is_empty(&self) -> bool;

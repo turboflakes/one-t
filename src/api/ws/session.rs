@@ -13,7 +13,7 @@ use crate::records::{BlockNumber, EpochIndex};
 use actix::prelude::*;
 use actix_web_actors::ws;
 use log::{debug, warn};
-use subxt::ext::sp_runtime::AccountId32;
+use subxt::utils::AccountId32;
 
 /// How often heartbeat pings are sent
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -178,10 +178,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                     }
                     Methods::SubscribeValidator => {
                         for stash in req.params.iter() {
-                            if let Ok(acc) = AccountId32::from_str(&stash) {
+                            if AccountId32::from_str(&stash).is_ok() {
                                 self.server_addr.do_send(server::Subscribe {
                                     id: self.id,
-                                    topic: Topic::Validator(acc),
+                                    topic: Topic::Validator(stash.to_string()),
                                 });
                             }
                         }
@@ -246,10 +246,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                     }
                     Methods::UnsubscribeValidator => {
                         for stash in req.params.iter() {
-                            if let Ok(acc) = AccountId32::from_str(&stash) {
+                            if AccountId32::from_str(&stash).is_ok() {
                                 self.server_addr.do_send(server::Unsubscribe {
                                     id: self.id,
-                                    topic: Topic::Validator(acc),
+                                    topic: Topic::Validator(stash.to_string()),
                                 });
                             }
                         }

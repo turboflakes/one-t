@@ -31,7 +31,6 @@ use crate::runtimes::{
 };
 use log::{debug, error, info, warn};
 use redis::aio::Connection;
-use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -47,12 +46,9 @@ use std::{
     thread, time,
 };
 use subxt::{
-    ext::{
-        sp_core::{crypto, sr25519, storage::StorageKey, Pair},
-        sp_runtime::AccountId32,
-    },
-    OnlineClient, PolkadotConfig,
+    ext::sp_core::crypto, storage::StorageKey, utils::AccountId32, OnlineClient, PolkadotConfig,
 };
+use subxt_signer::{bip39::Mnemonic, sr25519::Keypair};
 
 use crate::api::{routes::routes, ws::server};
 use crate::cache::add_pool;
@@ -489,7 +485,7 @@ pub async fn try_fetch_stashes_from_remote_url(
 pub fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {
     let s = &key.0[key.0.len() - 32..];
     let v: [u8; 32] = s.try_into().expect("slice with incorrect length");
-    AccountId32::new(v)
+    v.into()
 }
 
 pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID, Option<Param>)>, OnetError> {
@@ -506,7 +502,9 @@ pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID, Option<Param>)>, On
     for line in BufReader::new(file).lines() {
         if let Ok(s) = line {
             let v: Vec<&str> = s.split(',').collect();
-            let acc = AccountId32::from_str(&v[0])?;
+            let acc = AccountId32::from_str(&v[0]).map_err(|e| {
+                OnetError::Other(format!("Invalid account: {:?} error: {e:?}", &v[0]))
+            })?;
             if let Some(param) = v.get(2) {
                 out.push((acc, v[1].to_string(), Some(param.to_string())));
             } else {
@@ -552,23 +550,29 @@ pub fn get_subscribers_by_epoch(
     Ok(out)
 }
 
+// /// Helper function to generate a crypto pair from seed
+// pub fn get_from_seed_DEPRECATED(seed: &str, pass: Option<&str>) -> sr25519::Pair {
+//     // Use regex to remove control characters
+//     let re = Regex::new(r"[\x00-\x1F]").unwrap();
+//     let clean_seed = re.replace_all(&seed.trim(), "");
+//     sr25519::Pair::from_string(&clean_seed, pass)
+//         .expect("constructed from known-good static value; qed")
+// }
+
 /// Helper function to generate a crypto pair from seed
-pub fn get_from_seed(seed: &str, pass: Option<&str>) -> sr25519::Pair {
-    // Use regex to remove control characters
-    let re = Regex::new(r"[\x00-\x1F]").unwrap();
-    let clean_seed = re.replace_all(&seed.trim(), "");
-    sr25519::Pair::from_string(&clean_seed, pass)
-        .expect("constructed from known-good static value; qed")
+pub fn get_signer_from_seed(seed: &str, pass: Option<&str>) -> Keypair {
+    let mnemonic = Mnemonic::parse(seed).unwrap();
+    Keypair::from_phrase(&mnemonic, pass).unwrap()
 }
 
-pub fn get_latest_block_number_processed() -> Result<Option<u64>, OnetError> {
+pub fn get_latest_block_number_processed() -> Result<u64, OnetError> {
     let config = CONFIG.clone();
     let filename = format!("{}{}", config.data_path, BLOCK_FILENAME);
     if let Ok(number) = fs::read_to_string(&filename) {
-        Ok(Some(number.parse().unwrap_or(config.initial_block_number)))
+        Ok(number.parse().unwrap_or(config.initial_block_number))
     } else {
         fs::write(&filename, config.initial_block_number.to_string())?;
-        Ok(Some(config.initial_block_number))
+        Ok(config.initial_block_number)
     }
 }
 

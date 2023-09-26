@@ -24,7 +24,7 @@ use codec::{Decode, Encode};
 use hex::ToHex;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
-use subxt::ext::sp_runtime::AccountId32;
+use subxt::utils::AccountId32;
 
 pub type PoolId = u32;
 pub type PoolCounter = u32;

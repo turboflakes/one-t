@@ -33,7 +33,7 @@ use std::{
     result::Result,
 };
 
-use subxt::ext::sp_runtime::AccountId32;
+use subxt::utils::AccountId32;
 use subxt::{OnlineClient, PolkadotConfig};
 
 use flate2::write;
