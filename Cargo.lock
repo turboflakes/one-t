@@ -2779,7 +2779,7 @@ checksum = "dd8b5dd2ae5ed71462c540258bedcb51965123ad7e7ccf4b9a8cafaa4a63576d"
 
 [[package]]
 name = "onet"
-version = "0.13.7"
+version = "0.13.8"
 dependencies = [
  "actix",
  "actix-cors",
