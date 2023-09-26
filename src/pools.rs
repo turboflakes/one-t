@@ -22,7 +22,7 @@
 use crate::records::{BlockNumber, Identity, Validity};
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
-use std::convert::TryInto;
+use std::{convert::TryInto, str::FromStr};
 use subxt::utils::AccountId32;
 
 pub type PoolId = u32;
