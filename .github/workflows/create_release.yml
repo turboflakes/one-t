@@ -26,7 +26,7 @@ jobs:
         env:
           ONET_CONFIG_FILENAME: .env.example
         with:
-          command: test
+          command: test --locked
 
       - name: Run cargo build 
         uses: actions-rs/cargo@v1
@@ -34,7 +34,7 @@ jobs:
           ONET_CONFIG_FILENAME: .env.example
         with:
           command: build
-          args: --release
+          args: --release --locked
 
       - name: Generate SHA-256 hash file
         run: |
