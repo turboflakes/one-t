@@ -21,9 +21,8 @@
 
 use crate::records::{BlockNumber, Identity, Validity};
 use codec::{Decode, Encode};
-use hex::ToHex;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::convert::TryInto;
 use subxt::utils::AccountId32;
 
 pub type PoolId = u32;
@@ -295,10 +294,9 @@ pub fn nomination_pool_account(account_type: AccountType, pool_id: u32) -> Accou
     buffer.extend(account_type.as_bytes());
     buffer.extend(pool_id.to_le_bytes());
     buffer.extend(vec![0u8; 15]);
-    // convert to hex
-    let buffer_hex = buffer.encode_hex::<String>();
-    // return account
-    return AccountId32::from_str(&buffer_hex).unwrap();
+
+    let v: [u8; 32] = buffer.try_into().expect("slice with incorrect length");
+    return AccountId32::from(v);
 }
 
 #[test]
