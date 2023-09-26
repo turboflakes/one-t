@@ -120,7 +120,7 @@ Tips are welcome
 
 ### License
 
-`onet` is [MIT licensed](./LICENSE).
+`onet` - The entire code within this repository is licensed under the [Apache License 2.0](./LICENSE).
 
 ### Quote
 
