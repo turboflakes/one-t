@@ -22,7 +22,7 @@
 use crate::records::{BlockNumber, Identity, Validity};
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
-use std::{convert::TryInto, str::FromStr};
+use std::convert::TryInto;
 use subxt::utils::AccountId32;
 
 pub type PoolId = u32;
@@ -301,6 +301,7 @@ pub fn nomination_pool_account(account_type: AccountType, pool_id: u32) -> Accou
 
 #[test]
 fn test_pools() {
+    use std::str::FromStr;
     assert_eq!(
         nomination_pool_account(AccountType::Reward, 2),
         AccountId32::from_str("13UVJyLnbVp8c4FQeiGUcWddfDNNLSajaPyfpYzx9QbrvLfR").unwrap()
