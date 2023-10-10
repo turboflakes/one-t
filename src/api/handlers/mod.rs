@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 pub mod blocks;
+pub mod boards;
 pub mod health;
 pub mod info;
 pub mod parachains;

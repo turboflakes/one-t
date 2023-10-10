@@ -19,9 +19,23 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![allow(clippy::all)]
+use serde::Serialize;
 
-pub mod kusama;
-// pub mod polkadot;
-pub mod support;
-// pub mod westend;
+#[derive(Debug, Serialize, PartialEq)]
+pub struct MetaResponse {
+    pub limits: String,
+}
+
+impl Default for MetaResponse {
+    fn default() -> MetaResponse {
+        MetaResponse {
+            limits: String::default(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct ValidatorsResponse {
+    pub addresses: Vec<String>,
+    pub meta: MetaResponse,
+}

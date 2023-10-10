@@ -90,6 +90,7 @@ pub enum CacheKey {
     PushedBlockByClientId(usize),
     BlockByIndexStats(Index),
     BlocksBySession(Index),
+    EraByIndex(Index),
     SessionByIndex(Index),
     SessionByIndexStats(Index),
     NetworkStatsBySession(Index),
@@ -108,6 +109,8 @@ pub enum CacheKey {
     // Queries
     QueryValidators(QueryString),
     QuerySessions(QueryString),
+    // Nomi Boards
+    NomiBoardByEraAndName(EraIndex, String),
 }
 
 impl std::fmt::Display for CacheKey {
@@ -119,6 +122,7 @@ impl std::fmt::Display for CacheKey {
             Self::PushedBlockByClientId(client_id) => write!(f, "pushed:{}", client_id),
             Self::BlockByIndexStats(block_index) => write!(f, "b:{}:s", block_index),
             Self::BlocksBySession(session_index) => write!(f, "bs:{}", session_index),
+            Self::EraByIndex(era_index) => write!(f, "e:{}", era_index),
             Self::SessionByIndex(session_index) => write!(f, "s:{}", session_index),
             Self::SessionByIndexStats(session_index) => write!(f, "s:{}:s", session_index),
             Self::NetworkStatsBySession(session_index) => {
@@ -158,6 +162,8 @@ impl std::fmt::Display for CacheKey {
             //
             Self::QueryValidators(params) => write!(f, "qry:val:{}", params),
             Self::QuerySessions(params) => write!(f, "qry:ses:{}", params),
+            //
+            Self::NomiBoardByEraAndName(era_index, name) => write!(f, "nb:{}:{}", era_index, name),
         }
     }
 }
