@@ -26,7 +26,7 @@ use crate::records::EpochIndex;
 use crate::report::Network;
 use crate::runtimes::{
     kusama, polkadot,
-    support::{ChainPrefix, SupportedRuntime},
+    support::{ChainPrefix, SupportedRuntime, ChainTokenSymbol},
     westend,
 };
 use log::{debug, error, info, warn};
@@ -144,7 +144,11 @@ pub async fn create_or_await_substrate_node_client(
     loop {
         match create_substrate_node_client(config.clone()).await {
             Ok(client) => {
-                let properties = client.rpc().system_properties().await.unwrap_or_default();
+                let chain = client.rpc().system_chain().await.unwrap_or_default();
+                let name = client.rpc().system_name().await.unwrap_or_default();
+                let version = client.rpc().system_version().await.unwrap_or_default();
+                let properties =
+                    client.rpc().system_properties().await.unwrap_or_default();
 
                 // Display SS58 addresses based on the connected chain
                 let chain_prefix: ChainPrefix =
@@ -154,9 +158,27 @@ pub async fn create_or_await_substrate_node_client(
                         0
                     };
 
-                crypto::set_default_ss58_version(crypto::Ss58AddressFormat::custom(chain_prefix));
+                crypto::set_default_ss58_version(crypto::Ss58AddressFormat::custom(
+                    chain_prefix,
+                ));
 
-                break (client, SupportedRuntime::from(chain_prefix));
+                let chain_token_symbol: ChainTokenSymbol =
+                    if let Some(token_symbol) = properties.get("tokenSymbol") {
+                        use serde_json::Value::String;
+                        match token_symbol {
+                            String(token_symbol) => token_symbol.to_string(),
+                            _ => unreachable!("Token symbol with wrong type"),
+                        }
+                    } else {
+                        String::from("")
+                    };
+
+                info!(
+                    "Connected to {} network using {} * Substrate node {} v{}",
+                    chain, config.substrate_ws_url, name, version
+                );
+
+                break (client, SupportedRuntime::from(chain_token_symbol));
             }
             Err(e) => {
                 error!("{}", e);
