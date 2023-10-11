@@ -2940,6 +2940,7 @@ pub async fn cache_session_stats_records(
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
+    let config = CONFIG.clone();
     let onet: Onet = Onet::new().await;
     let api = onet.client().clone();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
@@ -3039,14 +3040,24 @@ pub async fn cache_session_stats_records(
                     v.identity = get_identity(&onet, &stash, None).await?;
 
                     let serialized = serde_json::to_string(&v)?;
-                    redis::cmd("SET")
-                        .arg(CacheKey::ValidatorProfileByAccount(stash))
+                    redis::pipe()
+                        .atomic()
+                        .cmd("SET")
+                        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
                         .arg(serialized)
+                        .cmd("EXPIRE")
+                        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+                        .arg(config.cache_writer_prunning)
+                        .cmd("SADD")
+                        .arg(CacheKey::ValidatorAccountsByEra(era_index))
+                        .arg(stash.to_string())
+                        .cmd("EXPIRE")
+                        .arg(CacheKey::ValidatorAccountsByEra(era_index))
+                        .arg(config.cache_writer_prunning)
                         .query_async(&mut cache as &mut Connection)
                         .await
                         .map_err(CacheError::RedisCMDError)?;
 
-                    //
                     validators.push(v);
                 }
             }
@@ -3215,11 +3226,18 @@ pub async fn cache_session_stats_records(
 
             // serialize and cache
             let serialized = serde_json::to_string(&nss)?;
-            redis::cmd("SET")
+            redis::pipe()
+                .atomic()
+                .cmd("SET")
                 .arg(CacheKey::NetworkStatsBySession(Index::Num(
                     epoch_index.into(),
                 )))
                 .arg(serialized)
+                .cmd("EXPIRE")
+                .arg(CacheKey::NetworkStatsBySession(Index::Num(
+                    epoch_index.into(),
+                )))
+                .arg(config.cache_writer_prunning)
                 .query_async(&mut cache as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
