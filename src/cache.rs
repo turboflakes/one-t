@@ -112,6 +112,7 @@ pub enum CacheKey {
     QuerySessions(QueryString),
     // Nomi Boards
     NomiBoardByEraAndName(EraIndex, String),
+    NomiBoardScoresByEraAndName(EraIndex, String),
 }
 
 impl std::fmt::Display for CacheKey {
@@ -168,6 +169,9 @@ impl std::fmt::Display for CacheKey {
             Self::QuerySessions(params) => write!(f, "qry:ses:{}", params),
             //
             Self::NomiBoardByEraAndName(era_index, name) => write!(f, "nb:{}:{}", era_index, name),
+            Self::NomiBoardScoresByEraAndName(era_index, name) => {
+                write!(f, "nb:{}:{}:scores", era_index, name)
+            }
         }
     }
 }

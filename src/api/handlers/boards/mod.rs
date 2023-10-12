@@ -20,5 +20,7 @@
 // SOFTWARE.
 
 pub mod handlers;
+pub mod limits;
 pub mod params;
 pub mod responses;
+pub mod scores;

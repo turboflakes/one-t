@@ -3249,6 +3249,25 @@ pub async fn cache_session_stats_records(
                 start.elapsed()
             );
         }
+
+        // Set session data ready for the era, usuful to calculated scores for nomi boards
+        let mut data: BTreeMap<String, String> = BTreeMap::new();
+        data.insert(String::from("synced_session"), epoch_index.to_string());
+        // by `epoch_index`
+        redis::pipe()
+            .atomic()
+            .cmd("HSET")
+            .arg(CacheKey::EraByIndex(Index::Num(era_index.into())))
+            .arg(data)
+            .cmd("EXPIRE")
+            .arg(CacheKey::EraByIndex(Index::Num(era_index.into())))
+            .arg(config.cache_writer_prunning)
+            .cmd("SET")
+            .arg(CacheKey::EraByIndex(Index::Current))
+            .arg(era_index.to_string())
+            .query_async(&mut cache as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
     }
 
     Ok(())

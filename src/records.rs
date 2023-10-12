@@ -1343,6 +1343,11 @@ pub struct ValidatorProfileRecord {
     pub is_oversubscribed: bool,
     pub is_active: bool,
     pub is_chilled: bool,
+    // TODO:
+    // pub is_blocked: bool,
+    // pub total_stake: u128,
+    // pub latest_grade: u128,
+    // pub nominations: u32
 }
 
 impl ValidatorProfileRecord {
