@@ -19,17 +19,21 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::api::handlers::boards::params::{Intervals, Quantity, Weights, DECIMALS};
+use crate::api::handlers::boards::params::{Quantity, Weights, DECIMALS};
+use crate::cache::{get_conn, CacheKey, RedisConn, RedisPool, Trait};
+use crate::errors::{CacheError, OnetError};
+use crate::records::EpochIndex;
 use log::{error, warn};
+use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize, Serialize};
 use std::{collections::BTreeMap, str::FromStr};
 
 // TODO: get this constants from chain
 const NOMINATORS_OVERSUBSCRIBED_THRESHOLD: u32 = 256;
-const COMMISSION_PLANCK: u32 = 1000000000;
 
-pub type LimitsCache = BTreeMap<String, f64>;
-
+// NOTE: Intervals are considered unsigned integers bringing a 7 decimals representation
+// ex1: 20% = 200000000
+// ex2: 121.34 DOTs = 1213400000
 #[derive(Debug, Serialize, PartialEq, Copy, Clone)]
 pub struct Interval {
     pub min: u64,
@@ -48,15 +52,17 @@ impl std::fmt::Display for Interval {
     }
 }
 
+pub type Intervals = Vec<Interval>;
+
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct Limits {
     pub commission: Interval,
+    pub own_stake: Interval,
     // pub inclusion_rate: Interval,
     // pub nominators: Interval,
     // pub avg_reward_points: Interval,
     // pub reward_staked: Interval,
     // pub active: Interval,
-    // pub own_stake: Interval,
     // pub total_stake: Interval,
     // pub judgements: Interval,
     // pub sub_accounts: Interval,
@@ -64,14 +70,18 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Limits {
+        let base = 10_u64;
         Limits {
-            commission: Interval::default(),
+            commission: Interval {
+                min: 0,
+                max: 100 * base.pow(DECIMALS),
+            },
+            own_stake: Interval::default(),
             // inclusion_rate: Interval::default(),
             // nominators: Interval::default(),
             // avg_reward_points: Interval::default(),
             // reward_staked: Interval::default(),
             // active: Interval::default(),
-            // own_stake: Interval::default(),
             // total_stake: Interval::default(),
             // judgements: Interval::default(),
             // sub_accounts: Interval::default(),
@@ -84,15 +94,14 @@ impl std::fmt::Display for Limits {
         // Note: the position of the traits is important, it should be the same as the position in weights
         write!(
             f,
-            // "{},{},{},{},{},{},{},{},{},{}",
-            "{}",
+            "{},{}",
             self.commission.to_string(),
+            self.own_stake.to_string(),
             // self.inclusion_rate.to_string(),
             // self.nominators.to_string(),
             // self.avg_reward_points.to_string(),
             // self.reward_staked.to_string(),
             // self.active.to_string(),
-            // self.own_stake.to_string(),
             // self.total_stake.to_string(),
             // self.judgements.to_string(),
             // self.sub_accounts.to_string()
@@ -104,18 +113,20 @@ impl From<&Intervals> for Limits {
     fn from(data: &Intervals) -> Self {
         Limits {
             commission: *data.get(0).unwrap_or(&Interval::default()),
+            own_stake: *data.get(1).unwrap_or(&Interval::default()),
             // inclusion_rate: *data.get(1).unwrap_or(&Interval::default()),
             // nominators: *data.get(2).unwrap_or(&Interval::default()),
             // avg_reward_points: *data.get(3).unwrap_or(&Interval::default()),
             // reward_staked: *data.get(4).unwrap_or(&Interval::default()),
             // active: *data.get(5).unwrap_or(&Interval::default()),
-            // own_stake: *data.get(6).unwrap_or(&Interval::default()),
             // total_stake: *data.get(7).unwrap_or(&Interval::default()),
             // judgements: *data.get(8).unwrap_or(&Interval::default()),
             // sub_accounts: *data.get(9).unwrap_or(&Interval::default()),
         }
     }
 }
+
+pub type LimitsCache = BTreeMap<String, u64>;
 
 impl From<LimitsCache> for Limits {
     fn from(data: LimitsCache) -> Self {
@@ -126,6 +137,10 @@ impl From<LimitsCache> for Limits {
             commission: Interval {
                 min: 0,
                 max: 100 * base.pow(DECIMALS),
+            },
+            own_stake: Interval {
+                min: *data.get("min_own_stake").unwrap_or(&default_min),
+                max: *data.get("max_own_stake").unwrap_or(&default_max),
             },
             // inclusion_rate: Interval {
             //     min: 0.0_f64,
@@ -147,10 +162,6 @@ impl From<LimitsCache> for Limits {
             //     min: 0.0_f64,
             //     max: 1.0_f64,
             // },
-            // own_stake: Interval {
-            //     min: *data.get("min_own_stake").unwrap_or(&default_min),
-            //     max: *data.get("max_own_stake").unwrap_or(&default_max),
-            // },
             // total_stake: Interval {
             //     min: *data.get("min_total_stake").unwrap_or(&default_min),
             //     max: *data.get("max_total_stake").unwrap_or(&default_max),
@@ -165,4 +176,124 @@ impl From<LimitsCache> for Limits {
             // },
         }
     }
+}
+
+async fn calculate_min_limit(
+    cache: &RedisPool,
+    session_index: EpochIndex,
+    attribute: Trait,
+) -> Result<u64, OnetError> {
+    let mut conn = get_conn(&cache).await?;
+    let v: Vec<(String, u64)> = redis::cmd("ZRANGE")
+        .arg(CacheKey::NomiBoardBySessionAndTrait(
+            session_index,
+            attribute,
+        ))
+        .arg("-inf")
+        .arg("+inf")
+        .arg("BYSCORE")
+        .arg("LIMIT")
+        .arg("0")
+        .arg("1")
+        .arg("WITHSCORES")
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    if v.len() == 0 {
+        return Ok(0);
+    }
+    Ok(v[0].1)
+}
+
+async fn calculate_max_limit(
+    cache: &RedisPool,
+    session_index: EpochIndex,
+    attribute: Trait,
+) -> Result<u64, OnetError> {
+    let mut conn = get_conn(&cache).await?;
+    let v: Vec<(String, u64)> = redis::cmd("ZRANGE")
+        .arg(CacheKey::NomiBoardBySessionAndTrait(
+            session_index,
+            attribute,
+        ))
+        .arg("+inf")
+        .arg("-inf")
+        .arg("BYSCORE")
+        .arg("REV")
+        .arg("LIMIT")
+        .arg("0")
+        .arg("1")
+        .arg("WITHSCORES")
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    if v.len() == 0 {
+        return Ok(0);
+    }
+    Ok(v[0].1)
+}
+
+async fn calculate_min_max_interval(
+    cache: &RedisPool,
+    session_index: EpochIndex,
+    attribute: Trait,
+) -> Result<Interval, OnetError> {
+    let max = calculate_max_limit(&cache.clone(), session_index, attribute.clone()).await?;
+    let min = calculate_min_limit(&cache.clone(), session_index, attribute).await?;
+    Ok(Interval { min, max })
+}
+
+pub async fn build_limits_from_session(
+    cache: &RedisPool,
+    session_index: EpochIndex,
+) -> Result<Limits, OnetError> {
+    let own_stake_interval =
+        calculate_min_max_interval(&cache.clone(), session_index, Trait::OwnStake).await?;
+
+    Ok(Limits {
+        own_stake: own_stake_interval,
+        ..Default::default()
+    })
+    // limits.insert("min_own_stake".to_string(), own_stake_interval.0);
+    // limits.insert("max_own_stake".to_string(), own_stake_interval.1);
+
+    // let avg_reward_points_interval =
+    //     calculate_min_max_interval(cache.clone(), sync::BOARD_AVG_POINTS_ERAS).await?;
+    // limits.insert(
+    //     "min_avg_reward_points".to_string(),
+    //     avg_reward_points_interval.0,
+    // );
+    // limits.insert(
+    //     "max_avg_reward_points".to_string(),
+    //     avg_reward_points_interval.1,
+    // );
+
+    // let total_stake_interval =
+    //     calculate_min_max_interval(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
+    // // let total_stake_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
+    // limits.insert("min_total_stake".to_string(), total_stake_interval.0);
+    // limits.insert("max_total_stake".to_string(), total_stake_interval.1);
+
+    // let judgements_interval =
+    //     calculate_min_max_interval(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
+    // // let judgements_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
+    // limits.insert("min_judgements".to_string(), judgements_interval.0);
+    // limits.insert("max_judgements".to_string(), judgements_interval.1);
+
+    // let sub_accounts_interval =
+    //     calculate_min_max_interval(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
+    // // let sub_accounts_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
+    // limits.insert("min_sub_accounts".to_string(), sub_accounts_interval.0);
+    // limits.insert("max_sub_accounts".to_string(), sub_accounts_interval.1);
+
+    // let key_limits = sync::Key::BoardAtEra(era_index, format!("{}:limits", board_name));
+    // // Cache board limits
+    // let _: () = redis::cmd("HSET")
+    //     .arg(key_limits.to_string())
+    //     .arg(limits.clone())
+    //     .query_async(&mut conn as &mut Connection)
+    //     .await
+    //     .map_err(CacheError::RedisCMDError)?;
+
+    // Ok(limits.into())
 }

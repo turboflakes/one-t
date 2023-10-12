@@ -19,19 +19,20 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::api::handlers::boards::limits::Interval;
 use crate::cache::Index;
+use crate::limits::{Interval, Intervals};
 use log::{error, warn};
 use serde::{de::Deserializer, Deserialize};
 use std::result::Result;
 
 /// Weight can be any value in a 10-point scale. Higher the weight more important
 /// is the criteria to the user
-type Weight = u32;
+type Weight = u8;
 
 /// Weights represent an array of points, where the points in each position represents
 /// the weight for the respective criteria
 /// Position 0 - Lower Commission is preferrable
+/// Position 1 - Higher own stake is preferrable
 ///
 ///
 ///
@@ -41,19 +42,16 @@ type Weight = u32;
 /// Position 3 - Higher Reward Points is preferrable
 /// Position 4 - If reward is staked is preferrable
 /// Position 5 - If in active set is preferrable
-/// Position 6 - Higher own stake is preferrable
 /// Position 7 - Lower total stake is preferrable
 /// Position 8 - Higher number of Reasonable or KnownGood judgements is preferrable
 /// Position 9 - Lower number of sub-accounts is preferrable
 pub type Weights = Vec<Weight>;
 
-pub type Intervals = Vec<Interval>;
-
-/// Number of decimals in scores or limits
+/// NOTE: Assumption of the number of decimals in scores or limits
 pub const DECIMALS: u32 = 7;
 
 /// Current weighs and limits capacity
-pub const CAPACITY: usize = 1;
+pub const CAPACITY: usize = 2;
 
 // Number of elements to return
 pub type Quantity = u32;
@@ -61,7 +59,7 @@ pub type Quantity = u32;
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 pub struct Params {
     #[serde(default = "default_index")]
-    pub e: Index,
+    pub session: Index,
     #[serde(default = "default_weights")]
     #[serde(deserialize_with = "parse_weights")]
     pub w: Weights,
@@ -106,7 +104,7 @@ where
 
         let mut weights: Weights = Vec::with_capacity(CAPACITY);
         for i in 0..CAPACITY {
-            let weight: u32 = weights_as_strvec.get(i).unwrap_or(&"0").parse().unwrap();
+            let weight: u8 = weights_as_strvec.get(i).unwrap_or(&"0").parse().unwrap();
             let weight = if weight > 9 { 9 } else { weight };
             weights.push(weight);
         }

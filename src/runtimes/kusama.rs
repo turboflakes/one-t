@@ -18,9 +18,10 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-use crate::cache::{CacheKey, Index, Verbosity};
+use crate::cache::{CacheKey, Index, Trait, Verbosity};
 use crate::config::CONFIG;
 use crate::errors::{CacheError, OnetError};
+use crate::limits::build_limits_from_session;
 use crate::matrix::FileInfo;
 use crate::onet::{
     get_account_id_from_storage_key, get_latest_block_number_processed, get_signer_from_seed,
@@ -2945,6 +2946,9 @@ pub async fn cache_session_stats_records(
     let api = onet.client().clone();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
+    // Load network details
+    let network = Network::load(&api).await?;
+
     // ---
     // cache all validators profile every new session and snapshot session stats
 
@@ -3036,6 +3040,9 @@ pub async fn cache_session_stats_records(
                     // check if is in active set
                     v.is_active = authorities.contains(&stash);
 
+                    // check if block nominations
+                    v.is_blocked = validator_prefs.blocked;
+
                     // get identity
                     v.identity = get_identity(&onet, &stash, None).await?;
 
@@ -3049,11 +3056,28 @@ pub async fn cache_session_stats_records(
                         .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
                         .arg(config.cache_writer_prunning)
                         .cmd("SADD")
-                        .arg(CacheKey::ValidatorAccountsByEra(era_index))
+                        .arg(CacheKey::ValidatorAccountsBySession(era_index))
                         .arg(stash.to_string())
                         .cmd("EXPIRE")
-                        .arg(CacheKey::ValidatorAccountsByEra(era_index))
+                        .arg(CacheKey::ValidatorAccountsBySession(era_index))
                         .arg(config.cache_writer_prunning)
+                        // cache own_stake
+                        .cmd("ZADD")
+                        .arg(CacheKey::NomiBoardBySessionAndTrait(
+                            epoch_index,
+                            Trait::OwnStake,
+                        ))
+                        .arg(
+                            v.own_stake_trimmed(network.token_decimals as u32)
+                                .to_string(),
+                        ) // score
+                        .arg(stash.to_string())
+                        .cmd("EXPIRE")
+                        .arg(CacheKey::NomiBoardBySessionAndTrait(
+                            epoch_index,
+                            Trait::OwnStake,
+                        ))
+                        .arg(config.cache_writer_prunning) // member
                         .query_async(&mut cache as &mut Connection)
                         .await
                         .map_err(CacheError::RedisCMDError)?;
@@ -3250,17 +3274,33 @@ pub async fn cache_session_stats_records(
             );
         }
 
-        // Set session data ready for the era, usuful to calculated scores for nomi boards
-        let mut data: BTreeMap<String, String> = BTreeMap::new();
-        data.insert(String::from("synced_session"), epoch_index.to_string());
+        // Set synced session associated with era (useful for nomi boards)
+        let mut era_data: BTreeMap<String, String> = BTreeMap::new();
+        era_data.insert(String::from("synced_session"), epoch_index.to_string());
+
+        // Build session limits
+        let limits = build_limits_from_session(&onet.cache.clone(), epoch_index).await?;
+        let limits_serialized = serde_json::to_string(&limits)?;
+
+        // Set era and limits associated with session (useful for nomi boards)
+        let mut session_data: BTreeMap<String, String> = BTreeMap::new();
+        session_data.insert(String::from("era"), era_index.to_string());
+        session_data.insert(String::from("limits"), limits_serialized.to_string());
+
         // by `epoch_index`
         redis::pipe()
             .atomic()
             .cmd("HSET")
             .arg(CacheKey::EraByIndex(Index::Num(era_index.into())))
-            .arg(data)
+            .arg(era_data)
             .cmd("EXPIRE")
             .arg(CacheKey::EraByIndex(Index::Num(era_index.into())))
+            .arg(config.cache_writer_prunning)
+            .cmd("HSET")
+            .arg(CacheKey::NomiBoardEraBySession(epoch_index))
+            .arg(session_data)
+            .cmd("EXPIRE")
+            .arg(CacheKey::NomiBoardEraBySession(epoch_index))
             .arg(config.cache_writer_prunning)
             .cmd("SET")
             .arg(CacheKey::EraByIndex(Index::Current))

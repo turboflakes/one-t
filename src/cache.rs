@@ -82,6 +82,19 @@ impl std::fmt::Display for Verbosity {
 
 pub type QueryString = String;
 
+#[derive(Clone, Eq, Hash, PartialEq, Debug)]
+pub enum Trait {
+    OwnStake,
+}
+
+impl std::fmt::Display for Trait {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OwnStake => write!(f, "t:own_stake"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CacheKey {
     Network,
@@ -100,7 +113,7 @@ pub enum CacheKey {
     AuthorityKeysBySession(EpochIndex),
     AuthorityKeysBySessionParaOnly(EpochIndex),
     ParachainsBySession(EpochIndex),
-    ValidatorAccountsByEra(EraIndex),
+    ValidatorAccountsBySession(EpochIndex),
     ValidatorProfileByAccount(AccountId32),
     // NominationPools
     NominationPoolRecord(PoolId),
@@ -111,8 +124,11 @@ pub enum CacheKey {
     QueryValidators(QueryString),
     QuerySessions(QueryString),
     // Nomi Boards
-    NomiBoardByEraAndName(EraIndex, String),
-    NomiBoardScoresByEraAndName(EraIndex, String),
+    NomiBoardBySessionAndName(EpochIndex, String),
+    NomiBoardEraBySession(EpochIndex),
+    NomiBoardScoresBySessionAndName(EpochIndex, String),
+    NomiBoardLimitsBySession(EpochIndex),
+    NomiBoardBySessionAndTrait(EpochIndex, Trait),
 }
 
 impl std::fmt::Display for CacheKey {
@@ -148,8 +164,8 @@ impl std::fmt::Display for CacheKey {
             Self::ParachainsBySession(session_index) => {
                 write!(f, "ps:{}", session_index)
             }
-            Self::ValidatorAccountsByEra(era_index) => {
-                write!(f, "vae:{}", era_index)
+            Self::ValidatorAccountsBySession(session_index) => {
+                write!(f, "vas:{}", session_index)
             }
             Self::ValidatorProfileByAccount(account) => {
                 write!(f, "vpa:{}", account)
@@ -168,9 +184,20 @@ impl std::fmt::Display for CacheKey {
             Self::QueryValidators(params) => write!(f, "qry:val:{}", params),
             Self::QuerySessions(params) => write!(f, "qry:ses:{}", params),
             //
-            Self::NomiBoardByEraAndName(era_index, name) => write!(f, "nb:{}:{}", era_index, name),
-            Self::NomiBoardScoresByEraAndName(era_index, name) => {
-                write!(f, "nb:{}:{}:scores", era_index, name)
+            Self::NomiBoardBySessionAndName(session_index, name) => {
+                write!(f, "nb:{}:{}", session_index, name)
+            }
+            Self::NomiBoardEraBySession(session_index) => {
+                write!(f, "nb:{}:era", session_index)
+            }
+            Self::NomiBoardScoresBySessionAndName(session_index, name) => {
+                write!(f, "nb:{}:{}:scores", session_index, name)
+            }
+            Self::NomiBoardLimitsBySession(session_index) => {
+                write!(f, "nb:{}:limits", session_index)
+            }
+            Self::NomiBoardBySessionAndTrait(session_index, attribute) => {
+                write!(f, "nb:{}:{}", session_index, attribute)
             }
         }
     }

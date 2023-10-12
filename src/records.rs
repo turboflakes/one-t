@@ -1343,8 +1343,8 @@ pub struct ValidatorProfileRecord {
     pub is_oversubscribed: bool,
     pub is_active: bool,
     pub is_chilled: bool,
+    pub is_blocked: bool,
     // TODO:
-    // pub is_blocked: bool,
     // pub total_stake: u128,
     // pub latest_grade: u128,
     // pub nominations: u32
@@ -1363,7 +1363,14 @@ impl ValidatorProfileRecord {
             is_oversubscribed: false,
             is_active: false,
             is_chilled: false,
+            is_blocked: false,
         }
+    }
+
+    pub fn own_stake_trimmed(&self, chain_token_decimals: u32) -> u64 {
+        use crate::api::handlers::boards::params::DECIMALS;
+        let base: u128 = 10_u128;
+        (self.own_stake / base.pow(chain_token_decimals - DECIMALS)) as u64
     }
 }
 

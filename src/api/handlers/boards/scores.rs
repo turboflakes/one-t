@@ -19,11 +19,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::api::handlers::boards::{
-    limits::Limits,
-    params::{Weights, CAPACITY, DECIMALS},
-};
+use crate::api::handlers::boards::params::{Weights, CAPACITY, DECIMALS};
+use crate::config::CONFIG;
 use crate::errors::ApiError;
+use crate::limits::Limits;
 use crate::records::ValidatorProfileRecord;
 use log::{error, warn};
 use std::result::Result;
@@ -33,6 +32,11 @@ const NMAX: u64 = 10000000;
 // Minimum normalization value
 const NMIN: u64 = 0;
 
+fn base_decimals() -> u64 {
+    let base = 10_u64;
+    base.pow(DECIMALS)
+}
+
 /// Normalize value between min and max
 fn normalize_value(value: u64, min: u64, max: u64) -> u64 {
     if value == 0 || value < min {
@@ -41,28 +45,12 @@ fn normalize_value(value: u64, min: u64, max: u64) -> u64 {
     if value > max {
         return NMAX;
     }
-    let base = 10_u64;
-    (((value - min) * base.pow(DECIMALS)) as u128 / (max - min) as u128) as u64
+    (((value - min) * base_decimals()) as u128 / (max - min) as u128) as u64
 }
 
 /// Reverse normalization
 fn reverse_normalize_value(value: u64, min: u64, max: u64) -> u64 {
     NMAX - normalize_value(value, min, max)
-}
-
-/// Normalize commission between 0 - 10_000_000
-fn normalize_commission(commission: u32) -> u64 {
-    commission as u64 / 100_u64
-}
-
-/// Reverse Normalize commission between 0 - 10_000_000
-/// lower commission the better
-fn reverse_normalize_commission(commission: u32, min: u32, max: u32) -> u64 {
-    reverse_normalize_value(
-        normalize_commission(commission),
-        normalize_commission(min),
-        normalize_commission(max),
-    )
 }
 
 pub type Score = u64;
@@ -72,15 +60,24 @@ pub fn calculate_scores(
     validator: &ValidatorProfileRecord,
     limits: &Limits,
     weights: &Weights,
+    chain_token_decimals: u32
 ) -> Result<Scores, ApiError> {
     let mut scores: Scores = Vec::with_capacity(CAPACITY);
 
     scores.push(
-        reverse_normalize_commission(
-            validator.commission,
-            limits.commission.min as u32,
-            limits.commission.max as u32,
+        reverse_normalize_value(
+            validator.commission as u64,
+            limits.commission.min,
+            limits.commission.max,
         ) * weights[0] as u64,
+    );
+
+    scores.push(
+        normalize_value(
+            validator.own_stake_trimmed(chain_token_decimals),
+            limits.own_stake.min,
+            limits.own_stake.max,
+        ) * weights[1] as u64,
     );
     // scores.push(
     //     normalize_value(
@@ -105,13 +102,6 @@ pub fn calculate_scores(
     // );
     // scores.push(normalize_flag(validator.reward_staked) * weights[4] as f64);
     // scores.push(normalize_flag(validator.active) * weights[5] as f64);
-    // scores.push(
-    //     normalize_value(
-    //         validator.own_stake as f64,
-    //         limits.own_stake.min,
-    //         limits.own_stake.max,
-    //     ) * weights[6] as f64,
-    // );
     // scores.push(
     //     reverse_normalize_value(
     //         (validator.own_stake + validator.nominators_stake) as f64,
@@ -148,4 +138,12 @@ pub fn scores_to_string(scores: Scores) -> String {
             format!(",{}", x)
         })
         .collect()
+}
+
+#[test]
+fn test_scores() {
+    // normalize 15% value between limits 10% and 20%
+    assert_eq!(normalize_value(150000000, 100000000, 200000000), 5000000);
+    assert_eq!(normalize_value(150000000, 0, 200000000), 7500000);
+    assert_eq!(reverse_normalize_value(150000000, 0, 200000000), 2500000);
 }
