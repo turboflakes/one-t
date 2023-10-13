@@ -3057,7 +3057,7 @@ pub async fn cache_session_stats_records(
                         //     .map(|(x, _, _)| x.to_string())
                         //     .collect::<Vec<String>>()
                         //     .join(",");
-        
+
                         v.nominators_stake = nominators.iter().map(|(_, x, _)| x).sum();
                         v.nominators_raw_stake = nominators.iter().map(|(_, x, y)| x / y).sum();
                         v.nominators_counter = nominators.len().try_into().unwrap();
@@ -3110,6 +3110,20 @@ pub async fn cache_session_stats_records(
                         .arg(CacheKey::NomiBoardBySessionAndTrait(
                             epoch_index,
                             Trait::NominatorsStake,
+                        ))
+                        .arg(config.cache_writer_prunning)
+                        // cache nominators_counter rank
+                        .cmd("ZADD")
+                        .arg(CacheKey::NomiBoardBySessionAndTrait(
+                            epoch_index,
+                            Trait::NominatorsCounter,
+                        ))
+                        .arg(v.nominators_counter.to_string()) // score
+                        .arg(stash.to_string())
+                        .cmd("EXPIRE")
+                        .arg(CacheKey::NomiBoardBySessionAndTrait(
+                            epoch_index,
+                            Trait::NominatorsCounter,
                         ))
                         .arg(config.cache_writer_prunning) // member
                         .query_async(&mut cache as &mut Connection)
@@ -3307,7 +3321,7 @@ pub async fn cache_session_stats_records(
                 start.elapsed()
             );
         }
-        
+
         // Set synced session associated with era (useful for nomi boards)
         let mut era_data: BTreeMap<String, String> = BTreeMap::new();
         era_data.insert(String::from("synced_session"), epoch_index.to_string());
@@ -3356,14 +3370,10 @@ async fn collect_nominators_data(
 
     // BTreeMap<AccountId32, Vec<(AccountId32, u128, u32)>> = validator_stash : [(nominator_stash, nominator_total_stake, number_of_nominations)]
     let mut nominators_map: BTreeMap<AccountId32, Vec<(AccountId32, u128, u128)>> = BTreeMap::new();
-    
+
     let mut counter = 0;
     let storage_addr = node_runtime::storage().staking().nominators_root();
-    let mut iter = api
-        .storage()
-        .at(block_hash)
-        .iter(storage_addr, 10)
-        .await?;
+    let mut iter = api.storage().at(block_hash).iter(storage_addr, 10).await?;
     while let Some((key, nominations)) = iter.next().await? {
         let nominator_stash = get_account_id_from_storage_key(key);
         let bonded_addr = node_runtime::storage()

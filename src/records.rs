@@ -1390,7 +1390,6 @@ impl ValidatorProfileRecord {
         let base: u128 = 10_u128;
         (self.nominators_raw_stake / base.pow(chain_token_decimals - DECIMALS)) as u64
     }
-
 }
 
 impl Validity for ValidatorProfileRecord {

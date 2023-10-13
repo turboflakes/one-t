@@ -100,8 +100,9 @@ pub type Intervals = Vec<Interval>;
 pub struct CriteriaLimits {
     pub commission: Interval,
     pub own_stake: Interval,
+    pub nominators_stake: Interval,
+    pub nominators_counter: Interval,
     // pub inclusion_rate: Interval,
-    // pub nominators: Interval,
     // pub avg_reward_points: Interval,
     // pub reward_staked: Interval,
     // pub active: Interval,
@@ -119,8 +120,9 @@ impl Default for CriteriaLimits {
                 max: 100 * base.pow(DECIMALS),
             },
             own_stake: Interval::default(),
+            nominators_stake: Interval::default(),
+            nominators_counter: Interval::default(),
             // inclusion_rate: Interval::default(),
-            // nominators: Interval::default(),
             // avg_reward_points: Interval::default(),
             // reward_staked: Interval::default(),
             // active: Interval::default(),
@@ -136,11 +138,12 @@ impl std::fmt::Display for CriteriaLimits {
         // Note: the position of the traits is important, it should be the same as the position in weights
         write!(
             f,
-            "{},{}",
+            "{},{},{},{}",
             self.commission.to_string(),
             self.own_stake.to_string(),
+            self.nominators_stake.to_string(),
+            self.nominators_counter.to_string(),
             // self.inclusion_rate.to_string(),
-            // self.nominators.to_string(),
             // self.avg_reward_points.to_string(),
             // self.reward_staked.to_string(),
             // self.active.to_string(),
@@ -156,8 +159,9 @@ impl From<&Intervals> for CriteriaLimits {
         CriteriaLimits {
             commission: *data.get(0).unwrap_or(&Interval::default()),
             own_stake: *data.get(1).unwrap_or(&Interval::default()),
+            nominators_stake: *data.get(2).unwrap_or(&Interval::default()),
+            nominators_counter: *data.get(3).unwrap_or(&Interval::default()),
             // inclusion_rate: *data.get(1).unwrap_or(&Interval::default()),
-            // nominators: *data.get(2).unwrap_or(&Interval::default()),
             // avg_reward_points: *data.get(3).unwrap_or(&Interval::default()),
             // reward_staked: *data.get(4).unwrap_or(&Interval::default()),
             // active: *data.get(5).unwrap_or(&Interval::default()),
@@ -167,58 +171,6 @@ impl From<&Intervals> for CriteriaLimits {
         }
     }
 }
-
-// pub type CriteriaLimitsCache = BTreeMap<String, u64>;
-
-// impl From<CriteriaLimitsCache> for CriteriaLimits {
-//     fn from(data: CriteriaLimitsCache) -> Self {
-//         let default_min = 0_u64;
-//         let default_max = 100_u64;
-//         let base = 10_u64;
-//         CriteriaLimits {
-//             commission: Interval {
-//                 min: 0,
-//                 max: 100 * base.pow(DECIMALS),
-//             },
-//             own_stake: Interval {
-//                 min: *data.get("min_own_stake").unwrap_or(&default_min),
-//                 max: *data.get("max_own_stake").unwrap_or(&default_max),
-//             },
-//             // inclusion_rate: Interval {
-//             //     min: 0.0_f64,
-//             //     max: 1.0_f64,
-//             // },
-//             // nominators: Interval {
-//             //     min: 0.0_f64,
-//             //     max: NOMINATORS_OVERSUBSCRIBED_THRESHOLD as f64,
-//             // },
-//             // avg_reward_points: Interval {
-//             //     min: *data.get("min_avg_reward_points").unwrap_or(&default_min),
-//             //     max: *data.get("max_avg_reward_points").unwrap_or(&default_max),
-//             // },
-//             // reward_staked: Interval {
-//             //     min: 0.0_f64,
-//             //     max: 1.0_f64,
-//             // },
-//             // active: Interval {
-//             //     min: 0.0_f64,
-//             //     max: 1.0_f64,
-//             // },
-//             // total_stake: Interval {
-//             //     min: *data.get("min_total_stake").unwrap_or(&default_min),
-//             //     max: *data.get("max_total_stake").unwrap_or(&default_max),
-//             // },
-//             // judgements: Interval {
-//             //     min: *data.get("min_judgements").unwrap_or(&default_min),
-//             //     max: *data.get("max_judgements").unwrap_or(&default_max),
-//             // },
-//             // sub_accounts: Interval {
-//             //     min: *data.get("min_sub_accounts").unwrap_or(&default_min),
-//             //     max: *data.get("max_sub_accounts").unwrap_or(&default_max),
-//             // },
-//         }
-//     }
-// }
 
 async fn calculate_min_limit(
     cache: &RedisPool,
@@ -292,8 +244,16 @@ pub async fn build_limits_from_session(
     let own_stake_interval =
         calculate_min_max_interval(&cache.clone(), session_index, Trait::OwnStake).await?;
 
+    let nominators_stake_interval =
+        calculate_min_max_interval(&cache.clone(), session_index, Trait::NominatorsStake).await?;
+
+    let nominators_counter_interval =
+        calculate_min_max_interval(&cache.clone(), session_index, Trait::NominatorsCounter).await?;
+
     Ok(CriteriaLimits {
         own_stake: own_stake_interval,
+        nominators_stake: nominators_stake_interval,
+        nominators_counter: nominators_counter_interval,
         ..Default::default()
     })
     // limits.insert("min_own_stake".to_string(), own_stake_interval.0);

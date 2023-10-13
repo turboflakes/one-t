@@ -86,6 +86,7 @@ pub type QueryString = String;
 pub enum Trait {
     OwnStake,
     NominatorsStake,
+    NominatorsCounter,
 }
 
 impl std::fmt::Display for Trait {
@@ -93,6 +94,7 @@ impl std::fmt::Display for Trait {
         match self {
             Self::OwnStake => write!(f, "t:own_stake"),
             Self::NominatorsStake => write!(f, "t:nom_stake"),
+            Self::NominatorsCounter => write!(f, "t:nom_counter"),
         }
     }
 }
