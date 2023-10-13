@@ -19,7 +19,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::api::handlers::boards::params::{Quantity, Weights, DECIMALS};
 use crate::cache::{get_conn, CacheKey, RedisConn, RedisPool, Trait};
 use crate::errors::{CacheError, OnetError};
 use crate::records::EpochIndex;
@@ -28,8 +27,51 @@ use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize, Serialize};
 use std::{collections::BTreeMap, str::FromStr};
 
+/// NOTE: Assumption of the number of decimals in scores or limits
+pub const DECIMALS: u32 = 7;
+
+/// Current weighs and limits capacity
+pub const CAPACITY: usize = 2;
+
 // TODO: get this constants from chain
 const NOMINATORS_OVERSUBSCRIBED_THRESHOLD: u32 = 256;
+
+/// Weight can be any value in a 10-point scale. Higher the weight more important
+/// is the criteria to the user
+type Weight = u8;
+
+/// Weights represent an array of points, where the points in each position represents
+/// the weight for the respective criteria
+/// Position 0 - Lower Commission is preferrable
+/// Position 1 - Higher own stake is preferrable
+///
+///
+///
+/// TODO:
+/// Position 1 - Higher Inclusion rate is preferrable
+/// Position 2 - Lower Nominators is preferrable (limit to 256 -> oversubscribed)
+/// Position 3 - Higher Reward Points is preferrable
+/// Position 4 - If reward is staked is preferrable
+/// Position 5 - If in active set is preferrable
+/// Position 7 - Lower total stake is preferrable
+/// Position 8 - Higher number of Reasonable or KnownGood judgements is preferrable
+/// Position 9 - Lower number of sub-accounts is preferrable
+pub type Weights = Vec<Weight>;
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct CriteriaWeights {
+    pub commission: Weight,
+    pub own_stake: Weight,
+}
+
+impl From<&Weights> for CriteriaWeights {
+    fn from(data: &Weights) -> Self {
+        CriteriaWeights {
+            commission: *data.get(0).unwrap_or(&0),
+            own_stake: *data.get(1).unwrap_or(&0),
+        }
+    }
+}
 
 // NOTE: Intervals are considered unsigned integers bringing a 7 decimals representation
 // ex1: 20% = 200000000
@@ -55,7 +97,7 @@ impl std::fmt::Display for Interval {
 pub type Intervals = Vec<Interval>;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
-pub struct Limits {
+pub struct CriteriaLimits {
     pub commission: Interval,
     pub own_stake: Interval,
     // pub inclusion_rate: Interval,
@@ -68,10 +110,10 @@ pub struct Limits {
     // pub sub_accounts: Interval,
 }
 
-impl Default for Limits {
-    fn default() -> Limits {
+impl Default for CriteriaLimits {
+    fn default() -> CriteriaLimits {
         let base = 10_u64;
-        Limits {
+        CriteriaLimits {
             commission: Interval {
                 min: 0,
                 max: 100 * base.pow(DECIMALS),
@@ -89,7 +131,7 @@ impl Default for Limits {
     }
 }
 
-impl std::fmt::Display for Limits {
+impl std::fmt::Display for CriteriaLimits {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Note: the position of the traits is important, it should be the same as the position in weights
         write!(
@@ -109,9 +151,9 @@ impl std::fmt::Display for Limits {
     }
 }
 
-impl From<&Intervals> for Limits {
+impl From<&Intervals> for CriteriaLimits {
     fn from(data: &Intervals) -> Self {
-        Limits {
+        CriteriaLimits {
             commission: *data.get(0).unwrap_or(&Interval::default()),
             own_stake: *data.get(1).unwrap_or(&Interval::default()),
             // inclusion_rate: *data.get(1).unwrap_or(&Interval::default()),
@@ -126,57 +168,57 @@ impl From<&Intervals> for Limits {
     }
 }
 
-pub type LimitsCache = BTreeMap<String, u64>;
+// pub type CriteriaLimitsCache = BTreeMap<String, u64>;
 
-impl From<LimitsCache> for Limits {
-    fn from(data: LimitsCache) -> Self {
-        let default_min = 0_u64;
-        let default_max = 100_u64;
-        let base = 10_u64;
-        Limits {
-            commission: Interval {
-                min: 0,
-                max: 100 * base.pow(DECIMALS),
-            },
-            own_stake: Interval {
-                min: *data.get("min_own_stake").unwrap_or(&default_min),
-                max: *data.get("max_own_stake").unwrap_or(&default_max),
-            },
-            // inclusion_rate: Interval {
-            //     min: 0.0_f64,
-            //     max: 1.0_f64,
-            // },
-            // nominators: Interval {
-            //     min: 0.0_f64,
-            //     max: NOMINATORS_OVERSUBSCRIBED_THRESHOLD as f64,
-            // },
-            // avg_reward_points: Interval {
-            //     min: *data.get("min_avg_reward_points").unwrap_or(&default_min),
-            //     max: *data.get("max_avg_reward_points").unwrap_or(&default_max),
-            // },
-            // reward_staked: Interval {
-            //     min: 0.0_f64,
-            //     max: 1.0_f64,
-            // },
-            // active: Interval {
-            //     min: 0.0_f64,
-            //     max: 1.0_f64,
-            // },
-            // total_stake: Interval {
-            //     min: *data.get("min_total_stake").unwrap_or(&default_min),
-            //     max: *data.get("max_total_stake").unwrap_or(&default_max),
-            // },
-            // judgements: Interval {
-            //     min: *data.get("min_judgements").unwrap_or(&default_min),
-            //     max: *data.get("max_judgements").unwrap_or(&default_max),
-            // },
-            // sub_accounts: Interval {
-            //     min: *data.get("min_sub_accounts").unwrap_or(&default_min),
-            //     max: *data.get("max_sub_accounts").unwrap_or(&default_max),
-            // },
-        }
-    }
-}
+// impl From<CriteriaLimitsCache> for CriteriaLimits {
+//     fn from(data: CriteriaLimitsCache) -> Self {
+//         let default_min = 0_u64;
+//         let default_max = 100_u64;
+//         let base = 10_u64;
+//         CriteriaLimits {
+//             commission: Interval {
+//                 min: 0,
+//                 max: 100 * base.pow(DECIMALS),
+//             },
+//             own_stake: Interval {
+//                 min: *data.get("min_own_stake").unwrap_or(&default_min),
+//                 max: *data.get("max_own_stake").unwrap_or(&default_max),
+//             },
+//             // inclusion_rate: Interval {
+//             //     min: 0.0_f64,
+//             //     max: 1.0_f64,
+//             // },
+//             // nominators: Interval {
+//             //     min: 0.0_f64,
+//             //     max: NOMINATORS_OVERSUBSCRIBED_THRESHOLD as f64,
+//             // },
+//             // avg_reward_points: Interval {
+//             //     min: *data.get("min_avg_reward_points").unwrap_or(&default_min),
+//             //     max: *data.get("max_avg_reward_points").unwrap_or(&default_max),
+//             // },
+//             // reward_staked: Interval {
+//             //     min: 0.0_f64,
+//             //     max: 1.0_f64,
+//             // },
+//             // active: Interval {
+//             //     min: 0.0_f64,
+//             //     max: 1.0_f64,
+//             // },
+//             // total_stake: Interval {
+//             //     min: *data.get("min_total_stake").unwrap_or(&default_min),
+//             //     max: *data.get("max_total_stake").unwrap_or(&default_max),
+//             // },
+//             // judgements: Interval {
+//             //     min: *data.get("min_judgements").unwrap_or(&default_min),
+//             //     max: *data.get("max_judgements").unwrap_or(&default_max),
+//             // },
+//             // sub_accounts: Interval {
+//             //     min: *data.get("min_sub_accounts").unwrap_or(&default_min),
+//             //     max: *data.get("max_sub_accounts").unwrap_or(&default_max),
+//             // },
+//         }
+//     }
+// }
 
 async fn calculate_min_limit(
     cache: &RedisPool,
@@ -246,11 +288,11 @@ async fn calculate_min_max_interval(
 pub async fn build_limits_from_session(
     cache: &RedisPool,
     session_index: EpochIndex,
-) -> Result<Limits, OnetError> {
+) -> Result<CriteriaLimits, OnetError> {
     let own_stake_interval =
         calculate_min_max_interval(&cache.clone(), session_index, Trait::OwnStake).await?;
 
-    Ok(Limits {
+    Ok(CriteriaLimits {
         own_stake: own_stake_interval,
         ..Default::default()
     })

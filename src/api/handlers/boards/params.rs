@@ -20,38 +20,11 @@
 // SOFTWARE.
 
 use crate::cache::Index;
-use crate::limits::{Interval, Intervals};
+use crate::mcda::criterias::{Interval, Intervals, Weights, CAPACITY, DECIMALS};
 use log::{error, warn};
 use serde::{de::Deserializer, Deserialize};
 use std::result::Result;
-
-/// Weight can be any value in a 10-point scale. Higher the weight more important
-/// is the criteria to the user
-type Weight = u8;
-
-/// Weights represent an array of points, where the points in each position represents
-/// the weight for the respective criteria
-/// Position 0 - Lower Commission is preferrable
-/// Position 1 - Higher own stake is preferrable
-///
-///
-///
-///
-/// Position 1 - Higher Inclusion rate is preferrable
-/// Position 2 - Lower Nominators is preferrable (limit to 256 -> oversubscribed)
-/// Position 3 - Higher Reward Points is preferrable
-/// Position 4 - If reward is staked is preferrable
-/// Position 5 - If in active set is preferrable
-/// Position 7 - Lower total stake is preferrable
-/// Position 8 - Higher number of Reasonable or KnownGood judgements is preferrable
-/// Position 9 - Lower number of sub-accounts is preferrable
-pub type Weights = Vec<Weight>;
-
-/// NOTE: Assumption of the number of decimals in scores or limits
-pub const DECIMALS: u32 = 7;
-
-/// Current weighs and limits capacity
-pub const CAPACITY: usize = 2;
+use subxt::ext::sp_core::H256;
 
 // Number of elements to return
 pub type Quantity = u32;
@@ -141,15 +114,23 @@ where
     })
 }
 
-pub fn get_board_name_from_weights(weights: &Weights, intervals: Option<&Intervals>) -> String {
+pub fn get_board_hash_from_weights(weights: &Weights, intervals: Option<&Intervals>) -> H256 {
+    let hash = sp_core_hashing::blake2_256("123456".as_bytes());
+
     match intervals {
         Some(i) => {
             if i.is_empty() {
-                return format!("{}", weights_to_string(weights));
+                let hash = sp_core_hashing::blake2_256(weights_to_string(weights).as_bytes());
+                return H256::from(&hash);
             }
-            format!("{}|{}", weights_to_string(weights), intervals_to_string(i),)
+            let data = format!("{}|{}", weights_to_string(weights), intervals_to_string(i));
+            let hash = sp_core_hashing::blake2_256(data.as_bytes());
+            H256::from(&hash)
         }
-        None => format!("{}", weights_to_string(weights)),
+        None => {
+            let hash = sp_core_hashing::blake2_256(weights_to_string(weights).as_bytes());
+            H256::from(&hash)
+        }
     }
 }
 

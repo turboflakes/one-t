@@ -22,4 +22,3 @@
 pub mod handlers;
 pub mod params;
 pub mod responses;
-pub mod scores;

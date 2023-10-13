@@ -1368,7 +1368,7 @@ impl ValidatorProfileRecord {
     }
 
     pub fn own_stake_trimmed(&self, chain_token_decimals: u32) -> u64 {
-        use crate::api::handlers::boards::params::DECIMALS;
+        use crate::mcda::criterias::DECIMALS;
         let base: u128 = 10_u128;
         (self.own_stake / base.pow(chain_token_decimals - DECIMALS)) as u64
     }

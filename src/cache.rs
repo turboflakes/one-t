@@ -31,7 +31,7 @@ use mobc_redis::RedisConnectionManager;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use std::{thread, time};
-use subxt::utils::AccountId32;
+use subxt::{ext::sp_core::H256, utils::AccountId32};
 
 const CACHE_POOL_MAX_OPEN: u64 = 20;
 const CACHE_POOL_MAX_IDLE: u64 = 8;
@@ -124,11 +124,12 @@ pub enum CacheKey {
     QueryValidators(QueryString),
     QuerySessions(QueryString),
     // Nomi Boards
-    NomiBoardBySessionAndName(EpochIndex, String),
+    NomiBoardBySessionAndHash(EpochIndex, H256),
     NomiBoardEraBySession(EpochIndex),
-    NomiBoardScoresBySessionAndName(EpochIndex, String),
-    NomiBoardLimitsBySession(EpochIndex),
+    NomiBoardScoresBySessionAndHash(EpochIndex, H256),
+    NomiBoardMetaBySessionAndHash(EpochIndex, H256),
     NomiBoardBySessionAndTrait(EpochIndex, Trait),
+    NomiBoardStats,
 }
 
 impl std::fmt::Display for CacheKey {
@@ -184,20 +185,23 @@ impl std::fmt::Display for CacheKey {
             Self::QueryValidators(params) => write!(f, "qry:val:{}", params),
             Self::QuerySessions(params) => write!(f, "qry:ses:{}", params),
             //
-            Self::NomiBoardBySessionAndName(session_index, name) => {
-                write!(f, "nb:{}:{}", session_index, name)
+            Self::NomiBoardBySessionAndHash(session_index, hash) => {
+                write!(f, "nb:{}:{:#02x}", session_index, hash)
             }
             Self::NomiBoardEraBySession(session_index) => {
                 write!(f, "nb:{}:era", session_index)
             }
-            Self::NomiBoardScoresBySessionAndName(session_index, name) => {
-                write!(f, "nb:{}:{}:scores", session_index, name)
+            Self::NomiBoardScoresBySessionAndHash(session_index, hash) => {
+                write!(f, "nb:{}:{:#02x}:scores", session_index, hash)
             }
-            Self::NomiBoardLimitsBySession(session_index) => {
-                write!(f, "nb:{}:limits", session_index)
+            Self::NomiBoardMetaBySessionAndHash(session_index, hash) => {
+                write!(f, "nb:{}:{:#02x}:meta", session_index, hash)
             }
             Self::NomiBoardBySessionAndTrait(session_index, attribute) => {
                 write!(f, "nb:{}:{}", session_index, attribute)
+            }
+            Self::NomiBoardStats => {
+                write!(f, "nb:stats")
             }
         }
     }

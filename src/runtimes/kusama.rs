@@ -21,8 +21,8 @@
 use crate::cache::{CacheKey, Index, Trait, Verbosity};
 use crate::config::CONFIG;
 use crate::errors::{CacheError, OnetError};
-use crate::limits::build_limits_from_session;
 use crate::matrix::FileInfo;
+use crate::mcda::criterias::build_limits_from_session;
 use crate::onet::{
     get_account_id_from_storage_key, get_latest_block_number_processed, get_signer_from_seed,
     get_subscribers, get_subscribers_by_epoch, try_fetch_stashes_from_remote_url,
@@ -3056,10 +3056,10 @@ pub async fn cache_session_stats_records(
                         .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
                         .arg(config.cache_writer_prunning)
                         .cmd("SADD")
-                        .arg(CacheKey::ValidatorAccountsBySession(era_index))
+                        .arg(CacheKey::ValidatorAccountsBySession(epoch_index))
                         .arg(stash.to_string())
                         .cmd("EXPIRE")
-                        .arg(CacheKey::ValidatorAccountsBySession(era_index))
+                        .arg(CacheKey::ValidatorAccountsBySession(epoch_index))
                         .arg(config.cache_writer_prunning)
                         // cache own_stake
                         .cmd("ZADD")

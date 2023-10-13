@@ -19,10 +19,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::api::handlers::boards::params::{Weights, CAPACITY, DECIMALS};
-use crate::config::CONFIG;
 use crate::errors::ApiError;
-use crate::limits::Limits;
+use crate::mcda::criterias::{CriteriaLimits, CriteriaWeights, CAPACITY, DECIMALS};
 use crate::records::ValidatorProfileRecord;
 use log::{error, warn};
 use std::result::Result;
@@ -58,9 +56,9 @@ pub type Scores = Vec<Score>;
 
 pub fn calculate_scores(
     validator: &ValidatorProfileRecord,
-    limits: &Limits,
-    weights: &Weights,
-    chain_token_decimals: u32
+    limits: &CriteriaLimits,
+    weights: &CriteriaWeights,
+    chain_token_decimals: u32,
 ) -> Result<Scores, ApiError> {
     let mut scores: Scores = Vec::with_capacity(CAPACITY);
 
@@ -69,7 +67,7 @@ pub fn calculate_scores(
             validator.commission as u64,
             limits.commission.min,
             limits.commission.max,
-        ) * weights[0] as u64,
+        ) * weights.commission as u64,
     );
 
     scores.push(
@@ -77,7 +75,7 @@ pub fn calculate_scores(
             validator.own_stake_trimmed(chain_token_decimals),
             limits.own_stake.min,
             limits.own_stake.max,
-        ) * weights[1] as u64,
+        ) * weights.own_stake as u64,
     );
     // scores.push(
     //     normalize_value(

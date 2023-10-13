@@ -19,71 +19,87 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::api::handlers::boards::{
-    params::{get_board_name_from_weights, Params, Quantity, Weights, CAPACITY, DECIMALS},
-    responses::{MetaResponse, ValidatorsResponse},
-    scores::{calculate_scores, scores_to_string},
-};
 use crate::api::helpers::respond_json;
 use crate::cache::{get_conn, CacheKey, Index, RedisPool};
 use crate::config::CONFIG;
 use crate::errors::{ApiError, CacheError};
-use crate::limits::{Interval, Intervals, Limits, LimitsCache};
+use crate::mcda::{
+    criterias::{CriteriaLimits, Intervals, Weights, CAPACITY, DECIMALS},
+    scores::{calculate_scores, scores_to_string},
+};
+use crate::records::EpochIndex;
 use crate::records::ValidatorProfileRecord;
-use crate::records::{EpochIndex, EraIndex};
-use actix_web::web::{Data, Json, Path, Query};
+use crate::{
+    api::handlers::boards::{
+        params::{get_board_hash_from_weights, Params, Quantity},
+        responses::{BoardsResponse, MetaResponse},
+    },
+    mcda::criterias::CriteriaWeights,
+};
+use actix_web::{
+    body::MessageBody,
+    web::{Data, Json, Path, Query},
+};
 use log::{error, warn};
 use redis::aio::Connection;
-use std::convert::TryInto;
-use std::result::Result;
-use std::{collections::BTreeMap, str::FromStr};
+use std::{collections::BTreeMap, convert::TryInto, result::Result, str::FromStr};
 use subxt::utils::AccountId32;
+
+use super::responses::BoardResponse;
 
 /// Get a list of validators (board) based on weights and intervals per era
 pub async fn get_boards(
     params: Query<Params>,
     cache: Data<RedisPool>,
-) -> Result<Json<ValidatorsResponse>, ApiError> {
-    let mut conn = get_conn(&cache).await?;
-    // get current era
+) -> Result<Json<BoardsResponse>, ApiError> {
     let requested_session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
             if String::from("current") == *index {
-                // get latest synced session
-                redis::cmd("HGET")
-                    .arg(CacheKey::EraByIndex(Index::Current))
-                    .arg(String::from("synced_session"))
-                    .query_async(&mut conn as &mut Connection)
-                    .await
-                    .map_err(CacheError::RedisCMDError)?
+                get_latest_synced_session(cache.clone()).await?
             } else {
                 index.parse::<EpochIndex>().unwrap_or_default()
             }
         }
-        _ => redis::cmd("HGET")
-            .arg(CacheKey::EraByIndex(Index::Current))
-            .arg(String::from("synced_session"))
-            .query_async(&mut conn as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?,
+        _ => get_latest_synced_session(cache.clone()).await?,
     };
 
-    return get_validators(requested_session_index, params, cache).await;
+    return get_board_by_session(requested_session_index, params, cache).await;
+}
+
+async fn get_latest_synced_session(cache: Data<RedisPool>) -> Result<EpochIndex, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+
+    // get current era
+    let era_index: u64 = redis::cmd("GET")
+        .arg(CacheKey::EraByIndex(Index::Current))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    // get latest synced session from current era
+    let session_index: u32 = redis::cmd("HGET")
+        .arg(CacheKey::EraByIndex(Index::Num(era_index)))
+        .arg(String::from("synced_session"))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(session_index)
 }
 
 /// Get validators
-async fn get_validators(
+async fn get_board_by_session(
     session_index: EpochIndex,
     params: Query<Params>,
     cache: Data<RedisPool>,
-) -> Result<Json<ValidatorsResponse>, ApiError> {
-    let key = CacheKey::NomiBoardBySessionAndName(
-        session_index,
-        get_board_name_from_weights(&params.w, Some(&params.i)),
-    );
+) -> Result<Json<BoardsResponse>, ApiError> {
+    // TODO: check if weights available in params
+
+    let board_hash = get_board_hash_from_weights(&params.w, Some(&params.i));
+    let board_key = CacheKey::NomiBoardBySessionAndHash(session_index, board_hash);
 
     // Generate leaderboard scores and cache it
-    generate_board_scores(
+    let (weights, limits) = generate_board_scores(
         session_index,
         &params.w,
         &params.i,
@@ -92,20 +108,33 @@ async fn get_validators(
     )
     .await?;
 
-    // Generate filtered leaderboard and cache it
-    // generate_board_filtered_by_intervals(era_index, &params.w, &params.i, cache.clone()).await?;
-
     // Increase board stats counter
-    // increase_board_stats(key.clone(), cache.clone()).await?;
+    increase_board_stats(board_key.clone(), cache.clone()).await?;
 
-    // let limits: BoardLimits = get_board_limits(era_index, &params.w, cache.clone()).await?;
-
-    respond_json(ValidatorsResponse {
-        addresses: get_validators_stashes(key.clone(), params.n, cache.clone()).await?,
-        meta: MetaResponse {
-            limits: "".to_string(),
-        },
+    respond_json(BoardsResponse {
+        data: vec![BoardResponse {
+            id: board_hash,
+            session: session_index,
+            addresses: get_validators_stashes(board_key, params.n, cache.clone()).await?,
+            limits,
+            weights,
+        }],
     })
+}
+
+/// Increase board stats counter
+async fn increase_board_stats(key: CacheKey, cache: Data<RedisPool>) -> Result<(), ApiError> {
+    let mut conn = get_conn(&cache).await?;
+
+    let _: () = redis::cmd("HINCRBY")
+        .arg(CacheKey::NomiBoardStats)
+        .arg(key.to_string())
+        .arg(1)
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
 }
 
 async fn get_validators_stashes(
@@ -129,6 +158,144 @@ async fn get_validators_stashes(
         .map_err(CacheError::RedisCMDError)?;
 
     Ok(stashes)
+}
+
+async fn generate_board_scores(
+    session_index: EpochIndex,
+    weights: &Weights,
+    intervals: &Intervals,
+    force: &bool,
+    cache: Data<RedisPool>,
+) -> Result<(CriteriaWeights, CriteriaLimits), ApiError> {
+    let config = CONFIG.clone();
+    let mut conn = get_conn(&cache).await?;
+
+    let board_hash = get_board_hash_from_weights(&weights, Some(&intervals));
+    let board_key = CacheKey::NomiBoardBySessionAndHash(session_index, board_hash);
+
+    // Convert user defined weights into criteria_weights
+    let criteria_weights: CriteriaWeights = weights.into();
+
+    // Convert user defined intervals into limits to be able to filter out validators
+    let criteria_limits: CriteriaLimits = intervals.into();
+
+    // If board is already cached do nothing
+    if !force && is_board_cached(board_key.clone(), cache.clone()).await? {
+        return Ok((criteria_weights, criteria_limits));
+    }
+
+    // Only generate board if data for the session is already available
+    if !is_session_data_available(session_index, cache.clone()).await? {
+        let msg = format!("There is no data available for requested session: {session_index}");
+        warn!("{}", msg);
+        return Err(ApiError::NotFound(msg));
+    }
+
+    // load stashes
+    let stashes = get_validator_stashes_by_session(session_index, cache.clone()).await?;
+
+    for stash in stashes {
+        let stash = AccountId32::from_str(&*stash.to_string()).map_err(|e| {
+            ApiError::BadRequest(format!(
+                "Invalid account: {:?} error: {e:?}",
+                &*stash.to_string()
+            ))
+        })?;
+        if let Ok(serialized_data) = redis::cmd("GET")
+            .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+            .query_async::<Connection, String>(&mut conn as &mut Connection)
+            .await
+        {
+            let validator = ValidatorProfileRecord::from(serialized_data);
+            // If the validator does not accept nominations
+            // score is not given
+            if validator.is_blocked {
+                continue;
+            }
+
+            // Skip validators that are outside the intervals
+            if (validator.commission as u64) < criteria_limits.commission.min
+                || (validator.commission as u64) > criteria_limits.commission.max
+            {
+                continue;
+            }
+
+            // Get chain token decimals
+            let chain_token_decimals: u32 = redis::cmd("HGET")
+                .arg(CacheKey::Network)
+                .arg(String::from("token_decimals"))
+                .query_async(&mut conn as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+
+            if validator.own_stake_trimmed(chain_token_decimals) < criteria_limits.own_stake.min
+                || validator.own_stake_trimmed(chain_token_decimals) > criteria_limits.own_stake.max
+            {
+                continue;
+            }
+
+            // Calculate scores
+            let scores = calculate_scores(
+                &validator,
+                &criteria_limits,
+                &criteria_weights,
+                chain_token_decimals,
+            )?;
+            let total_score = scores.iter().fold(0_u64, |acc, x| acc + x);
+
+            redis::pipe()
+                .atomic()
+                // Cache total score
+                .cmd("ZADD")
+                .arg(board_key.to_string())
+                .arg(total_score)
+                .arg(stash.to_string())
+                // Cache partial scores
+                .cmd("HSET")
+                .arg(CacheKey::NomiBoardScoresBySessionAndHash(
+                    session_index,
+                    board_hash,
+                ))
+                .arg(stash.to_string())
+                .arg(scores_to_string(scores))
+                .cmd("EXPIRE")
+                .arg(CacheKey::NomiBoardScoresBySessionAndHash(
+                    session_index,
+                    board_hash,
+                ))
+                .arg(config.cache_writer_prunning)
+                .query_async(&mut conn as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+        }
+    }
+    // Cache board metadata
+    let mut metadata: BTreeMap<String, String> = BTreeMap::new();
+    let limits_serialized = serde_json::to_string(&criteria_limits)?;
+    metadata.insert(String::from("limits"), limits_serialized.to_string());
+    let weights_serialized = serde_json::to_string(&criteria_weights)?;
+    metadata.insert(String::from("weights"), weights_serialized.to_string());
+
+    redis::pipe()
+        .atomic()
+        // Cache total score
+        .cmd("HSET")
+        .arg(CacheKey::NomiBoardMetaBySessionAndHash(
+            session_index,
+            board_hash,
+        ))
+        .arg(metadata)
+        .cmd("EXPIRE")
+        .arg(CacheKey::NomiBoardMetaBySessionAndHash(
+            session_index,
+            board_hash,
+        ))
+        .arg(config.cache_writer_prunning)
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok((criteria_weights, criteria_limits))
 }
 
 async fn is_board_cached(key: CacheKey, cache: Data<RedisPool>) -> Result<bool, ApiError> {
@@ -170,175 +337,4 @@ async fn get_validator_stashes_by_session(
         .map_err(CacheError::RedisCMDError)?;
 
     Ok(stashes)
-}
-
-async fn cache_limits(
-    era_index: EraIndex,
-    board_name: String,
-    cache: Data<RedisPool>,
-) -> Result<Limits, ApiError> {
-    let mut conn = get_conn(&cache).await?;
-
-    let mut limits: LimitsCache = BTreeMap::new();
-
-    // // let max_avg_reward_points =
-    // //     calculate_avg_points(cache.clone(), sync::BOARD_MAX_POINTS_ERAS).await?;
-    // // limits.insert("max_avg_reward_points".to_string(), max_avg_reward_points);
-    // // let min_avg_reward_points =
-    // //     calculate_avg_points(cache.clone(), sync::BOARD_MIN_POINTS_ERAS).await?;
-    // // limits.insert("min_avg_reward_points".to_string(), min_avg_reward_points);
-
-    // let avg_reward_points_interval =
-    //     calculate_min_max_interval(cache.clone(), sync::BOARD_AVG_POINTS_ERAS).await?;
-    // limits.insert(
-    //     "min_avg_reward_points".to_string(),
-    //     avg_reward_points_interval.0,
-    // );
-    // limits.insert(
-    //     "max_avg_reward_points".to_string(),
-    //     avg_reward_points_interval.1,
-    // );
-
-    // let own_stake_interval =
-    //     calculate_min_max_interval(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
-    // // let own_stake_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_OWN_STAKE_VALIDATORS).await?;
-    // limits.insert("min_own_stake".to_string(), own_stake_interval.0);
-    // limits.insert("max_own_stake".to_string(), own_stake_interval.1);
-
-    // let total_stake_interval =
-    //     calculate_min_max_interval(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
-    // // let total_stake_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
-    // limits.insert("min_total_stake".to_string(), total_stake_interval.0);
-    // limits.insert("max_total_stake".to_string(), total_stake_interval.1);
-
-    // let judgements_interval =
-    //     calculate_min_max_interval(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
-    // // let judgements_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
-    // limits.insert("min_judgements".to_string(), judgements_interval.0);
-    // limits.insert("max_judgements".to_string(), judgements_interval.1);
-
-    // let sub_accounts_interval =
-    //     calculate_min_max_interval(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
-    // // let sub_accounts_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
-    // limits.insert("min_sub_accounts".to_string(), sub_accounts_interval.0);
-    // limits.insert("max_sub_accounts".to_string(), sub_accounts_interval.1);
-
-    // let key_limits = sync::Key::BoardAtEra(era_index, format!("{}:limits", board_name));
-    // // Cache board limits
-    // let _: () = redis::cmd("HSET")
-    //     .arg(key_limits.to_string())
-    //     .arg(limits.clone())
-    //     .query_async(&mut conn as &mut Connection)
-    //     .await
-    //     .map_err(CacheError::RedisCMDError)?;
-
-    Ok(limits.into())
-}
-
-async fn generate_board_scores(
-    session_index: EpochIndex,
-    weights: &Weights,
-    intervals: &Intervals,
-    force: &bool,
-    cache: Data<RedisPool>,
-) -> Result<(), ApiError> {
-    let config = CONFIG.clone();
-    let mut conn = get_conn(&cache).await?;
-
-    let board_name = get_board_name_from_weights(weights, Some(intervals));
-    let board_name_key = CacheKey::NomiBoardBySessionAndName(session_index, board_name.to_string());
-
-    // If board is already cached do nothing
-    if !force && is_board_cached(board_name_key.clone(), cache.clone()).await? {
-        return Ok(());
-    }
-
-    // Only generate board if data for the session is already available
-    if !is_session_data_available(session_index, cache.clone()).await? {
-        let msg = format!("There is no data available for requested session: {session_index}");
-        warn!("{}", msg);
-        return Err(ApiError::NotFound(msg));
-    }
-
-    // Convert user defined intervals into limits to be able to filter out validators
-    let limits: Limits = intervals.into();
-
-    warn!("__LIMITS: {:?}", limits);
-
-    // load stashes
-    let stashes = get_validator_stashes_by_session(session_index, cache.clone()).await?;
-
-    for stash in stashes {
-        let stash = AccountId32::from_str(&*stash.to_string()).map_err(|e| {
-            ApiError::BadRequest(format!(
-                "Invalid account: {:?} error: {e:?}",
-                &*stash.to_string()
-            ))
-        })?;
-        if let Ok(serialized_data) = redis::cmd("GET")
-            .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
-            .query_async::<Connection, String>(&mut conn as &mut Connection)
-            .await
-        {
-            let validator = ValidatorProfileRecord::from(serialized_data);
-
-            // If the validator does not accept nominations
-            // score is not given
-            if validator.is_blocked {
-                continue;
-            }
-
-            // Skip validators that are outside the intervals
-            if (validator.commission as u64) < limits.commission.min
-                || (validator.commission as u64) > limits.commission.max
-            {
-                continue;
-            }
-
-            // Get chain token decimals
-            let chain_token_decimals: u32 = redis::cmd("HGET")
-                .arg(CacheKey::Network)
-                .arg(String::from("token_decimals"))
-                .query_async(&mut conn as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
-
-            if validator.own_stake_trimmed(chain_token_decimals) < limits.own_stake.min
-                || validator.own_stake_trimmed(chain_token_decimals) > limits.own_stake.max
-            {
-                continue;
-            }
-
-            // Calculate scores
-            let scores = calculate_scores(&validator, &limits, &weights, chain_token_decimals)?;
-            let total_score = scores.iter().fold(0_u64, |acc, x| acc + x);
-
-            redis::pipe()
-                .atomic()
-                // Cache total score
-                .cmd("ZADD")
-                .arg(board_name_key.to_string())
-                .arg(total_score)
-                .arg(stash.to_string())
-                // Cache partial scores
-                .cmd("HSET")
-                .arg(CacheKey::NomiBoardScoresBySessionAndName(
-                    session_index,
-                    board_name.to_string(),
-                ))
-                .arg(stash.to_string())
-                .arg(scores_to_string(scores))
-                .cmd("EXPIRE")
-                .arg(CacheKey::NomiBoardScoresBySessionAndName(
-                    session_index,
-                    board_name.to_string(),
-                ))
-                .arg(config.cache_writer_prunning)
-                .query_async(&mut conn as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
-        }
-    }
-
-    Ok(())
 }

@@ -19,34 +19,5 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::mcda::criterias::{CriteriaLimits, CriteriaWeights};
-use crate::records::EpochIndex;
-use serde::Serialize;
-use subxt::ext::sp_core::H256;
-
-#[derive(Debug, Serialize, PartialEq)]
-pub struct MetaResponse {
-    pub limits: String,
-}
-
-impl Default for MetaResponse {
-    fn default() -> MetaResponse {
-        MetaResponse {
-            limits: String::default(),
-        }
-    }
-}
-
-#[derive(Debug, Serialize, PartialEq)]
-pub struct BoardResponse {
-    pub id: H256,
-    pub session: EpochIndex,
-    pub addresses: Vec<String>,
-    pub weights: CriteriaWeights,
-    pub limits: CriteriaLimits,
-}
-
-#[derive(Debug, Serialize, PartialEq)]
-pub struct BoardsResponse {
-    pub data: Vec<BoardResponse>,
-}
+pub mod criterias;
+pub mod scores;
