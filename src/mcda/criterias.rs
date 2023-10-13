@@ -80,32 +80,32 @@ pub const FILTERS_CAPACITY: usize = 4;
 /// Filters represent a binary array of possible filters to reduce the list of validators
 /// used in the score calculation
 ///
-/// Position 0 - is_active
-/// Position 1 - is_identified
-/// Position 2 - is_oversubscribed
-/// Position 3 - is_tvp
+/// Position 0 - active
+/// Position 1 - identity
+/// Position 2 - not_oversubscribed
+/// Position 3 - tvp
 ///
 /// UNDER CONSIDERATION
-/// - is_reward_compounded
+/// - only_reward_compounded
 ///
 type Filter = bool;
 pub type Filters = Vec<Filter>;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct CriteriaFilters {
-    pub only_active: Filter,
-    pub only_identified: Filter,
-    pub only_not_oversubscribed: Filter,
-    pub only_tvp: Filter,
+    pub active: Filter,
+    pub identity: Filter,
+    pub not_oversubscribed: Filter,
+    pub tvp: Filter,
 }
 
 impl From<&Filters> for CriteriaFilters {
     fn from(data: &Filters) -> Self {
         CriteriaFilters {
-            only_active: *data.get(0).unwrap_or(&(false)),
-            only_identified: *data.get(1).unwrap_or(&(false)),
-            only_not_oversubscribed: *data.get(2).unwrap_or(&(false)),
-            only_tvp: *data.get(3).unwrap_or(&(false)),
+            active: *data.get(0).unwrap_or(&(false)),
+            identity: *data.get(1).unwrap_or(&(false)),
+            not_oversubscribed: *data.get(2).unwrap_or(&(false)),
+            tvp: *data.get(3).unwrap_or(&(false)),
         }
     }
 }

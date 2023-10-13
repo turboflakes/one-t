@@ -220,19 +220,19 @@ async fn generate_board_scores(
             }
 
             // Filter out user defined filters
-            if criteria_filters.only_active && !validator.is_active {
+            if criteria_filters.active && !validator.is_active {
                 continue;
             }
 
-            if criteria_filters.only_not_oversubscribed && validator.is_oversubscribed {
+            if criteria_filters.not_oversubscribed && validator.is_oversubscribed {
                 continue;
             }
 
-            if criteria_filters.only_identified && !validator.is_identified() {
+            if criteria_filters.identity && !validator.is_identified() {
                 continue;
             }
 
-            if criteria_filters.only_tvp && !validator.is_tvp() {
+            if criteria_filters.tvp && !validator.is_tvp() {
                 continue;
             }
 
