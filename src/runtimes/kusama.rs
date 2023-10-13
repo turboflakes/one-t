@@ -2982,7 +2982,7 @@ pub async fn cache_session_stats_records(
         let mut validators: Vec<ValidatorProfileRecord> = Vec::new();
 
         // Collect Nominators data (** heavy duty task **)
-        let nominators_map = collect_nominators_data(&onet).await?;
+        let nominators_map = collect_nominators_data(&onet, block.parent_hash).await?;
 
         // Load TVP stashes
         let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url(is_loading).await?;
@@ -3333,6 +3333,7 @@ pub async fn cache_session_stats_records(
 
 async fn collect_nominators_data(
     onet: &Onet,
+    block_hash: H256,
 ) -> Result<BTreeMap<AccountId32, Vec<(AccountId32, u128, u128)>>, OnetError> {
     let start = Instant::now();
     let api = onet.client().clone();
@@ -3341,14 +3342,13 @@ async fn collect_nominators_data(
     let mut nominators_map: BTreeMap<AccountId32, Vec<(AccountId32, u128, u128)>> = BTreeMap::new();
     
     let mut counter = 0;
-    let storage_query = node_runtime::storage().staking().nominators_root();
-    let mut results = api
+    let storage_addr = node_runtime::storage().staking().nominators_root();
+    let mut iter = api
         .storage()
-        .at_latest()
-        .await?
-        .iter(storage_query, 10)
+        .at(block_hash)
+        .iter(storage_addr, 10)
         .await?;
-    while let Some((key, nominations)) = results.next().await? {
+    while let Some((key, nominations)) = iter.next().await? {
         let nominator_stash = get_account_id_from_storage_key(key);
         let bonded_addr = node_runtime::storage()
             .staking()
