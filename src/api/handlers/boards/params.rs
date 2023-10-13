@@ -115,8 +115,6 @@ where
 }
 
 pub fn get_board_hash_from_weights(weights: &Weights, intervals: Option<&Intervals>) -> H256 {
-    let hash = sp_core_hashing::blake2_256("123456".as_bytes());
-
     match intervals {
         Some(i) => {
             if i.is_empty() {

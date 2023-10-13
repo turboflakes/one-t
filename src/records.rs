@@ -1338,6 +1338,11 @@ pub struct ValidatorProfileRecord {
     // Note: commission max value = Perbill(1000000000) => 100%
     pub commission: u32,
     pub own_stake: u128,
+    // Note: nominators_stake is the sum of all nominators stake
+    pub nominators_stake: u128,
+    // Note: nominators_raw_stake is the sum of all nominators stake divided by the number of nominees
+    pub nominators_raw_stake: u128,
+    pub nominators_counter: u128,
     pub points: u32,
     pub subset: Subset,
     pub is_oversubscribed: bool,
@@ -1345,9 +1350,7 @@ pub struct ValidatorProfileRecord {
     pub is_chilled: bool,
     pub is_blocked: bool,
     // TODO:
-    // pub total_stake: u128,
     // pub latest_grade: u128,
-    // pub nominations: u32
 }
 
 impl ValidatorProfileRecord {
@@ -1358,6 +1361,9 @@ impl ValidatorProfileRecord {
             identity: None,
             commission: 0,
             own_stake: 0,
+            nominators_stake: 0,
+            nominators_raw_stake: 0,
+            nominators_counter: 0,
             points: 0,
             subset: Subset::NONTVP,
             is_oversubscribed: false,
@@ -1371,6 +1377,18 @@ impl ValidatorProfileRecord {
         use crate::mcda::criterias::DECIMALS;
         let base: u128 = 10_u128;
         (self.own_stake / base.pow(chain_token_decimals - DECIMALS)) as u64
+    }
+
+    pub fn add_nominators_stake(&mut self, stake: u128) {
+        self.nominators_stake += stake;
+    }
+
+    pub fn add_nominators_raw_stake(&mut self, stake: u128) {
+        self.nominators_raw_stake += stake;
+    }
+
+    pub fn inc_nominators(&mut self) {
+        self.nominators_counter += 1;
     }
 }
 

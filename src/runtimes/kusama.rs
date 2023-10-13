@@ -2981,6 +2981,9 @@ pub async fn cache_session_stats_records(
         // Initialize validators vec
         let mut validators: Vec<ValidatorProfileRecord> = Vec::new();
 
+        // Collect Nominators data (** heavy duty task **)
+        let nominators_map = collect_nominators_data(&onet).await?;
+
         // Load TVP stashes
         let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url(is_loading).await?;
 
@@ -3046,6 +3049,20 @@ pub async fn cache_session_stats_records(
                     // get identity
                     v.identity = get_identity(&onet, &stash, None).await?;
 
+                    // set nominators data
+                    if let Some(nominators) = nominators_map.get(&stash) {
+                        // TODO: Perhaps keep nominator stashes in a different struct
+                        // let nominators_stashes = nominators
+                        //     .iter()
+                        //     .map(|(x, _, _)| x.to_string())
+                        //     .collect::<Vec<String>>()
+                        //     .join(",");
+        
+                        v.nominators_stake = nominators.iter().map(|(_, x, _)| x).sum();
+                        v.nominators_raw_stake = nominators.iter().map(|(_, x, y)| x / y).sum();
+                        v.nominators_counter = nominators.len().try_into().unwrap();
+                    }
+
                     let serialized = serde_json::to_string(&v)?;
                     redis::pipe()
                         .atomic()
@@ -3086,7 +3103,7 @@ pub async fn cache_session_stats_records(
                 }
             }
 
-            // track chilled nodes
+            // track chilled nodes by checking if a session authority is no longer part of the validator list
             for stash in authorities.iter() {
                 if validators
                     .iter()
@@ -3273,6 +3290,7 @@ pub async fn cache_session_stats_records(
                 start.elapsed()
             );
         }
+        // Fetch nominators data
 
         // Set synced session associated with era (useful for nomi boards)
         let mut era_data: BTreeMap<String, String> = BTreeMap::new();
@@ -3311,4 +3329,55 @@ pub async fn cache_session_stats_records(
     }
 
     Ok(())
+}
+
+async fn collect_nominators_data(
+    onet: &Onet,
+) -> Result<BTreeMap<AccountId32, Vec<(AccountId32, u128, u128)>>, OnetError> {
+    let start = Instant::now();
+    let api = onet.client().clone();
+
+    // BTreeMap<AccountId32, Vec<(AccountId32, u128, u32)>> = validator_stash : [(nominator_stash, nominator_total_stake, number_of_nominations)]
+    let mut nominators_map: BTreeMap<AccountId32, Vec<(AccountId32, u128, u128)>> = BTreeMap::new();
+    
+    let mut counter = 0;
+    let storage_query = node_runtime::storage().staking().nominators_root();
+    let mut results = api
+        .storage()
+        .at_latest()
+        .await?
+        .iter(storage_query, 10)
+        .await?;
+    while let Some((key, nominations)) = results.next().await? {
+        let nominator_stash = get_account_id_from_storage_key(key);
+        let bonded_addr = node_runtime::storage()
+            .staking()
+            .bonded(&nominator_stash.clone());
+        if let Some(controller) = api.storage().at_latest().await?.fetch(&bonded_addr).await? {
+            let ledger_addr = node_runtime::storage().staking().ledger(&controller);
+            let nominator_stake =
+                if let Some(ledger) = api.storage().at_latest().await?.fetch(&ledger_addr).await? {
+                    ledger.total
+                } else {
+                    0
+                };
+
+            let BoundedVec(targets) = nominations.targets.clone();
+            for target in targets.iter() {
+                let n = nominators_map.entry(target.clone()).or_insert(vec![]);
+                n.push((
+                    nominator_stash.clone(),
+                    nominator_stake,
+                    targets.len().try_into().unwrap(),
+                ));
+            }
+        }
+        counter += 1;
+    }
+    info!(
+        "Total Nominators {} collected ({:?})",
+        counter,
+        start.elapsed()
+    );
+    Ok(nominators_map)
 }
