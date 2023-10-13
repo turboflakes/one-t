@@ -20,7 +20,7 @@
 // SOFTWARE.
 
 use crate::errors::ApiError;
-use crate::mcda::criterias::{CriteriaLimits, CriteriaWeights, CAPACITY, DECIMALS};
+use crate::mcda::criterias::{CriteriaLimits, CriteriaWeights, DECIMALS, WEIGHTS_CAPACITY};
 use crate::records::ValidatorProfileRecord;
 use log::{error, warn};
 use std::result::Result;
@@ -60,7 +60,7 @@ pub fn calculate_scores(
     weights: &CriteriaWeights,
     chain_token_decimals: u32,
 ) -> Result<Scores, ApiError> {
-    let mut scores: Scores = Vec::with_capacity(CAPACITY);
+    let mut scores: Scores = Vec::with_capacity(WEIGHTS_CAPACITY);
 
     scores.push(
         reverse_normalize_value(

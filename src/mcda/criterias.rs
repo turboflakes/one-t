@@ -30,26 +30,29 @@ use serde::Serialize;
 pub const DECIMALS: u32 = 7;
 
 /// Current weighs and limits capacity
-pub const CAPACITY: usize = 4;
-
-/// Weight can be any value in a 10-point scale. Higher the weight more important
-/// is the criteria to the user
-type Weight = u8;
+pub const WEIGHTS_CAPACITY: usize = 4;
 
 /// Weights represent an array of points, where the points in each position represents
 /// the weight for the respective criteria
+///
 /// Position 0 - Lower Commission is preferrable
 /// Position 1 - Higher own stake is preferrable
 /// Position 2 - Higher Nominators stake is preferrable (limit to 256 -> oversubscribed)
 /// Position 3 - Lower Nominators is preferrable
 ///
-/// TODO:
-/// Position 1 - Higher Inclusion rate is preferrable
-/// Position 3 - Higher Reward Points is preferrable
-/// Position 4 - If reward is staked is preferrable
-/// Position 5 - If in active set is preferrable
-/// Position 8 - Higher number of Reasonable or KnownGood judgements is preferrable
-/// Position 9 - Lower number of sub-accounts is preferrable
+/// UNDER CONSIDERATION
+/// - grade
+///
+/// NICE TO HAVE:
+/// - Higher Inclusion rate is preferrable
+/// - Higher number of Reasonable or KnownGood judgements is preferrable
+/// - Lower number of sub-accounts is preferrable
+///
+///
+/// Weight can be any value in a 10-point scale. Higher the weight more important
+/// is the criteria to the user
+type Weight = u8;
+///
 pub type Weights = Vec<Weight>;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -67,6 +70,42 @@ impl From<&Weights> for CriteriaWeights {
             own_stake: *data.get(1).unwrap_or(&0),
             nominators_stake: *data.get(2).unwrap_or(&0),
             nominators_counter: *data.get(3).unwrap_or(&0),
+        }
+    }
+}
+
+/// Current weighs and limits capacity
+pub const FILTERS_CAPACITY: usize = 4;
+
+/// Filters represent a binary array of possible filters to reduce the list of validators
+/// used in the score calculation
+///
+/// Position 0 - is_active
+/// Position 1 - is_identified
+/// Position 2 - is_oversubscribed
+/// Position 3 - is_tvp
+///
+/// UNDER CONSIDERATION
+/// - is_reward_compounded
+///
+type Filter = bool;
+pub type Filters = Vec<Filter>;
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct CriteriaFilters {
+    pub is_active: Filter,
+    pub is_identified: Filter,
+    pub is_oversubscribed: Filter,
+    pub is_tvp: Filter,
+}
+
+impl From<&Filters> for CriteriaFilters {
+    fn from(data: &Filters) -> Self {
+        CriteriaFilters {
+            is_active: *data.get(0).unwrap_or(&(false)),
+            is_identified: *data.get(1).unwrap_or(&(false)),
+            is_oversubscribed: *data.get(2).unwrap_or(&(false)),
+            is_tvp: *data.get(3).unwrap_or(&(false)),
         }
     }
 }
@@ -100,13 +139,6 @@ pub struct CriteriaLimits {
     pub own_stake: Interval,
     pub nominators_stake: Interval,
     pub nominators_counter: Interval,
-    // pub inclusion_rate: Interval,
-    // pub avg_reward_points: Interval,
-    // pub reward_staked: Interval,
-    // pub active: Interval,
-    // pub total_stake: Interval,
-    // pub judgements: Interval,
-    // pub sub_accounts: Interval,
 }
 
 impl Default for CriteriaLimits {
@@ -120,13 +152,6 @@ impl Default for CriteriaLimits {
             own_stake: Interval::default(),
             nominators_stake: Interval::default(),
             nominators_counter: Interval::default(),
-            // inclusion_rate: Interval::default(),
-            // avg_reward_points: Interval::default(),
-            // reward_staked: Interval::default(),
-            // active: Interval::default(),
-            // total_stake: Interval::default(),
-            // judgements: Interval::default(),
-            // sub_accounts: Interval::default(),
         }
     }
 }
@@ -141,13 +166,6 @@ impl std::fmt::Display for CriteriaLimits {
             self.own_stake.to_string(),
             self.nominators_stake.to_string(),
             self.nominators_counter.to_string(),
-            // self.inclusion_rate.to_string(),
-            // self.avg_reward_points.to_string(),
-            // self.reward_staked.to_string(),
-            // self.active.to_string(),
-            // self.total_stake.to_string(),
-            // self.judgements.to_string(),
-            // self.sub_accounts.to_string()
         )
     }
 }
@@ -159,13 +177,6 @@ impl From<&Intervals> for CriteriaLimits {
             own_stake: *data.get(1).unwrap_or(&Interval::default()),
             nominators_stake: *data.get(2).unwrap_or(&Interval::default()),
             nominators_counter: *data.get(3).unwrap_or(&Interval::default()),
-            // inclusion_rate: *data.get(1).unwrap_or(&Interval::default()),
-            // avg_reward_points: *data.get(3).unwrap_or(&Interval::default()),
-            // reward_staked: *data.get(4).unwrap_or(&Interval::default()),
-            // active: *data.get(5).unwrap_or(&Interval::default()),
-            // total_stake: *data.get(7).unwrap_or(&Interval::default()),
-            // judgements: *data.get(8).unwrap_or(&Interval::default()),
-            // sub_accounts: *data.get(9).unwrap_or(&Interval::default()),
         }
     }
 }
@@ -254,46 +265,4 @@ pub async fn build_limits_from_session(
         nominators_counter: nominators_counter_interval,
         ..Default::default()
     })
-    // limits.insert("min_own_stake".to_string(), own_stake_interval.0);
-    // limits.insert("max_own_stake".to_string(), own_stake_interval.1);
-
-    // let avg_reward_points_interval =
-    //     calculate_min_max_interval(cache.clone(), sync::BOARD_AVG_POINTS_ERAS).await?;
-    // limits.insert(
-    //     "min_avg_reward_points".to_string(),
-    //     avg_reward_points_interval.0,
-    // );
-    // limits.insert(
-    //     "max_avg_reward_points".to_string(),
-    //     avg_reward_points_interval.1,
-    // );
-
-    // let total_stake_interval =
-    //     calculate_min_max_interval(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
-    // // let total_stake_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_TOTAL_STAKE_VALIDATORS).await?;
-    // limits.insert("min_total_stake".to_string(), total_stake_interval.0);
-    // limits.insert("max_total_stake".to_string(), total_stake_interval.1);
-
-    // let judgements_interval =
-    //     calculate_min_max_interval(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
-    // // let judgements_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_JUDGEMENTS_VALIDATORS).await?;
-    // limits.insert("min_judgements".to_string(), judgements_interval.0);
-    // limits.insert("max_judgements".to_string(), judgements_interval.1);
-
-    // let sub_accounts_interval =
-    //     calculate_min_max_interval(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
-    // // let sub_accounts_interval = calculate_confidence_interval_95(cache.clone(), sync::BOARD_SUB_ACCOUNTS_VALIDATORS).await?;
-    // limits.insert("min_sub_accounts".to_string(), sub_accounts_interval.0);
-    // limits.insert("max_sub_accounts".to_string(), sub_accounts_interval.1);
-
-    // let key_limits = sync::Key::BoardAtEra(era_index, format!("{}:limits", board_name));
-    // // Cache board limits
-    // let _: () = redis::cmd("HSET")
-    //     .arg(key_limits.to_string())
-    //     .arg(limits.clone())
-    //     .query_async(&mut conn as &mut Connection)
-    //     .await
-    //     .map_err(CacheError::RedisCMDError)?;
-
-    // Ok(limits.into())
 }

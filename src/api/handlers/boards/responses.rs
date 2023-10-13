@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::mcda::criterias::{CriteriaLimits, CriteriaWeights};
+use crate::mcda::criterias::{CriteriaFilters, CriteriaLimits, CriteriaWeights};
 use crate::records::EpochIndex;
 use serde::Serialize;
 use subxt::ext::sp_core::H256;
@@ -44,6 +44,7 @@ pub struct BoardResponse {
     pub addresses: Vec<String>,
     pub weights: CriteriaWeights,
     pub limits: CriteriaLimits,
+    pub filters: CriteriaFilters,
 }
 
 #[derive(Debug, Serialize, PartialEq)]

@@ -24,7 +24,7 @@ use crate::cache::{get_conn, CacheKey, Index, RedisPool};
 use crate::config::CONFIG;
 use crate::errors::{ApiError, CacheError};
 use crate::mcda::{
-    criterias::{CriteriaLimits, Intervals, Weights, CAPACITY, DECIMALS},
+    criterias::{CriteriaFilters, CriteriaLimits, Filters, Intervals, Weights},
     scores::{calculate_scores, scores_to_string},
 };
 use crate::records::EpochIndex;
@@ -32,14 +32,11 @@ use crate::records::ValidatorProfileRecord;
 use crate::{
     api::handlers::boards::{
         params::{get_board_hash_from_weights, Params, Quantity},
-        responses::{BoardsResponse, MetaResponse},
+        responses::BoardsResponse,
     },
     mcda::criterias::CriteriaWeights,
 };
-use actix_web::{
-    body::MessageBody,
-    web::{Data, Json, Path, Query},
-};
+use actix_web::web::{Data, Json, Query};
 use log::{debug, warn};
 use redis::aio::Connection;
 use std::{collections::BTreeMap, convert::TryInto, result::Result, str::FromStr};
@@ -99,10 +96,11 @@ async fn get_board_by_session(
     let board_key = CacheKey::NomiBoardBySessionAndHash(session_index, board_hash);
 
     // Generate leaderboard scores and cache it
-    let (weights, limits) = generate_board_scores(
+    let (weights, limits, filters) = generate_board_scores(
         session_index,
         &params.w,
         &params.i,
+        &params.f,
         &params.force,
         cache.clone(),
     )
@@ -118,6 +116,7 @@ async fn get_board_by_session(
             addresses: get_validators_stashes(board_key, params.n, cache.clone()).await?,
             limits,
             weights,
+            filters,
         }],
     })
 }
@@ -164,9 +163,10 @@ async fn generate_board_scores(
     session_index: EpochIndex,
     weights: &Weights,
     intervals: &Intervals,
+    filters: &Filters,
     force: &bool,
     cache: Data<RedisPool>,
-) -> Result<(CriteriaWeights, CriteriaLimits), ApiError> {
+) -> Result<(CriteriaWeights, CriteriaLimits, CriteriaFilters), ApiError> {
     let config = CONFIG.clone();
     let mut conn = get_conn(&cache).await?;
 
@@ -181,9 +181,13 @@ async fn generate_board_scores(
     let criteria_limits: CriteriaLimits = intervals.into();
     debug!("criteria_limits {:?}", criteria_limits);
 
+    // Convert user defined filters into limits to be able to filter out validators
+    let criteria_filters: CriteriaFilters = filters.into();
+    debug!("criteria_filters {:?}", criteria_filters);
+
     // If board is already cached do nothing
     if !force && is_board_cached(board_key.clone(), cache.clone()).await? {
-        return Ok((criteria_weights, criteria_limits));
+        return Ok((criteria_weights, criteria_limits, criteria_filters));
     }
 
     // Only generate board if data for the session is already available
@@ -212,6 +216,23 @@ async fn generate_board_scores(
             // If the validator does not accept nominations or is currently chilled
             // score is not given
             if validator.is_blocked || validator.is_chilled {
+                continue;
+            }
+
+            // Filter out user defined filters
+            if criteria_filters.is_active && !validator.is_active {
+                continue;
+            }
+
+            if criteria_filters.is_oversubscribed && !validator.is_oversubscribed {
+                continue;
+            }
+
+            if criteria_filters.is_identified && !validator.is_identified() {
+                continue;
+            }
+
+            if criteria_filters.is_tvp && !validator.is_tvp() {
                 continue;
             }
 
@@ -311,7 +332,7 @@ async fn generate_board_scores(
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-    Ok((criteria_weights, criteria_limits))
+    Ok((criteria_weights, criteria_limits, criteria_filters))
 }
 
 async fn is_board_cached(key: CacheKey, cache: Data<RedisPool>) -> Result<bool, ApiError> {

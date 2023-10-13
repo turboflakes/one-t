@@ -1390,6 +1390,14 @@ impl ValidatorProfileRecord {
         let base: u128 = 10_u128;
         (self.nominators_raw_stake / base.pow(chain_token_decimals - DECIMALS)) as u64
     }
+
+    pub fn is_tvp(&self) -> bool {
+        self.subset == Subset::TVP
+    }
+
+    pub fn is_identified(&self) -> bool {
+        self.identity.is_some()
+    }
 }
 
 impl Validity for ValidatorProfileRecord {
