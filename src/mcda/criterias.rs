@@ -22,9 +22,9 @@
 use crate::cache::{get_conn, CacheKey, RedisPool, Trait};
 use crate::errors::{CacheError, OnetError};
 use crate::records::EpochIndex;
-use log::{error, warn};
 use redis::aio::Connection;
 use serde::Serialize;
+use subxt::ext::sp_core::H256;
 
 /// NOTE: Assumption of the number of decimals in scores or limits
 pub const DECIMALS: u32 = 7;
@@ -93,19 +93,19 @@ pub type Filters = Vec<Filter>;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct CriteriaFilters {
-    pub is_active: Filter,
-    pub is_identified: Filter,
-    pub is_oversubscribed: Filter,
-    pub is_tvp: Filter,
+    pub only_active: Filter,
+    pub only_identified: Filter,
+    pub only_not_oversubscribed: Filter,
+    pub only_tvp: Filter,
 }
 
 impl From<&Filters> for CriteriaFilters {
     fn from(data: &Filters) -> Self {
         CriteriaFilters {
-            is_active: *data.get(0).unwrap_or(&(false)),
-            is_identified: *data.get(1).unwrap_or(&(false)),
-            is_oversubscribed: *data.get(2).unwrap_or(&(false)),
-            is_tvp: *data.get(3).unwrap_or(&(false)),
+            only_active: *data.get(0).unwrap_or(&(false)),
+            only_identified: *data.get(1).unwrap_or(&(false)),
+            only_not_oversubscribed: *data.get(2).unwrap_or(&(false)),
+            only_tvp: *data.get(3).unwrap_or(&(false)),
         }
     }
 }
@@ -265,4 +265,61 @@ pub async fn build_limits_from_session(
         nominators_counter: nominators_counter_interval,
         ..Default::default()
     })
+}
+
+pub fn criterias_hash(weights: &Weights, intervals: &Intervals, filters: &Filters) -> H256 {
+    let data = format!(
+        "{}|{}|{}",
+        weights.to_string(),
+        intervals.to_string(),
+        filters.to_string()
+    );
+    let hash = sp_core_hashing::blake2_256(data.as_bytes());
+    H256::from(&hash)
+}
+
+pub trait ToString {
+    fn to_string(&self) -> String;
+}
+
+impl ToString for Weights {
+    fn to_string(&self) -> String {
+        self.iter()
+            .enumerate()
+            .map(|(i, x)| {
+                if i == 0 {
+                    return format!("{}", x);
+                }
+                format!(",{}", x)
+            })
+            .collect()
+    }
+}
+
+impl ToString for Intervals {
+    fn to_string(&self) -> String {
+        self.iter()
+            .enumerate()
+            .map(|(i, x)| {
+                if i == 0 {
+                    return format!("{}", x);
+                }
+                format!(",{}", x)
+            })
+            .collect()
+    }
+}
+
+impl ToString for Filters {
+    fn to_string(&self) -> String {
+        self.iter()
+            .enumerate()
+            .map(|(i, x)| {
+                if i == 0 {
+                    return format!("{}", x);
+                }
+                format!(",{}", x)
+            })
+            .collect()
+    }
 }

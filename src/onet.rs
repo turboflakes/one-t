@@ -187,11 +187,6 @@ pub async fn create_or_await_substrate_node_client(
     }
 }
 
-pub enum SyncStatus {
-    Started = 1,
-    Finished = 2,
-}
-
 pub struct Onet {
     runtime: SupportedRuntime,
     client: OnlineClient<PolkadotConfig>,

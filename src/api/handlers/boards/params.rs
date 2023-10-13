@@ -21,9 +21,8 @@
 
 use crate::cache::Index;
 use crate::mcda::criterias::{
-    Filters, Interval, Intervals, Weights, DECIMALS, FILTERS_CAPACITY, WEIGHTS_CAPACITY,
+    Filters, Interval, Intervals, Weights, FILTERS_CAPACITY, WEIGHTS_CAPACITY,
 };
-use log::{error, warn};
 use serde::{de::Deserializer, Deserialize};
 use std::result::Result;
 use subxt::ext::sp_core::H256;
@@ -141,48 +140,4 @@ where
         }
         filters
     })
-}
-
-pub fn get_board_hash_from_weights(weights: &Weights, intervals: Option<&Intervals>) -> H256 {
-    match intervals {
-        Some(i) => {
-            if i.is_empty() {
-                let hash = sp_core_hashing::blake2_256(weights_to_string(weights).as_bytes());
-                return H256::from(&hash);
-            }
-            let data = format!("{}|{}", weights_to_string(weights), intervals_to_string(i));
-            let hash = sp_core_hashing::blake2_256(data.as_bytes());
-            H256::from(&hash)
-        }
-        None => {
-            let hash = sp_core_hashing::blake2_256(weights_to_string(weights).as_bytes());
-            H256::from(&hash)
-        }
-    }
-}
-
-fn weights_to_string(weights: &Weights) -> String {
-    weights
-        .iter()
-        .enumerate()
-        .map(|(i, x)| {
-            if i == 0 {
-                return x.to_string();
-            }
-            format!(",{}", x)
-        })
-        .collect()
-}
-
-fn intervals_to_string(intervals: &Intervals) -> String {
-    intervals
-        .iter()
-        .enumerate()
-        .map(|(i, x)| {
-            if i == 0 {
-                return format!("{}", x);
-            }
-            format!(",{}", x)
-        })
-        .collect()
 }

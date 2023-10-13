@@ -24,14 +24,14 @@ use crate::cache::{get_conn, CacheKey, Index, RedisPool};
 use crate::config::CONFIG;
 use crate::errors::{ApiError, CacheError};
 use crate::mcda::{
-    criterias::{CriteriaFilters, CriteriaLimits, Filters, Intervals, Weights},
+    criterias::{criterias_hash, CriteriaFilters, CriteriaLimits, Filters, Intervals, Weights},
     scores::{calculate_scores, scores_to_string},
 };
 use crate::records::EpochIndex;
 use crate::records::ValidatorProfileRecord;
 use crate::{
     api::handlers::boards::{
-        params::{get_board_hash_from_weights, Params, Quantity},
+        params::{Params, Quantity},
         responses::BoardsResponse,
     },
     mcda::criterias::CriteriaWeights,
@@ -39,7 +39,7 @@ use crate::{
 use actix_web::web::{Data, Json, Query};
 use log::{debug, warn};
 use redis::aio::Connection;
-use std::{collections::BTreeMap, convert::TryInto, result::Result, str::FromStr};
+use std::{collections::BTreeMap, result::Result, str::FromStr};
 use subxt::utils::AccountId32;
 
 use super::responses::BoardResponse;
@@ -92,7 +92,7 @@ async fn get_board_by_session(
 ) -> Result<Json<BoardsResponse>, ApiError> {
     // TODO: check if weights available in params
 
-    let board_hash = get_board_hash_from_weights(&params.w, Some(&params.i));
+    let board_hash = criterias_hash(&params.w, &params.i, &params.f);
     let board_key = CacheKey::NomiBoardBySessionAndHash(session_index, board_hash);
 
     // Generate leaderboard scores and cache it
@@ -170,7 +170,7 @@ async fn generate_board_scores(
     let config = CONFIG.clone();
     let mut conn = get_conn(&cache).await?;
 
-    let board_hash = get_board_hash_from_weights(&weights, Some(&intervals));
+    let board_hash = criterias_hash(&weights, &intervals, &filters);
     let board_key = CacheKey::NomiBoardBySessionAndHash(session_index, board_hash);
 
     // Convert user defined weights into criteria_weights
@@ -220,19 +220,19 @@ async fn generate_board_scores(
             }
 
             // Filter out user defined filters
-            if criteria_filters.is_active && !validator.is_active {
+            if criteria_filters.only_active && !validator.is_active {
                 continue;
             }
 
-            if criteria_filters.is_oversubscribed && !validator.is_oversubscribed {
+            if criteria_filters.only_not_oversubscribed && validator.is_oversubscribed {
                 continue;
             }
 
-            if criteria_filters.is_identified && !validator.is_identified() {
+            if criteria_filters.only_identified && !validator.is_identified() {
                 continue;
             }
 
-            if criteria_filters.is_tvp && !validator.is_tvp() {
+            if criteria_filters.only_tvp && !validator.is_tvp() {
                 continue;
             }
 
