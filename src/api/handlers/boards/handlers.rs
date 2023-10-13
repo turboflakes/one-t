@@ -175,9 +175,11 @@ async fn generate_board_scores(
 
     // Convert user defined weights into criteria_weights
     let criteria_weights: CriteriaWeights = weights.into();
+    debug!("criteria_weights {:?}", criteria_weights);
 
     // Convert user defined intervals into limits to be able to filter out validators
     let criteria_limits: CriteriaLimits = intervals.into();
+    debug!("criteria_limits {:?}", criteria_limits);
 
     // If board is already cached do nothing
     if !force && is_board_cached(board_key.clone(), cache.clone()).await? {
@@ -207,9 +209,9 @@ async fn generate_board_scores(
             .await
         {
             let validator = ValidatorProfileRecord::from(serialized_data);
-            // If the validator does not accept nominations
+            // If the validator does not accept nominations or is currently chilled
             // score is not given
-            if validator.is_blocked {
+            if validator.is_blocked || validator.is_chilled {
                 continue;
             }
 
@@ -230,6 +232,20 @@ async fn generate_board_scores(
 
             if validator.own_stake_trimmed(chain_token_decimals) < criteria_limits.own_stake.min
                 || validator.own_stake_trimmed(chain_token_decimals) > criteria_limits.own_stake.max
+            {
+                continue;
+            }
+
+            if validator.nominators_stake_trimmed(chain_token_decimals)
+                < criteria_limits.nominators_stake.min
+                || validator.nominators_stake_trimmed(chain_token_decimals)
+                    > criteria_limits.nominators_stake.max
+            {
+                continue;
+            }
+
+            if validator.nominators_counter < criteria_limits.nominators_counter.min as u128
+                || validator.nominators_counter > criteria_limits.nominators_counter.max as u128
             {
                 continue;
             }

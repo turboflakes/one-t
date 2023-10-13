@@ -19,22 +19,18 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::cache::{get_conn, CacheKey, RedisConn, RedisPool, Trait};
+use crate::cache::{get_conn, CacheKey, RedisPool, Trait};
 use crate::errors::{CacheError, OnetError};
 use crate::records::EpochIndex;
 use log::{error, warn};
 use redis::aio::Connection;
-use serde::{de::Deserializer, Deserialize, Serialize};
-use std::{collections::BTreeMap, str::FromStr};
+use serde::Serialize;
 
 /// NOTE: Assumption of the number of decimals in scores or limits
 pub const DECIMALS: u32 = 7;
 
 /// Current weighs and limits capacity
-pub const CAPACITY: usize = 2;
-
-// TODO: get this constants from chain
-const NOMINATORS_OVERSUBSCRIBED_THRESHOLD: u32 = 256;
+pub const CAPACITY: usize = 4;
 
 /// Weight can be any value in a 10-point scale. Higher the weight more important
 /// is the criteria to the user
@@ -44,16 +40,14 @@ type Weight = u8;
 /// the weight for the respective criteria
 /// Position 0 - Lower Commission is preferrable
 /// Position 1 - Higher own stake is preferrable
-///
-///
+/// Position 2 - Higher Nominators stake is preferrable (limit to 256 -> oversubscribed)
+/// Position 3 - Lower Nominators is preferrable
 ///
 /// TODO:
 /// Position 1 - Higher Inclusion rate is preferrable
-/// Position 2 - Lower Nominators is preferrable (limit to 256 -> oversubscribed)
 /// Position 3 - Higher Reward Points is preferrable
 /// Position 4 - If reward is staked is preferrable
 /// Position 5 - If in active set is preferrable
-/// Position 7 - Lower total stake is preferrable
 /// Position 8 - Higher number of Reasonable or KnownGood judgements is preferrable
 /// Position 9 - Lower number of sub-accounts is preferrable
 pub type Weights = Vec<Weight>;
@@ -62,6 +56,8 @@ pub type Weights = Vec<Weight>;
 pub struct CriteriaWeights {
     pub commission: Weight,
     pub own_stake: Weight,
+    pub nominators_stake: Weight,
+    pub nominators_counter: Weight,
 }
 
 impl From<&Weights> for CriteriaWeights {
@@ -69,6 +65,8 @@ impl From<&Weights> for CriteriaWeights {
         CriteriaWeights {
             commission: *data.get(0).unwrap_or(&0),
             own_stake: *data.get(1).unwrap_or(&0),
+            nominators_stake: *data.get(2).unwrap_or(&0),
+            nominators_counter: *data.get(3).unwrap_or(&0),
         }
     }
 }

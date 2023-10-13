@@ -77,6 +77,23 @@ pub fn calculate_scores(
             limits.own_stake.max,
         ) * weights.own_stake as u64,
     );
+
+    scores.push(
+        normalize_value(
+            validator.nominators_stake as u64,
+            limits.nominators_stake.min,
+            limits.nominators_stake.max,
+        ) * weights.nominators_stake as u64,
+    );
+
+    scores.push(
+        reverse_normalize_value(
+            validator.nominators_counter as u64,
+            limits.nominators_counter.min,
+            limits.nominators_counter.max,
+        ) * weights.nominators_counter as u64,
+    );
+
     // scores.push(
     //     normalize_value(
     //         validator.inclusion_rate as f64,
