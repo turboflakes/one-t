@@ -146,18 +146,50 @@ impl std::fmt::Display for Glyph {
     }
 }
 
-pub fn grade(ratio: f64) -> String {
+#[derive(Serialize, Deserialize, Debug, Clone, Hash, Eq, PartialEq, PartialOrd, Default)]
+pub enum Grade {
+    Ap,
+    A,
+    Bp,
+    B,
+    Cp,
+    C,
+    Dp,
+    D,
+    F,
+    #[default]
+    NA,
+}
+
+impl std::fmt::Display for Grade {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ap => write!(f, "A+"),
+            Self::A => write!(f, "A"),
+            Self::Bp => write!(f, "B+"),
+            Self::B => write!(f, "B"),
+            Self::Cp => write!(f, "C+"),
+            Self::C => write!(f, "C"),
+            Self::Dp => write!(f, "D+"),
+            Self::D => write!(f, "D"),
+            Self::F => write!(f, "F"),
+            Self::NA => write!(f, "-"),
+        }
+    }
+}
+
+pub fn grade(ratio: f64) -> Grade {
     let p = (ratio * 10000.0).round() as u32;
     match p {
-        9901..=10000 => "A+".to_string(),
-        9501..=9900 => "A".to_string(),
-        9001..=9500 => "B+".to_string(),
-        8001..=9000 => "B".to_string(),
-        7001..=8000 => "C+".to_string(),
-        6001..=7000 => "C".to_string(),
-        5001..=6000 => "D+".to_string(),
-        4001..=5000 => "D".to_string(),
-        _ => "F".to_string(),
+        9901..=10000 => Grade::Ap,
+        9501..=9900 => Grade::A,
+        9001..=9500 => Grade::Bp,
+        8001..=9000 => Grade::B,
+        7001..=8000 => Grade::Cp,
+        6001..=7000 => Grade::C,
+        5001..=6000 => Grade::Dp,
+        4001..=5000 => Grade::D,
+        _ => Grade::F,
     }
 }
 
@@ -363,9 +395,9 @@ impl Records {
                         let mvr = mv as f64 / (tv + mv) as f64;
                         // Identify failed and exceptional epochs
                         let grade = grade(1.0 - mvr);
-                        if grade == "F" {
+                        if grade == Grade::F {
                             flagged_epochs += 1;
-                        } else if grade == "A+" {
+                        } else if grade == Grade::Ap {
                             exceptional_epochs += 1;
                         }
                         total_votes += tv;

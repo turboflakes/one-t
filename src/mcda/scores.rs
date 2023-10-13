@@ -22,7 +22,6 @@
 use crate::errors::ApiError;
 use crate::mcda::criterias::{CriteriaLimits, CriteriaWeights, DECIMALS, WEIGHTS_CAPACITY};
 use crate::records::ValidatorProfileRecord;
-use log::{error, warn};
 use std::result::Result;
 
 // Maximum normalization value

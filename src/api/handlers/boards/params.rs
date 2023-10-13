@@ -25,7 +25,6 @@ use crate::mcda::criterias::{
 };
 use serde::{de::Deserializer, Deserialize};
 use std::result::Result;
-use subxt::ext::sp_core::H256;
 
 // Number of elements to return
 pub type Quantity = u32;
