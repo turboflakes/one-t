@@ -40,7 +40,7 @@ use actix_web::{
     body::MessageBody,
     web::{Data, Json, Path, Query},
 };
-use log::{error, warn};
+use log::{debug, warn};
 use redis::aio::Connection;
 use std::{collections::BTreeMap, convert::TryInto, result::Result, str::FromStr};
 use subxt::utils::AccountId32;
