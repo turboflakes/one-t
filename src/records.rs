@@ -1379,17 +1379,18 @@ impl ValidatorProfileRecord {
         (self.own_stake / base.pow(chain_token_decimals - DECIMALS)) as u64
     }
 
-    pub fn add_nominators_stake(&mut self, stake: u128) {
-        self.nominators_stake += stake;
+    pub fn nominators_stake_trimmed(&self, chain_token_decimals: u32) -> u64 {
+        use crate::mcda::criterias::DECIMALS;
+        let base: u128 = 10_u128;
+        (self.nominators_stake / base.pow(chain_token_decimals - DECIMALS)) as u64
     }
 
-    pub fn add_nominators_raw_stake(&mut self, stake: u128) {
-        self.nominators_raw_stake += stake;
+    pub fn nominators_raw_stake_trimmed(&self, chain_token_decimals: u32) -> u64 {
+        use crate::mcda::criterias::DECIMALS;
+        let base: u128 = 10_u128;
+        (self.nominators_raw_stake / base.pow(chain_token_decimals - DECIMALS)) as u64
     }
 
-    pub fn inc_nominators(&mut self) {
-        self.nominators_counter += 1;
-    }
 }
 
 impl Validity for ValidatorProfileRecord {

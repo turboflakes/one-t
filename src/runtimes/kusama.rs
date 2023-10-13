@@ -3078,7 +3078,7 @@ pub async fn cache_session_stats_records(
                         .cmd("EXPIRE")
                         .arg(CacheKey::ValidatorAccountsBySession(epoch_index))
                         .arg(config.cache_writer_prunning)
-                        // cache own_stake
+                        // cache own_stake rank
                         .cmd("ZADD")
                         .arg(CacheKey::NomiBoardBySessionAndTrait(
                             epoch_index,
@@ -3093,6 +3093,23 @@ pub async fn cache_session_stats_records(
                         .arg(CacheKey::NomiBoardBySessionAndTrait(
                             epoch_index,
                             Trait::OwnStake,
+                        ))
+                        .arg(config.cache_writer_prunning)
+                        // cache nominators_stake rank
+                        .cmd("ZADD")
+                        .arg(CacheKey::NomiBoardBySessionAndTrait(
+                            epoch_index,
+                            Trait::NominatorsStake,
+                        ))
+                        .arg(
+                            v.nominators_stake_trimmed(network.token_decimals as u32)
+                                .to_string(),
+                        ) // score
+                        .arg(stash.to_string())
+                        .cmd("EXPIRE")
+                        .arg(CacheKey::NomiBoardBySessionAndTrait(
+                            epoch_index,
+                            Trait::NominatorsStake,
                         ))
                         .arg(config.cache_writer_prunning) // member
                         .query_async(&mut cache as &mut Connection)
@@ -3290,8 +3307,7 @@ pub async fn cache_session_stats_records(
                 start.elapsed()
             );
         }
-        // Fetch nominators data
-
+        
         // Set synced session associated with era (useful for nomi boards)
         let mut era_data: BTreeMap<String, String> = BTreeMap::new();
         era_data.insert(String::from("synced_session"), epoch_index.to_string());

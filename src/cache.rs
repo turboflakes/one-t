@@ -85,12 +85,14 @@ pub type QueryString = String;
 #[derive(Clone, Eq, Hash, PartialEq, Debug)]
 pub enum Trait {
     OwnStake,
+    NominatorsStake,
 }
 
 impl std::fmt::Display for Trait {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::OwnStake => write!(f, "t:own_stake"),
+            Self::NominatorsStake => write!(f, "t:nom_stake"),
         }
     }
 }
