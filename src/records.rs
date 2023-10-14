@@ -1377,12 +1377,14 @@ pub struct ValidatorProfileRecord {
     pub nominators_counter: u128,
     pub points: u32,
     pub subset: Subset,
+    // MVR is calculated based on the mvr from previous sessions and the latest obtained
+    pub mvr: Option<u64>,
+    // mvr_session contains the session from where the mvr was last updated
+    pub mvr_session: Option<EpochIndex>,
     pub is_oversubscribed: bool,
     pub is_active: bool,
     pub is_chilled: bool,
     pub is_blocked: bool,
-    // TODO:
-    // pub latest_grade: u128,
 }
 
 impl ValidatorProfileRecord {
@@ -1398,6 +1400,8 @@ impl ValidatorProfileRecord {
             nominators_counter: 0,
             points: 0,
             subset: Subset::NONTVP,
+            mvr: None,
+            mvr_session: None,
             is_oversubscribed: false,
             is_active: false,
             is_chilled: false,

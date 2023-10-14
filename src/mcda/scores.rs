@@ -29,7 +29,7 @@ const NMAX: u64 = 10000000;
 // Minimum normalization value
 const NMIN: u64 = 0;
 
-fn base_decimals() -> u64 {
+pub fn base_decimals() -> u64 {
     let base = 10_u64;
     base.pow(DECIMALS)
 }

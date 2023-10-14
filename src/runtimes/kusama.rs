@@ -29,7 +29,7 @@ use crate::onet::{
     write_latest_block_number_processed, Onet, ReportType, EPOCH_FILENAME,
 };
 use crate::records::{
-    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EpochKey, EraIndex, Identity,
+    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EpochKey, EraIndex, Grade, Identity,
     NetworkSessionStats, ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records,
     SessionStats, Subscribers, SubsetStats, ValidatorProfileRecord,
 };
@@ -3043,6 +3043,17 @@ pub async fn cache_session_stats_records(
                     // check if is in active set
                     v.is_active = authorities.contains(&stash);
 
+                    // calculate session mvr and avg with previous value
+                    v.mvr = try_calculate_avg_mvr_by_session_and_stash(
+                        &onet,
+                        epoch_index,
+                        stash.clone(),
+                    )
+                    .await?;
+                    if v.mvr.is_some() {
+                        v.mvr_session = Some(epoch_index);
+                    }
+
                     // check if block nominations
                     v.is_blocked = validator_prefs.blocked;
 
@@ -3406,4 +3417,80 @@ async fn collect_nominators_data(
         start.elapsed()
     );
     Ok(nominators_map)
+}
+
+pub async fn try_calculate_avg_mvr_by_session_and_stash(
+    onet: &Onet,
+    session_index: EpochIndex,
+    stash: AccountId32,
+) -> Result<Option<u64>, OnetError> {
+    let mut conn = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+    if let Ok(serialized_data) = redis::cmd("GET")
+        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+        .query_async::<Connection, String>(&mut conn as &mut Connection)
+        .await
+    {
+        let v: ValidatorProfileRecord = serde_json::from_str(&serialized_data).unwrap_or_default();
+        match v.mvr {
+            Some(previous_mvr) => {
+                if let Some(latest_mvr) =
+                    calculate_mvr_by_session_and_stash(&onet, session_index, stash.clone()).await?
+                {
+                    return Ok(Some((previous_mvr + latest_mvr) / 2));
+                }
+                return Ok(Some(previous_mvr));
+            }
+            None => {
+                return calculate_mvr_by_session_and_stash(&onet, session_index, stash.clone())
+                    .await
+            }
+        }
+    };
+
+    calculate_mvr_by_session_and_stash(&onet, session_index, stash.clone()).await
+}
+
+pub async fn calculate_mvr_by_session_and_stash(
+    onet: &Onet,
+    session_index: EpochIndex,
+    stash: AccountId32,
+) -> Result<Option<u64>, OnetError> {
+    let mut conn = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+    use crate::api::responses::{AuthorityKey, AuthorityKeyCache};
+    use crate::mcda::scores::base_decimals;
+
+    let authority_key_data: AuthorityKeyCache = redis::cmd("HGETALL")
+        .arg(CacheKey::AuthorityKeyByAccountAndSession(
+            stash.clone(),
+            session_index,
+        ))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    let auth_key: AuthorityKey = authority_key_data.clone().into();
+
+    let serialized: String = redis::cmd("HGET")
+        .arg(CacheKey::AuthorityRecordVerbose(
+            auth_key.to_string(),
+            Verbosity::Summary,
+        ))
+        .arg("para_summary".to_string())
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    let para_summary: ParaStats = serde_json::from_str(&serialized).unwrap_or_default();
+
+    let denominator =
+        para_summary.explicit_votes + para_summary.implicit_votes + para_summary.missed_votes;
+    if denominator > 0 {
+        return Ok(Some(
+            (base_decimals() * para_summary.missed_votes as u64) / denominator as u64,
+        ));
+    };
+
+    Ok(None)
 }
