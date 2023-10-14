@@ -3136,6 +3136,24 @@ pub async fn cache_session_stats_records(
                             epoch_index,
                             Trait::NominatorsCounter,
                         ))
+                        .arg(config.cache_writer_prunning)
+                        // cache mvr rank
+                        .cmd("ZADD")
+                        .arg(CacheKey::NomiBoardBySessionAndTrait(
+                            epoch_index,
+                            Trait::Mvr,
+                        ))
+                        .arg(if v.mvr.is_some() {
+                            v.mvr.unwrap().to_string()
+                        } else {
+                            "-".to_string()
+                        }) // score
+                        .arg(stash.to_string())
+                        .cmd("EXPIRE")
+                        .arg(CacheKey::NomiBoardBySessionAndTrait(
+                            epoch_index,
+                            Trait::Mvr,
+                        ))
                         .arg(config.cache_writer_prunning) // member
                         .query_async(&mut cache as &mut Connection)
                         .await
