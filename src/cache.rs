@@ -87,7 +87,6 @@ pub enum Trait {
     OwnStake,
     NominatorsStake,
     NominatorsCounter,
-    Mvr,
 }
 
 impl std::fmt::Display for Trait {
@@ -96,7 +95,6 @@ impl std::fmt::Display for Trait {
             Self::OwnStake => write!(f, "t:own_stake"),
             Self::NominatorsStake => write!(f, "t:nom_stake"),
             Self::NominatorsCounter => write!(f, "t:nom_counter"),
-            Self::Mvr => write!(f, "t:mvr"),
         }
     }
 }

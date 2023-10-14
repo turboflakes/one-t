@@ -22,6 +22,7 @@
 use crate::cache::{get_conn, CacheKey, RedisPool, Trait};
 use crate::errors::{CacheError, OnetError};
 use crate::records::EpochIndex;
+use crate::mcda::scores::base_decimals;
 use redis::aio::Connection;
 use serde::Serialize;
 use subxt::ext::sp_core::H256;
@@ -30,7 +31,7 @@ use subxt::ext::sp_core::H256;
 pub const DECIMALS: u32 = 7;
 
 /// Current weighs and limits capacity
-pub const WEIGHTS_CAPACITY: usize = 4;
+pub const WEIGHTS_CAPACITY: usize = 5;
 
 /// Weights represent an array of points, where the points in each position represents
 /// the weight for the respective criteria
@@ -39,15 +40,15 @@ pub const WEIGHTS_CAPACITY: usize = 4;
 /// Position 1 - Higher own stake is preferrable
 /// Position 2 - Higher Nominators stake is preferrable (limit to 256 -> oversubscribed)
 /// Position 3 - Lower Nominators is preferrable
+/// Position 4 - Lower MVR is preferrable (MVR = Missed Votes Ratio)
 ///
 /// UNDER CONSIDERATION
-/// - grade
 ///
 /// NICE TO HAVE:
 /// - Higher Inclusion rate is preferrable
 /// - Higher number of Reasonable or KnownGood judgements is preferrable
 /// - Lower number of sub-accounts is preferrable
-///
+/// - Validator Continent/Country location
 ///
 /// Weight can be any value in a 10-point scale. Higher the weight more important
 /// is the criteria to the user
@@ -61,6 +62,7 @@ pub struct CriteriaWeights {
     pub own_stake: Weight,
     pub nominators_stake: Weight,
     pub nominators_counter: Weight,
+    pub mvr: Weight,
 }
 
 impl From<&Weights> for CriteriaWeights {
@@ -70,6 +72,7 @@ impl From<&Weights> for CriteriaWeights {
             own_stake: *data.get(1).unwrap_or(&0),
             nominators_stake: *data.get(2).unwrap_or(&0),
             nominators_counter: *data.get(3).unwrap_or(&0),
+            mvr: *data.get(4).unwrap_or(&0),
         }
     }
 }
@@ -139,19 +142,23 @@ pub struct CriteriaLimits {
     pub own_stake: Interval,
     pub nominators_stake: Interval,
     pub nominators_counter: Interval,
+    pub mvr: Interval,
 }
 
 impl Default for CriteriaLimits {
     fn default() -> CriteriaLimits {
-        let base = 10_u64;
         CriteriaLimits {
             commission: Interval {
                 min: 0,
-                max: 100 * base.pow(DECIMALS),
+                max: 100 * base_decimals(),
             },
             own_stake: Interval::default(),
             nominators_stake: Interval::default(),
             nominators_counter: Interval::default(),
+            mvr: Interval {
+                min: 0,
+                max: base_decimals(),
+            },
         }
     }
 }
@@ -161,11 +168,12 @@ impl std::fmt::Display for CriteriaLimits {
         // Note: the position of the traits is important, it should be the same as the position in weights
         write!(
             f,
-            "{},{},{},{}",
+            "{},{},{},{},{}",
             self.commission.to_string(),
             self.own_stake.to_string(),
             self.nominators_stake.to_string(),
             self.nominators_counter.to_string(),
+            self.mvr.to_string(),
         )
     }
 }
@@ -177,6 +185,7 @@ impl From<&Intervals> for CriteriaLimits {
             own_stake: *data.get(1).unwrap_or(&Interval::default()),
             nominators_stake: *data.get(2).unwrap_or(&Interval::default()),
             nominators_counter: *data.get(3).unwrap_or(&Interval::default()),
+            mvr: *data.get(4).unwrap_or(&Interval::default()),
         }
     }
 }

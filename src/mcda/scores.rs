@@ -93,50 +93,17 @@ pub fn calculate_scores(
         ) * weights.nominators_counter as u64,
     );
 
-    // scores.push(
-    //     normalize_value(
-    //         validator.inclusion_rate as f64,
-    //         limits.inclusion_rate.min,
-    //         limits.inclusion_rate.max,
-    //     ) * weights[0] as f64,
-    // );
-    // scores.push(
-    //     reverse_normalize_value(
-    //         validator.nominators as f64,
-    //         limits.nominators.min,
-    //         limits.nominators.max,
-    //     ) * weights[2] as f64,
-    // );
-    // scores.push(
-    //     normalize_value(
-    //         validator.avg_reward_points,
-    //         limits.avg_reward_points.min,
-    //         limits.avg_reward_points.max,
-    //     ) * weights[3] as f64,
-    // );
-    // scores.push(normalize_flag(validator.reward_staked) * weights[4] as f64);
-    // scores.push(normalize_flag(validator.active) * weights[5] as f64);
-    // scores.push(
-    //     reverse_normalize_value(
-    //         (validator.own_stake + validator.nominators_stake) as f64,
-    //         limits.total_stake.min,
-    //         limits.total_stake.max,
-    //     ) * weights[7] as f64,
-    // );
-    // scores.push(
-    //     normalize_value(
-    //         validator.judgements as f64,
-    //         limits.judgements.min,
-    //         limits.judgements.max,
-    //     ) * weights[8] as f64,
-    // );
-    // scores.push(
-    //     reverse_normalize_value(
-    //         validator.sub_accounts as f64,
-    //         limits.sub_accounts.min,
-    //         limits.sub_accounts.max,
-    //     ) * weights[9] as f64,
-    // );
+    scores.push(
+        if let Some(mvr) = validator.mvr {
+            reverse_normalize_value(
+                mvr,
+                limits.mvr.min,
+                limits.mvr.max,
+            ) * weights.mvr as u64
+        } else {
+            0
+        }
+    );
 
     Ok(scores)
 }
