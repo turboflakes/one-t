@@ -21,7 +21,7 @@
 
 use crate::api::handlers::{
     blocks::{get_best_block, get_block_by_number, get_blocks, get_finalized_block},
-    boards::handlers::get_boards,
+    boards::handlers::{get_boards, get_criteria_limits},
     health::get_health,
     info::get_info,
     parachains::get_parachains,
@@ -91,6 +91,11 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
                         .route("", web::get().to(get_pools)),
                 )
                 // BOARD routes
-                .service(web::scope("/boards").route("", web::get().to(get_boards))),
+                .service(
+                    web::scope("/boards")
+                        .route("/limits", web::get().to(get_criteria_limits))
+                        // TODO .route("/{id}", web::get().to(get_board))
+                        .route("", web::get().to(get_boards)),
+                ),
         );
 }

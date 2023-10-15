@@ -93,17 +93,11 @@ pub fn calculate_scores(
         ) * weights.nominators_counter as u64,
     );
 
-    scores.push(
-        if let Some(mvr) = validator.mvr {
-            reverse_normalize_value(
-                mvr,
-                limits.mvr.min,
-                limits.mvr.max,
-            ) * weights.mvr as u64
-        } else {
-            0
-        }
-    );
+    scores.push(if let Some(mvr) = validator.mvr {
+        reverse_normalize_value(mvr, limits.mvr.min, limits.mvr.max) * weights.mvr as u64
+    } else {
+        0
+    });
 
     Ok(scores)
 }

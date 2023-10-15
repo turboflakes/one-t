@@ -25,20 +25,20 @@ use serde::Serialize;
 use subxt::ext::sp_core::H256;
 
 #[derive(Debug, Serialize, PartialEq)]
-pub struct MetaResponse {
+pub struct MetaResult {
     pub limits: String,
 }
 
-impl Default for MetaResponse {
-    fn default() -> MetaResponse {
-        MetaResponse {
+impl Default for MetaResult {
+    fn default() -> MetaResult {
+        MetaResult {
             limits: String::default(),
         }
     }
 }
 
 #[derive(Debug, Serialize, PartialEq)]
-pub struct BoardResponse {
+pub struct BoardResult {
     pub id: H256,
     pub session: EpochIndex,
     pub addresses: Vec<String>,
@@ -48,6 +48,18 @@ pub struct BoardResponse {
 }
 
 #[derive(Debug, Serialize, PartialEq)]
-pub struct BoardsResponse {
-    pub data: Vec<BoardResponse>,
+pub struct BoardsResult {
+    pub data: Vec<BoardResult>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct LimitsResult {
+    pub session: EpochIndex,
+    pub limits: CriteriaLimits,
+}
+
+impl From<String> for CriteriaLimits {
+    fn from(serialized_data: String) -> Self {
+        serde_json::from_str(&serialized_data).unwrap_or_default()
+    }
 }

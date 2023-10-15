@@ -21,10 +21,10 @@
 
 use crate::cache::{get_conn, CacheKey, RedisPool, Trait};
 use crate::errors::{CacheError, OnetError};
-use crate::records::EpochIndex;
 use crate::mcda::scores::base_decimals;
+use crate::records::EpochIndex;
 use redis::aio::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use subxt::ext::sp_core::H256;
 
 /// NOTE: Assumption of the number of decimals in scores or limits
@@ -116,7 +116,7 @@ impl From<&Filters> for CriteriaFilters {
 // NOTE: Intervals are considered unsigned integers bringing a 7 decimals representation
 // ex1: 20% = 200000000
 // ex2: 121.34 DOTs = 1213400000
-#[derive(Debug, Serialize, PartialEq, Copy, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Copy, Clone)]
 pub struct Interval {
     pub min: u64,
     pub max: u64,
@@ -136,7 +136,7 @@ impl std::fmt::Display for Interval {
 
 pub type Intervals = Vec<Interval>;
 
-#[derive(Debug, Serialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct CriteriaLimits {
     pub commission: Interval,
     pub own_stake: Interval,

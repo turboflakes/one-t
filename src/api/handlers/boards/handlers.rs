@@ -32,7 +32,7 @@ use crate::records::ValidatorProfileRecord;
 use crate::{
     api::handlers::boards::{
         params::{Params, Quantity},
-        responses::BoardsResponse,
+        responses::{BoardResult, BoardsResult, LimitsResult},
     },
     mcda::criterias::CriteriaWeights,
 };
@@ -42,14 +42,41 @@ use redis::aio::Connection;
 use std::{collections::BTreeMap, result::Result, str::FromStr};
 use subxt::utils::AccountId32;
 
-use super::responses::BoardResponse;
-
-/// Get a list of validators (board) based on weights and intervals per era
+/// Get a list of validators (board) based on weights, intervals and filters per session
 pub async fn get_boards(
     params: Query<Params>,
     cache: Data<RedisPool>,
-) -> Result<Json<BoardsResponse>, ApiError> {
-    let requested_session_index: EpochIndex = match &params.session {
+) -> Result<Json<BoardsResult>, ApiError> {
+    let session_index = get_requested_session(params.clone(), cache.clone()).await?;
+
+    get_board_by_session(session_index, params, cache).await
+}
+
+/// Get traits upper and lower limits per session
+pub async fn get_criteria_limits(
+    params: Query<Params>,
+    cache: Data<RedisPool>,
+) -> Result<Json<LimitsResult>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+    let session_index = get_requested_session(params.clone(), cache.clone()).await?;
+    let serialized_data: String = redis::cmd("HGET")
+        .arg(CacheKey::NomiBoardEraBySession(session_index))
+        .arg(String::from("limits"))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    respond_json(LimitsResult {
+        session: session_index,
+        limits: serialized_data.into(),
+    })
+}
+
+async fn get_requested_session(
+    params: Query<Params>,
+    cache: Data<RedisPool>,
+) -> Result<EpochIndex, ApiError> {
+    let session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
             if String::from("current") == *index {
                 get_latest_synced_session(cache.clone()).await?
@@ -60,7 +87,7 @@ pub async fn get_boards(
         _ => get_latest_synced_session(cache.clone()).await?,
     };
 
-    return get_board_by_session(requested_session_index, params, cache).await;
+    Ok(session_index)
 }
 
 async fn get_latest_synced_session(cache: Data<RedisPool>) -> Result<EpochIndex, ApiError> {
@@ -89,7 +116,7 @@ async fn get_board_by_session(
     session_index: EpochIndex,
     params: Query<Params>,
     cache: Data<RedisPool>,
-) -> Result<Json<BoardsResponse>, ApiError> {
+) -> Result<Json<BoardsResult>, ApiError> {
     // TODO: check if weights available in params
 
     let board_hash = criterias_hash(&params.w, &params.i, &params.f);
@@ -109,8 +136,8 @@ async fn get_board_by_session(
     // Increase board stats counter
     increase_board_stats(board_key.clone(), cache.clone()).await?;
 
-    respond_json(BoardsResponse {
-        data: vec![BoardResponse {
+    respond_json(BoardsResult {
+        data: vec![BoardResult {
             id: board_hash,
             session: session_index,
             addresses: get_validators_stashes(board_key, params.n, cache.clone()).await?,
