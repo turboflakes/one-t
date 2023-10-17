@@ -1377,7 +1377,7 @@ pub struct ValidatorProfileRecord {
     pub nominators_counter: u128,
     pub points: u32,
     pub subset: Subset,
-    // MVR is calculated based on the mvr from previous sessions and the latest obtained
+    // mvr is calculated based on the mvr from previous sessions and the latest obtained
     pub mvr: Option<u64>,
     // mvr_session contains the session from where the mvr was last updated
     pub mvr_session: Option<EpochIndex>,

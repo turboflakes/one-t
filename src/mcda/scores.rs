@@ -42,7 +42,7 @@ fn normalize_value(value: u64, min: u64, max: u64) -> u64 {
     if value > max {
         return NMAX;
     }
-    (((value - min) * base_decimals()) as u128 / (max - min) as u128) as u64
+    (((value - min) as u128 * base_decimals() as u128) / (max - min) as u128) as u64
 }
 
 /// Reverse normalization

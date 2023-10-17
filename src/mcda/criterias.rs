@@ -325,9 +325,9 @@ impl ToString for Filters {
             .enumerate()
             .map(|(i, x)| {
                 if i == 0 {
-                    return format!("{}", x);
+                    return format!("{}", *x as i32);
                 }
-                format!(",{}", x)
+                format!(",{}", *x as i32)
             })
             .collect()
     }

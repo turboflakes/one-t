@@ -138,7 +138,7 @@ async fn get_board_by_session(
 
     respond_json(BoardsResult {
         data: vec![BoardResult {
-            id: board_hash,
+            hash: board_hash,
             session: session_index,
             addresses: get_validators_stashes(board_key, params.n, cache.clone()).await?,
             limits,
@@ -295,6 +295,18 @@ async fn generate_board_scores(
             if validator.nominators_counter < criteria_limits.nominators_counter.min as u128
                 || validator.nominators_counter > criteria_limits.nominators_counter.max as u128
             {
+                continue;
+            }
+
+            if let Some(mvr) = validator.mvr {
+                if mvr < criteria_limits.mvr.min || mvr > criteria_limits.mvr.max {
+                    continue;
+                }
+            }
+
+            // NOTE: Skip validators that have not been active or performance was not evaluated in the last 32 eras
+            // when user weights performance higher than 0
+            if criteria_weights.mvr > 0 && validator.mvr.is_none() {
                 continue;
             }
 

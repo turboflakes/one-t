@@ -39,7 +39,7 @@ impl Default for MetaResult {
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct BoardResult {
-    pub id: H256,
+    pub hash: H256,
     pub session: EpochIndex,
     pub addresses: Vec<String>,
     pub weights: CriteriaWeights,
