@@ -27,8 +27,7 @@ use crate::mcda::{
     criterias::{criterias_hash, CriteriaFilters, CriteriaLimits, Filters, Intervals, Weights},
     scores::{calculate_scores, scores_to_string},
 };
-use crate::records::EpochIndex;
-use crate::records::ValidatorProfileRecord;
+use crate::records::{BlockNumber, EpochIndex, ValidatorProfileRecord};
 use crate::{
     api::handlers::boards::{
         params::{Params, Quantity},
@@ -59,6 +58,7 @@ pub async fn get_criteria_limits(
 ) -> Result<Json<LimitsResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
     let session_index = get_requested_session(params.clone(), cache.clone()).await?;
+    let block_number = get_synced_block_number_by_session(session_index, cache.clone()).await?;
     let serialized_data: String = redis::cmd("HGET")
         .arg(CacheKey::NomiBoardEraBySession(session_index))
         .arg(String::from("limits"))
@@ -68,6 +68,7 @@ pub async fn get_criteria_limits(
 
     respond_json(LimitsResult {
         session: session_index,
+        block_number,
         limits: serialized_data.into(),
     })
 }
@@ -111,7 +112,31 @@ async fn get_latest_synced_session(cache: Data<RedisPool>) -> Result<EpochIndex,
     Ok(session_index)
 }
 
-/// Get validators
+async fn get_synced_block_number_by_session(
+    session_index: EpochIndex,
+    cache: Data<RedisPool>,
+) -> Result<BlockNumber, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+
+    // get current era
+    let era_index: u64 = redis::cmd("HGET")
+        .arg(CacheKey::SessionByIndex(Index::Num(session_index.into())))
+        .arg(String::from("era".to_string()))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    // get latest synced session from current era
+    let block_number: u64 = redis::cmd("HGET")
+        .arg(CacheKey::EraByIndex(Index::Num(era_index)))
+        .arg(String::from(format!("synced_at_block:{}", session_index)))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(block_number)
+}
+
 async fn get_board_by_session(
     session_index: EpochIndex,
     params: Query<Params>,
@@ -133,6 +158,8 @@ async fn get_board_by_session(
     )
     .await?;
 
+    let block_number = get_synced_block_number_by_session(session_index, cache.clone()).await?;
+
     // Increase board stats counter
     increase_board_stats(board_key.clone(), cache.clone()).await?;
 
@@ -140,6 +167,7 @@ async fn get_board_by_session(
         data: vec![BoardResult {
             hash: board_hash,
             session: session_index,
+            block_number,
             addresses: get_validators_stashes(board_key, params.n, cache.clone()).await?,
             limits,
             weights,

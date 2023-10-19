@@ -20,7 +20,7 @@
 // SOFTWARE.
 
 use crate::mcda::criterias::{CriteriaFilters, CriteriaLimits, CriteriaWeights};
-use crate::records::EpochIndex;
+use crate::records::{BlockNumber, EpochIndex};
 use serde::Serialize;
 use subxt::ext::sp_core::H256;
 
@@ -41,6 +41,7 @@ impl Default for MetaResult {
 pub struct BoardResult {
     pub hash: H256,
     pub session: EpochIndex,
+    pub block_number: BlockNumber,
     pub addresses: Vec<String>,
     pub weights: CriteriaWeights,
     pub limits: CriteriaLimits,
@@ -55,6 +56,7 @@ pub struct BoardsResult {
 #[derive(Debug, Serialize, PartialEq)]
 pub struct LimitsResult {
     pub session: EpochIndex,
+    pub block_number: BlockNumber,
     pub limits: CriteriaLimits,
 }
 

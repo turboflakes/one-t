@@ -3337,6 +3337,10 @@ pub async fn cache_session_stats_records(
         // Set synced session associated with era (useful for nomi boards)
         let mut era_data: BTreeMap<String, String> = BTreeMap::new();
         era_data.insert(String::from("synced_session"), epoch_index.to_string());
+        era_data.insert(
+            String::from(format!("synced_at_block:{}", epoch_index)),
+            (block.number - 1).to_string(),
+        );
 
         // Build session limits
         let limits = build_limits_from_session(&onet.cache.clone(), epoch_index).await?;
