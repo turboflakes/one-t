@@ -22,7 +22,7 @@ use crate::config::CONFIG;
 use crate::errors::OnetError;
 use crate::onet::ReportType;
 use crate::records::{
-    grade, AuthorityIndex, AuthorityRecord, ParaId, ParaRecord, ParaStats, Pattern, Points,
+    grade, AuthorityIndex, AuthorityRecord, Grade, ParaId, ParaRecord, ParaStats, Pattern, Points,
 };
 use log::info;
 use rand::Rng;
@@ -1405,11 +1405,11 @@ fn flagged_and_exceptional_validators_report<'a>(
         .count();
     let total_tvp_exceptional = para_validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP && grade(1.0 - v.missed_ratio.unwrap()) == "A+")
+        .filter(|v| v.subset == Subset::TVP && grade(1.0 - v.missed_ratio.unwrap()) == Grade::Ap)
         .count();
     let total_tvp_flagged = para_validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP && grade(1.0 - v.missed_ratio.unwrap()) == "F")
+        .filter(|v| v.subset == Subset::TVP && grade(1.0 - v.missed_ratio.unwrap()) == Grade::F)
         .count();
 
     let total_non_tvp = para_validators
@@ -1418,11 +1418,11 @@ fn flagged_and_exceptional_validators_report<'a>(
         .count();
     let total_non_tvp_exceptional = para_validators
         .iter()
-        .filter(|v| v.subset == Subset::NONTVP && grade(1.0 - v.missed_ratio.unwrap()) == "A+")
+        .filter(|v| v.subset == Subset::NONTVP && grade(1.0 - v.missed_ratio.unwrap()) == Grade::Ap)
         .count();
     let total_non_tvp_flagged = para_validators
         .iter()
-        .filter(|v| v.subset == Subset::NONTVP && grade(1.0 - v.missed_ratio.unwrap()) == "F")
+        .filter(|v| v.subset == Subset::NONTVP && grade(1.0 - v.missed_ratio.unwrap()) == Grade::F)
         .count();
 
     let total_c100 = para_validators
@@ -1431,11 +1431,11 @@ fn flagged_and_exceptional_validators_report<'a>(
         .count();
     let total_c100_exceptional = para_validators
         .iter()
-        .filter(|v| v.subset == Subset::C100 && grade(1.0 - v.missed_ratio.unwrap()) == "A+")
+        .filter(|v| v.subset == Subset::C100 && grade(1.0 - v.missed_ratio.unwrap()) == Grade::Ap)
         .count();
     let total_c100_flagged = para_validators
         .iter()
-        .filter(|v| v.subset == Subset::C100 && grade(1.0 - v.missed_ratio.unwrap()) == "F")
+        .filter(|v| v.subset == Subset::C100 && grade(1.0 - v.missed_ratio.unwrap()) == Grade::F)
         .count();
 
     let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
@@ -1444,13 +1444,13 @@ fn flagged_and_exceptional_validators_report<'a>(
 
     let mvr_exceptional: Vec<f64> = para_validators
         .iter()
-        .filter(|v| grade(1.0 - v.missed_ratio.unwrap()) == "A+")
+        .filter(|v| grade(1.0 - v.missed_ratio.unwrap()) == Grade::Ap)
         .map(|v| v.missed_ratio.unwrap())
         .collect();
 
     let mvr_flagged: Vec<f64> = para_validators
         .iter()
-        .filter(|v| grade(1.0 - v.missed_ratio.unwrap()) == "F")
+        .filter(|v| grade(1.0 - v.missed_ratio.unwrap()) == Grade::F)
         .map(|v| v.missed_ratio.unwrap())
         .collect();
 

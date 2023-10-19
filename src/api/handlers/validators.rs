@@ -30,7 +30,7 @@ use crate::cache::{get_conn, CacheKey, Index, RedisPool, Verbosity};
 use crate::config::CONFIG;
 use crate::errors::{ApiError, CacheError};
 use crate::pools::{PoolId, PoolNominees};
-use crate::records::{grade, EpochIndex};
+use crate::records::{grade, EpochIndex, Grade};
 use crate::report::Subset;
 use actix_web::{
     web::{Data, Json, Path, Query},
@@ -1057,7 +1057,7 @@ pub async fn get_validator_grade_by_stash(
         if params.show_summary {
             return respond_json(ValidatorGradeResult {
                 address: stash.to_string(),
-                grade: String::from("-"),
+                grade: Grade::NA.to_string(),
                 authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
                 para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
                 sessions_data: data.into(),
@@ -1066,7 +1066,7 @@ pub async fn get_validator_grade_by_stash(
         }
         return respond_json(ValidatorGradeResult {
             address: stash.to_string(),
-            grade: String::from("-"),
+            grade: Grade::NA.to_string(),
             authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
             para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
             sessions: data.iter().map(|v| v.session).collect(),
@@ -1095,7 +1095,7 @@ pub async fn get_validator_grade_by_stash(
     if params.show_summary {
         return respond_json(ValidatorGradeResult {
             address: stash.to_string(),
-            grade: grade(1.0 - mvr),
+            grade: grade(1.0 - mvr).to_string(),
             authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
             para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
             sessions_data: data.into(),
@@ -1105,7 +1105,7 @@ pub async fn get_validator_grade_by_stash(
 
     return respond_json(ValidatorGradeResult {
         address: stash.to_string(),
-        grade: grade(1.0 - mvr),
+        grade: grade(1.0 - mvr).to_string(),
         authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
         para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
         sessions: data.iter().map(|v| v.session).collect(),

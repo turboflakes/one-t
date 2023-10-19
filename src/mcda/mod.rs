@@ -19,9 +19,5 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![allow(clippy::all)]
-
-pub mod kusama;
-// pub mod polkadot;
-pub mod support;
-// pub mod westend;
+pub mod criterias;
+pub mod scores;

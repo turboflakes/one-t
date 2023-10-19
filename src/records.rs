@@ -146,18 +146,50 @@ impl std::fmt::Display for Glyph {
     }
 }
 
-pub fn grade(ratio: f64) -> String {
+#[derive(Serialize, Deserialize, Debug, Clone, Hash, Eq, PartialEq, PartialOrd, Default)]
+pub enum Grade {
+    Ap,
+    A,
+    Bp,
+    B,
+    Cp,
+    C,
+    Dp,
+    D,
+    F,
+    #[default]
+    NA,
+}
+
+impl std::fmt::Display for Grade {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ap => write!(f, "A+"),
+            Self::A => write!(f, "A"),
+            Self::Bp => write!(f, "B+"),
+            Self::B => write!(f, "B"),
+            Self::Cp => write!(f, "C+"),
+            Self::C => write!(f, "C"),
+            Self::Dp => write!(f, "D+"),
+            Self::D => write!(f, "D"),
+            Self::F => write!(f, "F"),
+            Self::NA => write!(f, "-"),
+        }
+    }
+}
+
+pub fn grade(ratio: f64) -> Grade {
     let p = (ratio * 10000.0).round() as u32;
     match p {
-        9901..=10000 => "A+".to_string(),
-        9501..=9900 => "A".to_string(),
-        9001..=9500 => "B+".to_string(),
-        8001..=9000 => "B".to_string(),
-        7001..=8000 => "C+".to_string(),
-        6001..=7000 => "C".to_string(),
-        5001..=6000 => "D+".to_string(),
-        4001..=5000 => "D".to_string(),
-        _ => "F".to_string(),
+        9901..=10000 => Grade::Ap,
+        9501..=9900 => Grade::A,
+        9001..=9500 => Grade::Bp,
+        8001..=9000 => Grade::B,
+        7001..=8000 => Grade::Cp,
+        6001..=7000 => Grade::C,
+        5001..=6000 => Grade::Dp,
+        4001..=5000 => Grade::D,
+        _ => Grade::F,
     }
 }
 
@@ -363,9 +395,9 @@ impl Records {
                         let mvr = mv as f64 / (tv + mv) as f64;
                         // Identify failed and exceptional epochs
                         let grade = grade(1.0 - mvr);
-                        if grade == "F" {
+                        if grade == Grade::F {
                             flagged_epochs += 1;
-                        } else if grade == "A+" {
+                        } else if grade == Grade::Ap {
                             exceptional_epochs += 1;
                         }
                         total_votes += tv;
@@ -1338,11 +1370,21 @@ pub struct ValidatorProfileRecord {
     // Note: commission max value = Perbill(1000000000) => 100%
     pub commission: u32,
     pub own_stake: u128,
+    // Note: nominators_stake is the sum of all nominators stake
+    pub nominators_stake: u128,
+    // Note: nominators_raw_stake is the sum of all nominators stake divided by the number of nominees
+    pub nominators_raw_stake: u128,
+    pub nominators_counter: u128,
     pub points: u32,
     pub subset: Subset,
+    // mvr is calculated based on the mvr from previous sessions and the latest obtained
+    pub mvr: Option<u64>,
+    // mvr_session contains the session from where the mvr was last updated
+    pub mvr_session: Option<EpochIndex>,
     pub is_oversubscribed: bool,
     pub is_active: bool,
     pub is_chilled: bool,
+    pub is_blocked: bool,
 }
 
 impl ValidatorProfileRecord {
@@ -1353,12 +1395,44 @@ impl ValidatorProfileRecord {
             identity: None,
             commission: 0,
             own_stake: 0,
+            nominators_stake: 0,
+            nominators_raw_stake: 0,
+            nominators_counter: 0,
             points: 0,
             subset: Subset::NONTVP,
+            mvr: None,
+            mvr_session: None,
             is_oversubscribed: false,
             is_active: false,
             is_chilled: false,
+            is_blocked: false,
         }
+    }
+
+    pub fn own_stake_trimmed(&self, chain_token_decimals: u32) -> u64 {
+        use crate::mcda::criterias::DECIMALS;
+        let base: u128 = 10_u128;
+        (self.own_stake / base.pow(chain_token_decimals - DECIMALS)) as u64
+    }
+
+    pub fn nominators_stake_trimmed(&self, chain_token_decimals: u32) -> u64 {
+        use crate::mcda::criterias::DECIMALS;
+        let base: u128 = 10_u128;
+        (self.nominators_stake / base.pow(chain_token_decimals - DECIMALS)) as u64
+    }
+
+    pub fn nominators_raw_stake_trimmed(&self, chain_token_decimals: u32) -> u64 {
+        use crate::mcda::criterias::DECIMALS;
+        let base: u128 = 10_u128;
+        (self.nominators_raw_stake / base.pow(chain_token_decimals - DECIMALS)) as u64
+    }
+
+    pub fn is_tvp(&self) -> bool {
+        self.subset == Subset::TVP
+    }
+
+    pub fn is_identified(&self) -> bool {
+        self.identity.is_some()
     }
 }
 

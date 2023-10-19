@@ -25,9 +25,10 @@ use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
 use crate::records::EpochIndex;
 use crate::report::Network;
 use crate::runtimes::{
-    kusama, polkadot,
-    support::{ChainPrefix, SupportedRuntime, ChainTokenSymbol},
-    westend,
+    kusama,
+    // polkadot,
+    support::{ChainPrefix, ChainTokenSymbol, SupportedRuntime},
+    // westend,
 };
 use log::{debug, error, info, warn};
 use redis::aio::Connection;
@@ -147,8 +148,7 @@ pub async fn create_or_await_substrate_node_client(
                 let chain = client.rpc().system_chain().await.unwrap_or_default();
                 let name = client.rpc().system_name().await.unwrap_or_default();
                 let version = client.rpc().system_version().await.unwrap_or_default();
-                let properties =
-                    client.rpc().system_properties().await.unwrap_or_default();
+                let properties = client.rpc().system_properties().await.unwrap_or_default();
 
                 // Display SS58 addresses based on the connected chain
                 let chain_prefix: ChainPrefix =
@@ -158,9 +158,7 @@ pub async fn create_or_await_substrate_node_client(
                         0
                     };
 
-                crypto::set_default_ss58_version(crypto::Ss58AddressFormat::custom(
-                    chain_prefix,
-                ));
+                crypto::set_default_ss58_version(crypto::Ss58AddressFormat::custom(chain_prefix));
 
                 let chain_token_symbol: ChainTokenSymbol =
                     if let Some(token_symbol) = properties.get("tokenSymbol") {
@@ -290,10 +288,10 @@ impl Onet {
         self.cache_network().await?;
 
         match self.runtime {
-            SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
+            // SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
-            SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
-            // _ => unreachable!(),
+            // SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
+            _ => unreachable!(),
         }
     }
     // cache methods

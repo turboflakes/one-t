@@ -24,6 +24,7 @@ mod cache;
 mod config;
 mod errors;
 mod matrix;
+mod mcda;
 mod onet;
 mod pools;
 mod records;

@@ -31,7 +31,7 @@ use mobc_redis::RedisConnectionManager;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use std::{thread, time};
-use subxt::utils::AccountId32;
+use subxt::{ext::sp_core::H256, utils::AccountId32};
 
 const CACHE_POOL_MAX_OPEN: u64 = 20;
 const CACHE_POOL_MAX_IDLE: u64 = 8;
@@ -82,6 +82,23 @@ impl std::fmt::Display for Verbosity {
 
 pub type QueryString = String;
 
+#[derive(Clone, Eq, Hash, PartialEq, Debug)]
+pub enum Trait {
+    OwnStake,
+    NominatorsStake,
+    NominatorsCounter,
+}
+
+impl std::fmt::Display for Trait {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OwnStake => write!(f, "t:own_stake"),
+            Self::NominatorsStake => write!(f, "t:nom_stake"),
+            Self::NominatorsCounter => write!(f, "t:nom_counter"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CacheKey {
     Network,
@@ -90,6 +107,7 @@ pub enum CacheKey {
     PushedBlockByClientId(usize),
     BlockByIndexStats(Index),
     BlocksBySession(Index),
+    EraByIndex(Index),
     SessionByIndex(Index),
     SessionByIndexStats(Index),
     NetworkStatsBySession(Index),
@@ -99,6 +117,7 @@ pub enum CacheKey {
     AuthorityKeysBySession(EpochIndex),
     AuthorityKeysBySessionParaOnly(EpochIndex),
     ParachainsBySession(EpochIndex),
+    ValidatorAccountsBySession(EpochIndex),
     ValidatorProfileByAccount(AccountId32),
     // NominationPools
     NominationPoolRecord(PoolId),
@@ -108,6 +127,13 @@ pub enum CacheKey {
     // Queries
     QueryValidators(QueryString),
     QuerySessions(QueryString),
+    // Nomi Boards
+    NomiBoardBySessionAndHash(EpochIndex, H256),
+    NomiBoardEraBySession(EpochIndex),
+    NomiBoardScoresBySessionAndHash(EpochIndex, H256),
+    NomiBoardMetaBySessionAndHash(EpochIndex, H256),
+    NomiBoardBySessionAndTrait(EpochIndex, Trait),
+    NomiBoardStats,
 }
 
 impl std::fmt::Display for CacheKey {
@@ -119,6 +145,7 @@ impl std::fmt::Display for CacheKey {
             Self::PushedBlockByClientId(client_id) => write!(f, "pushed:{}", client_id),
             Self::BlockByIndexStats(block_index) => write!(f, "b:{}:s", block_index),
             Self::BlocksBySession(session_index) => write!(f, "bs:{}", session_index),
+            Self::EraByIndex(era_index) => write!(f, "e:{}", era_index),
             Self::SessionByIndex(session_index) => write!(f, "s:{}", session_index),
             Self::SessionByIndexStats(session_index) => write!(f, "s:{}:s", session_index),
             Self::NetworkStatsBySession(session_index) => {
@@ -142,6 +169,9 @@ impl std::fmt::Display for CacheKey {
             Self::ParachainsBySession(session_index) => {
                 write!(f, "ps:{}", session_index)
             }
+            Self::ValidatorAccountsBySession(session_index) => {
+                write!(f, "vas:{}", session_index)
+            }
             Self::ValidatorProfileByAccount(account) => {
                 write!(f, "vpa:{}", account)
             }
@@ -158,6 +188,25 @@ impl std::fmt::Display for CacheKey {
             //
             Self::QueryValidators(params) => write!(f, "qry:val:{}", params),
             Self::QuerySessions(params) => write!(f, "qry:ses:{}", params),
+            //
+            Self::NomiBoardBySessionAndHash(session_index, hash) => {
+                write!(f, "nb:{}:{:#02x}", session_index, hash)
+            }
+            Self::NomiBoardEraBySession(session_index) => {
+                write!(f, "nb:{}:era", session_index)
+            }
+            Self::NomiBoardScoresBySessionAndHash(session_index, hash) => {
+                write!(f, "nb:{}:{:#02x}:scores", session_index, hash)
+            }
+            Self::NomiBoardMetaBySessionAndHash(session_index, hash) => {
+                write!(f, "nb:{}:{:#02x}:meta", session_index, hash)
+            }
+            Self::NomiBoardBySessionAndTrait(session_index, attribute) => {
+                write!(f, "nb:{}:{}", session_index, attribute)
+            }
+            Self::NomiBoardStats => {
+                write!(f, "nb:stats")
+            }
         }
     }
 }
