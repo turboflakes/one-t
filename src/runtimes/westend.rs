@@ -45,7 +45,6 @@ use crate::{
     },
 };
 use async_recursion::async_recursion;
-use futures::StreamExt;
 use log::{debug, error, info, warn};
 use redis::aio::Connection;
 
@@ -101,9 +100,9 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
     // Initialize from the first block of the session of last block processed
     let latest_block_number = get_latest_block_number_processed()?;
-    let latest_block_hash = api
+    let latest_block_hash = onet
         .rpc()
-        .block_hash(Some(latest_block_number.into()))
+        .chain_get_block_hash(Some(latest_block_number.into()))
         .await?
         .unwrap();
 
@@ -130,9 +129,9 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     );
 
     // get block hash from the start block
-    let block_hash = api
+    let block_hash = onet
         .rpc()
-        .block_hash(Some(start_block_number.into()))
+        .chain_get_block_hash(Some(start_block_number.into()))
         .await?
         .unwrap();
 
@@ -197,8 +196,12 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
         process_best_block(&onet, &mut records, best_block.number().into()).await?;
 
         // fetch latest finalized block
-        let finalized_block_hash = api.rpc().finalized_head().await?;
-        if let Some(block) = api.rpc().header(Some(finalized_block_hash)).await? {
+        let finalized_block_hash = onet.rpc().chain_get_finalized_head().await?;
+        if let Some(block) = onet
+            .rpc()
+            .chain_get_header(Some(finalized_block_hash))
+            .await?
+        {
             debug!("finalized block head {:?} in storage", block.number);
             // process older blocks that have not been processed first
             while let Some(processed_block_number) = latest_block_number_processed {
@@ -222,8 +225,10 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                         .await?;
                     } else {
                         // fetch block_hash if not the finalized head
-                        if let Some(block_hash) =
-                            api.rpc().block_hash(Some(block_number.into())).await?
+                        if let Some(block_hash) = onet
+                            .rpc()
+                            .chain_get_block_hash(Some(block_number.into()))
+                            .await?
                         {
                             process_finalized_block(
                                 &onet,
@@ -290,14 +295,14 @@ pub async fn process_finalized_block(
     // only able to be decoded if metadata presented is from previous block
     // an example is the block_number 15426015 in Kusama
     let block_hash_metadata = if exceptional_blocks.contains(&block_number.to_string()) {
-        api.rpc()
-            .block_hash(Some((block_number - 1).into()))
+        onet.rpc()
+            .chain_get_block_hash(Some((block_number - 1).into()))
             .await?
     } else {
         Some(block_hash)
     };
 
-    let metadata = api.rpc().metadata_legacy(block_hash_metadata).await?;
+    let metadata = onet.rpc().state_get_metadata(block_hash_metadata).await?;
     debug!("metadata_legacy: {:?}", metadata);
 
     let events = Events::new_from_client(metadata, block_hash, api.clone()).await?;
@@ -1307,7 +1312,7 @@ pub async fn run_val_perf_report(
     let onet: Onet = Onet::new().await;
     let api = onet.client().clone();
 
-    let network = Network::load(&api).await?;
+    let network = Network::load(onet.rpc()).await?;
     // Set era/session details
     let start_block = records
         .start_block(Some(EpochKey(era_index, epoch_index)))
@@ -1469,9 +1474,9 @@ pub async fn run_groups_report(
     records: &Records,
 ) -> Result<(), OnetError> {
     let onet: Onet = Onet::new().await;
-    let client = onet.client();
+    let _client = onet.client();
 
-    let network = Network::load(client).await?;
+    let network = Network::load(onet.rpc()).await?;
 
     // Set era/session details
     let start_block = records
@@ -1562,9 +1567,8 @@ pub async fn run_parachains_report(
     records: &Records,
 ) -> Result<(), OnetError> {
     let onet: Onet = Onet::new().await;
-    let client = onet.client();
 
-    let network = Network::load(client).await?;
+    let network = Network::load(onet.rpc()).await?;
 
     // Set era/session details
     let start_block = records
@@ -1666,7 +1670,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     let api = onet.client().clone();
 
-    let network = Network::load(&api).await?;
+    let network = Network::load(onet.rpc()).await?;
 
     // Fetch active era index
     let active_era_addr = node_runtime::storage().staking().active_era();
@@ -1732,14 +1736,14 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         .await?
     {
         // Fetch all validators
-        let validators_addr = node_runtime::storage().staking().validators_root();
+        let validators_addr = node_runtime::storage().staking().validators_iter();
         let mut iter = api
             .storage()
             .at_latest()
             .await?
-            .iter(validators_addr, 10)
+            .iter(validators_addr)
             .await?;
-        while let Some((key, validator_prefs)) = iter.next().await? {
+        while let Some(Ok((key, validator_prefs))) = iter.next().await {
             let stash = get_account_id_from_storage_key(key);
             let mut v = Validator::new(stash.clone());
             if validator_prefs.commission != Perbill(1000000000) {
@@ -2666,12 +2670,15 @@ async fn try_run_nomination(
         let tx_events = response.fetch_events().await?;
 
         // Get block number
-        let block_number =
-            if let Some(header) = api.rpc().header(Some(tx_events.block_hash())).await? {
-                header.number
-            } else {
-                0
-            };
+        let block_number = if let Some(header) = onet
+            .rpc()
+            .chain_get_header(Some(tx_events.block_hash()))
+            .await?
+        {
+            header.number
+        } else {
+            0
+        };
 
         let failed_event = tx_events.find_first::<ExtrinsicFailed>()?;
 
@@ -2741,9 +2748,9 @@ async fn verify_oversubscribed(
 
     let block_hash = match block_hash {
         Some(bh) => bh,
-        None => api
+        None => onet
             .rpc()
-            .block_hash(None)
+            .chain_get_block_hash(None)
             .await?
             .expect("didn't pass a block number; qed"),
     };
@@ -2890,8 +2897,7 @@ async fn get_authority_index(
     onet: &Onet,
     block_hash: Option<H256>,
 ) -> Result<Option<AuthorityIndex>, OnetError> {
-    let api = onet.client().clone();
-    if let Some(header) = api.rpc().header(block_hash).await? {
+    if let Some(header) = onet.rpc().chain_get_header(block_hash).await? {
         match header.digest {
             Digest { logs } => {
                 for digests in logs.iter() {
@@ -2947,12 +2953,12 @@ pub async fn cache_session_stats_records(
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
     // Load network details
-    let network = Network::load(&api).await?;
+    let network = Network::load(onet.rpc()).await?;
 
     // ---
     // cache all validators profile every new session and snapshot session stats
 
-    if let Some(block) = api.rpc().header(Some(block_hash)).await? {
+    if let Some(block) = onet.rpc().chain_get_header(Some(block_hash)).await? {
         let active_era_addr = node_runtime::storage().staking().active_era();
         let era_index = match api
             .storage()
@@ -2996,13 +3002,13 @@ pub async fn cache_session_stats_records(
             .await?
         {
             // Fetch all validators
-            let validators_addr = node_runtime::storage().staking().validators_root();
+            let validators_addr = node_runtime::storage().staking().validators_iter();
             let mut iter = api
                 .storage()
                 .at(block.parent_hash)
-                .iter(validators_addr, 10)
+                .iter(validators_addr)
                 .await?;
-            while let Some((key, validator_prefs)) = iter.next().await? {
+            while let Some(Ok((key, validator_prefs))) = iter.next().await {
                 // validator stash address
                 let stash = get_account_id_from_storage_key(key);
                 // create a new validator instance
@@ -3388,9 +3394,9 @@ async fn collect_nominators_data(
     let mut nominators_map: BTreeMap<AccountId32, Vec<(AccountId32, u128, u128)>> = BTreeMap::new();
 
     let mut counter = 0;
-    let storage_addr = node_runtime::storage().staking().nominators_root();
-    let mut iter = api.storage().at(block_hash).iter(storage_addr, 10).await?;
-    while let Some((key, nominations)) = iter.next().await? {
+    let storage_addr = node_runtime::storage().staking().nominators_iter();
+    let mut iter = api.storage().at(block_hash).iter(storage_addr).await?;
+    while let Some(Ok((key, nominations))) = iter.next().await {
         let nominator_stash = get_account_id_from_storage_key(key);
         let bonded_addr = node_runtime::storage()
             .staking()
