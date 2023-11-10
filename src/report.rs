@@ -34,7 +34,7 @@ use std::{
 };
 
 use subxt::utils::AccountId32;
-use subxt::{OnlineClient, PolkadotConfig};
+use subxt::{backend::legacy::LegacyRpcMethods, PolkadotConfig};
 
 use flate2::write;
 use flate2::Compression;
@@ -142,11 +142,11 @@ pub struct Network {
 }
 
 impl Network {
-    pub async fn load(api: &OnlineClient<PolkadotConfig>) -> Result<Network, OnetError> {
-        let properties = api.rpc().system_properties().await?;
+    pub async fn load(rpc: &LegacyRpcMethods<PolkadotConfig>) -> Result<Network, OnetError> {
+        let properties = rpc.system_properties().await?;
 
         // Get Network name
-        let chain_name = api.rpc().system_chain().await?;
+        let chain_name = rpc.system_chain().await?;
 
         // Get Token symbol
         let token_symbol: String = if let Some(token_symbol) = properties.get("tokenSymbol") {

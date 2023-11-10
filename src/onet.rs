@@ -25,9 +25,10 @@ use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
 use crate::records::EpochIndex;
 use crate::report::Network;
 use crate::runtimes::{
-    kusama, polkadot,
+    kusama,
+    // polkadot,
     support::{ChainPrefix, ChainTokenSymbol, SupportedRuntime},
-    westend,
+    // westend,
 };
 use log::{debug, error, info, warn};
 use redis::aio::Connection;
@@ -46,7 +47,13 @@ use std::{
     thread, time,
 };
 use subxt::{
-    ext::sp_core::crypto, storage::StorageKey, utils::AccountId32, OnlineClient, PolkadotConfig,
+    backend::{
+        legacy::{rpc_methods::StorageKey, LegacyRpcMethods},
+        rpc::RpcClient,
+    },
+    ext::sp_core::crypto,
+    utils::AccountId32,
+    OnlineClient, PolkadotConfig,
 };
 use subxt_signer::{bip39::Mnemonic, sr25519::Keypair};
 
@@ -132,22 +139,39 @@ impl std::fmt::Display for ReportType {
     }
 }
 
-pub async fn create_substrate_node_client(
+pub async fn _create_substrate_node_client(
     config: Config,
 ) -> Result<OnlineClient<PolkadotConfig>, subxt::Error> {
     OnlineClient::<PolkadotConfig>::from_url(config.substrate_ws_url).await
 }
 
+pub async fn create_substrate_rpc_client_from_config(
+    config: Config,
+) -> Result<RpcClient, subxt::Error> {
+    RpcClient::from_url(config.substrate_ws_url).await
+}
+
+pub async fn create_substrate_client_from_rpc_client(
+    rpc_client: RpcClient,
+) -> Result<OnlineClient<PolkadotConfig>, subxt::Error> {
+    OnlineClient::<PolkadotConfig>::from_rpc_client(rpc_client).await
+}
+
 pub async fn create_or_await_substrate_node_client(
     config: Config,
-) -> (OnlineClient<PolkadotConfig>, SupportedRuntime) {
+) -> (
+    OnlineClient<PolkadotConfig>,
+    LegacyRpcMethods<PolkadotConfig>,
+    SupportedRuntime,
+) {
     loop {
-        match create_substrate_node_client(config.clone()).await {
-            Ok(client) => {
-                let chain = client.rpc().system_chain().await.unwrap_or_default();
-                let name = client.rpc().system_name().await.unwrap_or_default();
-                let version = client.rpc().system_version().await.unwrap_or_default();
-                let properties = client.rpc().system_properties().await.unwrap_or_default();
+        match create_substrate_rpc_client_from_config(config.clone()).await {
+            Ok(rpc_client) => {
+                let rpc = LegacyRpcMethods::<PolkadotConfig>::new(rpc_client.clone());
+                let chain = rpc.system_chain().await.unwrap_or_default();
+                let name = rpc.system_name().await.unwrap_or_default();
+                let version = rpc.system_version().await.unwrap_or_default();
+                let properties = rpc.system_properties().await.unwrap_or_default();
 
                 // Display SS58 addresses based on the connected chain
                 let chain_prefix: ChainPrefix =
@@ -175,7 +199,16 @@ pub async fn create_or_await_substrate_node_client(
                     chain, config.substrate_ws_url, name, version
                 );
 
-                break (client, SupportedRuntime::from(chain_token_symbol));
+                match create_substrate_client_from_rpc_client(rpc_client.clone()).await {
+                    Ok(client) => {
+                        break (client, rpc, SupportedRuntime::from(chain_token_symbol));
+                    }
+                    Err(e) => {
+                        error!("{}", e);
+                        info!("Awaiting for connection using {}", config.substrate_ws_url);
+                        thread::sleep(time::Duration::from_secs(6));
+                    }
+                }
             }
             Err(e) => {
                 error!("{}", e);
@@ -189,13 +222,14 @@ pub async fn create_or_await_substrate_node_client(
 pub struct Onet {
     runtime: SupportedRuntime,
     client: OnlineClient<PolkadotConfig>,
+    rpc: LegacyRpcMethods<PolkadotConfig>,
     matrix: Matrix,
     pub cache: RedisPool,
 }
 
 impl Onet {
     pub async fn new() -> Onet {
-        let (client, runtime) = create_or_await_substrate_node_client(CONFIG.clone()).await;
+        let (client, rpc, runtime) = create_or_await_substrate_node_client(CONFIG.clone()).await;
 
         // Initialize matrix client
         let mut matrix: Matrix = Matrix::new();
@@ -207,6 +241,7 @@ impl Onet {
         Onet {
             runtime,
             client,
+            rpc,
             matrix,
             cache: create_or_await_pool(CONFIG.clone()),
         }
@@ -215,14 +250,10 @@ impl Onet {
     pub async fn init() -> Onet {
         let config = CONFIG.clone();
         let onet: Onet = Onet::new().await;
-        let chain = onet.client().rpc().system_chain().await.unwrap_or_default();
-        let name = onet.client().rpc().system_name().await.unwrap_or_default();
-        let version = onet
-            .client()
-            .rpc()
-            .system_version()
-            .await
-            .unwrap_or_default();
+
+        let chain = onet.rpc().system_chain().await.unwrap_or_default();
+        let name = onet.rpc().system_name().await.unwrap_or_default();
+        let version = onet.rpc().system_version().await.unwrap_or_default();
         info!(
             "Connected to {} network using {} * Substrate node {} v{}",
             chain, config.substrate_ws_url, name, version
@@ -232,6 +263,10 @@ impl Onet {
 
     pub fn client(&self) -> &OnlineClient<PolkadotConfig> {
         &self.client
+    }
+
+    pub fn rpc(&self) -> &LegacyRpcMethods<PolkadotConfig> {
+        &self.rpc
     }
 
     /// Returns the matrix configuration
@@ -287,10 +322,10 @@ impl Onet {
         self.cache_network().await?;
 
         match self.runtime {
-            SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
+            // SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
-            SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
-            // _ => unreachable!(),
+            // SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
+            _ => unreachable!(),
         }
     }
     // cache methods
@@ -299,11 +334,9 @@ impl Onet {
         if config.cache_writer_enabled {
             let mut conn = self.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
-            let client = self.client();
-
             let mut data: BTreeMap<String, String> = BTreeMap::new();
 
-            let network = Network::load(client).await?;
+            let network = Network::load(self.rpc()).await?;
             // Get Network details
             data.insert(String::from("name"), network.name);
             data.insert(String::from("token_symbol"), network.token_symbol);
@@ -314,7 +347,7 @@ impl Onet {
             data.insert(String::from("ss58_format"), network.ss58_format.to_string());
 
             // Cache genesis hash
-            let genesis_hash = client.rpc().genesis_hash().await?;
+            let genesis_hash = self.rpc().genesis_hash().await?;
             data.insert("genesis_hash".to_string(), format!("{:?}", genesis_hash));
 
             let _: () = redis::cmd("HSET")
@@ -502,7 +535,7 @@ pub async fn try_fetch_stashes_from_remote_url(
 }
 
 pub fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {
-    let s = &key.0[key.0.len() - 32..];
+    let s = &key[key.len() - 32..];
     let v: [u8; 32] = s.try_into().expect("slice with incorrect length");
     v.into()
 }

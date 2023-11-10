@@ -205,7 +205,8 @@ pub struct Records {
     authority_records: HashMap<RecordKey, AuthorityRecord>,
     para_authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
     para_records: HashMap<RecordKey, ParaRecord>,
-    // Note: we use the following maps to easily manage missed votes and para_id assignment changes
+    // Note: we use the following maps to easily manage missed votes and para_id assignment changes and core assignments
+    core_para: HashMap<CoreIndex, Option<ParaId>>,
     para_group: HashMap<ParaId, GroupIndex>,
     groups: HashMap<GroupIndex, Vec<AuthorityIndex>>,
 }
@@ -234,6 +235,7 @@ impl Records {
             authority_records: HashMap::new(),
             para_authorities: HashMap::new(),
             para_records: HashMap::new(),
+            core_para: HashMap::new(),
             para_group: HashMap::new(),
             groups: HashMap::new(),
         }
@@ -555,6 +557,102 @@ impl Records {
                     self.get_mut_para_record(authority_idx.clone(), epoch_idx)
                 {
                     para_record.update_scheduled_core(para_id, core);
+                }
+            }
+        }
+    }
+
+    pub fn update_core_by_para_id(
+        &mut self,
+        para_id: ParaId,
+        core: CoreIndex,
+        epoch_idx: Option<EpochIndex>,
+    ) {
+        // update core_para map
+        self.core_para.insert(core, Some(para_id));
+
+        // set core assignment for all authorities in the group
+        if let Some(group_idx) = self.para_group.get(&para_id) {
+            if let Some(authorities) = self.get_authorities_from_group(*group_idx) {
+                for authority_idx in authorities.iter() {
+                    if let Some(para_record) =
+                        self.get_mut_para_record(authority_idx.clone(), epoch_idx)
+                    {
+                        para_record.set_core_assignment(para_id, core);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn update_core_free(&mut self, core: CoreIndex, epoch_idx: Option<EpochIndex>) {
+        // update core_para map
+        if let Some(previous_para_id) = self.core_para.insert(core, None) {
+            if let Some(para_id) = previous_para_id {
+                if let Some(group_idx) = self.para_group.get(&para_id) {
+                    if let Some(authorities) = self.get_authorities_from_group(*group_idx) {
+                        for authority_idx in authorities.iter() {
+                            if let Some(para_record) =
+                                self.get_mut_para_record(authority_idx.clone(), epoch_idx)
+                            {
+                                para_record.set_core_free();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn update_para_id_by_group(
+        &mut self,
+        para_id: ParaId,
+        group_idx: GroupIndex,
+        epoch_idx: Option<EpochIndex>,
+    ) {
+        if let Some(previous_group_idx) = self.para_group.insert(para_id, group_idx) {
+            if previous_group_idx == group_idx {
+                return;
+            }
+            // remove assignement from authorities assigned to the current group
+            if let Some(authorities) = self.get_authorities_from_group(previous_group_idx) {
+                for authority_idx in authorities.iter() {
+                    if let Some(para_record) = self.get_mut_para_record(*authority_idx, epoch_idx) {
+                        para_record.unset_para_id(para_id);
+                    }
+                }
+            }
+        }
+        // update scheduled core and para_id to the authorities assigned to the group_idx
+        if let Some(authorities) = self.get_authorities_from_group(group_idx) {
+            for authority_idx in authorities.iter() {
+                if let Some(para_record) =
+                    self.get_mut_para_record(authority_idx.clone(), epoch_idx)
+                {
+                    para_record.set_para_id(para_id);
+                }
+            }
+        }
+    }
+
+    pub fn inc_missing_vote_for_the_missing_authorities(
+        &mut self,
+        authorities_present: Vec<AuthorityIndex>,
+        para_id: ParaId,
+        group_idx: GroupIndex,
+        epoch_idx: Option<EpochIndex>,
+    ) {
+        if let Some(authorities) = self.get_authorities_from_group(group_idx) {
+            // find the ones missing
+            let a: HashSet<AuthorityIndex> = authorities_present.into_iter().collect();
+            let b: HashSet<AuthorityIndex> = authorities.into_iter().collect();
+            let missing: Vec<&AuthorityIndex> = b.difference(&a).collect();
+
+            for authority_idx in missing {
+                if let Some(para_record) =
+                    self.get_mut_para_record(authority_idx.clone(), epoch_idx)
+                {
+                    para_record.inc_missed_votes(para_id);
                 }
             }
         }
@@ -1032,7 +1130,7 @@ impl ParaRecord {
     pub fn update_scheduled_core(&mut self, para_id: ParaId, core: CoreIndex) {
         // Assign current scheduled para_id
         self.para_id = Some(para_id);
-        // Verify if a different core as been assigned
+        // Verify if a different core has been assigned
         let is_different_core = if let Some(previous_core) = self.core {
             previous_core != core
         } else {
@@ -1054,6 +1152,32 @@ impl ParaRecord {
             if pid == para_id {
                 self.para_id = None;
                 self.core = None;
+            }
+        }
+    }
+
+    pub fn set_core_assignment(&mut self, para_id: ParaId, core: CoreIndex) {
+        self.core = Some(core);
+
+        let stats = self
+            .para_stats
+            .entry(para_id)
+            .or_insert(ParaStats::default());
+        stats.core_assignments += 1;
+    }
+
+    pub fn set_core_free(&mut self) {
+        self.core = None;
+    }
+
+    pub fn set_para_id(&mut self, para_id: ParaId) {
+        self.para_id = Some(para_id);
+    }
+
+    pub fn unset_para_id(&mut self, para_id: ParaId) {
+        if let Some(pid) = self.para_id {
+            if pid == para_id {
+                self.para_id = None;
             }
         }
     }

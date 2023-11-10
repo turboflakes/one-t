@@ -45,7 +45,6 @@ use crate::{
     },
 };
 use async_recursion::async_recursion;
-use futures::StreamExt;
 use log::{debug, error, info, warn};
 use redis::aio::Connection;
 
@@ -81,18 +80,17 @@ mod node_runtime {}
 use node_runtime::{
     runtime_types::{
         bounded_collections::bounded_vec::BoundedVec, pallet_identity::types::Data,
-        pallet_nomination_pools::PoolState, polkadot_parachain::primitives::Id,
-        polkadot_primitives::v4::CoreIndex, polkadot_primitives::v4::DisputeStatement,
-        polkadot_primitives::v4::GroupIndex, polkadot_primitives::v4::ValidatorIndex,
-        polkadot_primitives::v4::ValidityAttestation, sp_arithmetic::per_things::Perbill,
-        sp_consensus_babe::digests::PreDigest,
+        pallet_nomination_pools::PoolState, polkadot_parachain_primitives::primitives::Id,
+        polkadot_primitives::v5::CoreOccupied, polkadot_primitives::v5::DisputeStatement,
+        polkadot_primitives::v5::ValidatorIndex, polkadot_primitives::v5::ValidityAttestation,
+        sp_arithmetic::per_things::Perbill, sp_consensus_babe::digests::PreDigest,
     },
     session::events::NewSession,
     // Event,
     system::events::ExtrinsicFailed,
 };
 
-type Call = node_runtime::runtime_types::kusama_runtime::RuntimeCall;
+type Call = node_runtime::runtime_types::staging_kusama_runtime::RuntimeCall;
 type NominationPoolsCall = node_runtime::runtime_types::pallet_nomination_pools::pallet::Call;
 
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
@@ -101,9 +99,9 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
     // Initialize from the first block of the session of last block processed
     let latest_block_number = get_latest_block_number_processed()?;
-    let latest_block_hash = api
+    let latest_block_hash = onet
         .rpc()
-        .block_hash(Some(latest_block_number.into()))
+        .chain_get_block_hash(Some(latest_block_number.into()))
         .await?
         .unwrap();
 
@@ -123,16 +121,18 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     // since ParaSession starts always at the the second block of a new session
     start_block_number -= 1;
     // Load into memory the minimum initial eras defined (default=0)
+
     start_block_number -= config.minimum_initial_eras * 6 * config.blocks_per_session;
+
     info!(
         "Start loading blocks since block number: {}",
         start_block_number
     );
 
     // get block hash from the start block
-    let block_hash = api
+    let block_hash = onet
         .rpc()
-        .block_hash(Some(start_block_number.into()))
+        .chain_get_block_hash(Some(start_block_number.into()))
         .await?
         .unwrap();
 
@@ -197,8 +197,12 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
         process_best_block(&onet, &mut records, best_block.number().into()).await?;
 
         // fetch latest finalized block
-        let finalized_block_hash = api.rpc().finalized_head().await?;
-        if let Some(block) = api.rpc().header(Some(finalized_block_hash)).await? {
+        let finalized_block_hash = onet.rpc().chain_get_finalized_head().await?;
+        if let Some(block) = onet
+            .rpc()
+            .chain_get_header(Some(finalized_block_hash))
+            .await?
+        {
             debug!("finalized block head {:?} in storage", block.number);
             // process older blocks that have not been processed first
             while let Some(processed_block_number) = latest_block_number_processed {
@@ -222,8 +226,10 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                         .await?;
                     } else {
                         // fetch block_hash if not the finalized head
-                        if let Some(block_hash) =
-                            api.rpc().block_hash(Some(block_number.into())).await?
+                        if let Some(block_hash) = onet
+                            .rpc()
+                            .chain_get_block_hash(Some(block_number.into()))
+                            .await?
                         {
                             process_finalized_block(
                                 &onet,
@@ -290,14 +296,14 @@ pub async fn process_finalized_block(
     // only able to be decoded if metadata presented is from previous block
     // an example is the block_number 15426015 in Kusama
     let block_hash_metadata = if exceptional_blocks.contains(&block_number.to_string()) {
-        api.rpc()
-            .block_hash(Some((block_number - 1).into()))
+        onet.rpc()
+            .chain_get_block_hash(Some((block_number - 1).into()))
             .await?
     } else {
         Some(block_hash)
     };
 
-    let metadata = api.rpc().metadata_legacy(block_hash_metadata).await?;
+    let metadata = onet.rpc().state_get_metadata(block_hash_metadata).await?;
     debug!("metadata_legacy: {:?}", metadata);
 
     let events = Events::new_from_client(metadata, block_hash, api.clone()).await?;
@@ -1071,29 +1077,31 @@ pub async fn track_records(
             authority_record.push_authored_block(block_number);
         }
 
-        // Fetch currently scheduled cores
-        let scheduled_cores_addr = node_runtime::storage().para_scheduler().scheduled();
-        if let Some(scheduled_cores) = api
-            .storage()
-            .at(block_hash)
-            .fetch(&scheduled_cores_addr)
-            .await?
-        {
-            // Update records para_group
-            for core_assignment in scheduled_cores.iter() {
-                debug!("core_assignment: {:?}", core_assignment);
-                // CoreAssignment { core: CoreIndex(16), para_id: Id(2087), kind: Parachain, group_idx: GroupIndex(31) }
+        //
+        // NOTE: Fetch currently scheduled cores as been DEPRECATED
+        //
+        // let scheduled_cores_addr = node_runtime::storage().para_scheduler().scheduled();
+        // if let Some(scheduled_cores) = api
+        //     .storage()
+        //     .at(block_hash)
+        //     .fetch(&scheduled_cores_addr)
+        //     .await?
+        // {
+        //     // Update records para_group
+        //     for core_assignment in scheduled_cores.iter() {
+        //         debug!("core_assignment: {:?}", core_assignment);
+        //         // CoreAssignment { core: CoreIndex(16), para_id: Id(2087), kind: Parachain, group_idx: GroupIndex(31) }
 
-                // Destructure GroupIndex
-                let GroupIndex(group_idx) = core_assignment.group_idx;
-                // Destructure CoreIndex
-                let CoreIndex(core) = core_assignment.core;
-                // Destructure Id
-                let Id(para_id) = core_assignment.para_id;
+        //         // Destructure GroupIndex
+        //         let GroupIndex(group_idx) = core_assignment.group_idx;
+        //         // Destructure CoreIndex
+        //         let CoreIndex(core) = core_assignment.core;
+        //         // Destructure Id
+        //         let Id(para_id) = core_assignment.para_id;
 
-                records.update_para_group(para_id, core, group_idx, Some(session_index));
-            }
-        }
+        //         records.update_para_group(para_id, core, group_idx, Some(session_index));
+        //     }
+        // }
 
         // Fetch Era reward points
         let era_reward_points_addr = node_runtime::storage()
@@ -1113,76 +1121,122 @@ pub async fn track_records(
                 .fetch(&validator_groups_addr)
                 .await?
             {
-                // Fetch on chain votes
-                let on_chain_votes_addr = node_runtime::storage().para_inherent().on_chain_votes();
-
-                if let Some(backing_votes) = api
+                // Fetch para validator indices
+                let active_validator_indices_addr = node_runtime::storage()
+                    .paras_shared()
+                    .active_validator_indices();
+                if let Some(active_validator_indices) = api
                     .storage()
                     .at(block_hash)
-                    .fetch(&on_chain_votes_addr)
+                    .fetch(&active_validator_indices_addr)
                     .await?
                 {
-                    if let Some(&era_idx) = records.get_era_index(Some(backing_votes.session)) {
-                        if let Some(authorities) =
-                            records.get_authorities(Some(EpochKey(era_idx, backing_votes.session)))
-                        {
-                            // Find groupIdx and peers for each authority
-                            for authority_idx in authorities.iter() {
-                                let mut latest_points_collected: u32 = 0;
+                    // Fetch on chain votes
+                    let on_chain_votes_addr =
+                        node_runtime::storage().para_inherent().on_chain_votes();
 
-                                if let Some(authority_record) = records.get_mut_authority_record(
-                                    *authority_idx,
-                                    Some(backing_votes.session),
-                                ) {
-                                    if authority_record.address().is_some() {
-                                        // Collect current points
-                                        let current_points = if let Some((_s, points)) =
-                                            era_reward_points.individual.iter().find(|(s, _p)| {
-                                                s == authority_record.address().unwrap()
-                                            }) {
-                                            *points
-                                        } else {
-                                            0
-                                        };
+                    if let Some(backing_votes) = api
+                        .storage()
+                        .at(block_hash)
+                        .fetch(&on_chain_votes_addr)
+                        .await?
+                    {
+                        // *******************************************
+                        // Track latest points collected per authority
+                        // *******************************************
+                        if let Some(&era_idx) = records.get_era_index(Some(backing_votes.session)) {
+                            if let Some(authorities) = records
+                                .get_authorities(Some(EpochKey(era_idx, backing_votes.session)))
+                            {
+                                // Find groupIdx and peers for each authority
+                                for authority_idx in authorities.iter() {
+                                    let mut latest_points_collected: u32 = 0;
 
-                                        // Update authority current points and get the difference
-                                        latest_points_collected =
-                                            authority_record.update_current_points(current_points);
+                                    if let Some(authority_record) = records
+                                        .get_mut_authority_record(
+                                            *authority_idx,
+                                            Some(backing_votes.session),
+                                        )
+                                    {
+                                        if authority_record.address().is_some() {
+                                            // Collect current points
+                                            let current_points = if let Some((_s, points)) =
+                                                era_reward_points.individual.iter().find(
+                                                    |(s, _p)| {
+                                                        s == authority_record.address().unwrap()
+                                                    },
+                                                ) {
+                                                *points
+                                            } else {
+                                                0
+                                            };
+
+                                            // Update authority current points and get the difference
+                                            latest_points_collected = authority_record
+                                                .update_current_points(current_points);
+                                        }
+                                    }
+
+                                    // Get para_record for the same on chain votes session
+                                    if let Some(para_record) = records.get_mut_para_record(
+                                        *authority_idx,
+                                        Some(backing_votes.session),
+                                    ) {
+                                        // Increment current para_id latest_points_collected
+                                        // and authored blocks if is the author of the finalized block
+                                        // and the backing_votes session is the same as the current session
+                                        // NOTE: At the first block of a session the backing_votes.session still references session().current_index - 1
+                                        para_record.update_points(
+                                            latest_points_collected,
+                                            authority_index == *authority_idx
+                                                && backing_votes.session == session_index,
+                                        );
                                     }
                                 }
+                            }
+                        }
 
-                                // Get para_record for the same on chain votes session
-                                if let Some(para_record) = records.get_mut_para_record(
-                                    *authority_idx,
-                                    Some(backing_votes.session),
-                                ) {
-                                    // Increment current para_id latest_points_collected
-                                    // and authored blocks if is the author of the finalized block
-                                    // and the backing_votes session is teh same as the current session
-                                    // NOTE: At the first block of a session the backing_votes.session still references session().current_index - 1
-                                    para_record.update_points(
-                                        latest_points_collected,
-                                        authority_index == *authority_idx
-                                            && backing_votes.session == session_index,
-                                    );
+                        // ***********************************************************************
+                        // Track explicit/implicit/missed votes new approach since runtime 1000000
+                        // ***********************************************************************
+                        //
+                        // Iterate over each validator_groups and find if one of the members show up at backing.group_authorities
+                        // If yes, iterate again and increase implicit/explicit vote or increase missed vote if member is not present in backing.group_authorities
+                        // TODO: Edge case of all members missing from backing.group_authorities
 
-                                    for (candidate_receipt, group_authorities) in
-                                        backing_votes.backing_validators_per_candidate.iter()
-                                    {
-                                        debug!(
-                                            "para_id: {:?} group_authorities {:?}",
-                                            candidate_receipt.descriptor.para_id, group_authorities
-                                        );
+                        for (group_idx, group) in validator_groups.iter().enumerate() {
+                            // NOTE: authorities_present vec will contain the authorities present in a group where someone is missing
+                            let mut authorities_present = Vec::new();
+                            let mut para_id_flagged: Option<ParaId> = None;
 
-                                        // Check if the para_id assigned to this authority got any on chain votes
-                                        // Destructure ParaId
-                                        let Id(para_id) = candidate_receipt.descriptor.para_id;
-                                        // If para id exists increment vote or missed vote
-                                        if para_record.is_para_id_assigned(para_id) {
-                                            if let Some((_, vote)) = group_authorities.iter().find(
-                                                |(ValidatorIndex(para_idx), _)| {
-                                                    *para_idx == *para_record.para_index()
-                                                },
+                            'outer: for ValidatorIndex(group_para_val_idx) in group {
+                                for (candidate_receipt, group_authorities) in
+                                    backing_votes.backing_validators_per_candidate.iter()
+                                {
+                                    // destructure para_id
+                                    let Id(para_id) = candidate_receipt.descriptor.para_id;
+
+                                    if let Some((_, vote)) = group_authorities.iter().find(
+                                        |(ValidatorIndex(para_idx), _)| {
+                                            *para_idx == *group_para_val_idx
+                                        },
+                                    ) {
+                                        // get authority index from active_validator_indices
+                                        if let Some(ValidatorIndex(auth_idx)) =
+                                            active_validator_indices
+                                                .get(*group_para_val_idx as usize)
+                                        {
+                                            // NOTE: in case there are less backing authorities than the original group len it means that someone is missing.
+                                            // keep track of the ones present so that the ones missing could be identified later
+                                            if group_authorities.len() < group.len() {
+                                                authorities_present.push(*auth_idx);
+                                                para_id_flagged = Some(para_id);
+                                            }
+
+                                            // get para_record for the same on chain votes session
+                                            if let Some(para_record) = records.get_mut_para_record(
+                                                *auth_idx,
+                                                Some(backing_votes.session),
                                             ) {
                                                 match vote {
                                                     ValidityAttestation::Explicit(_) => {
@@ -1192,99 +1246,109 @@ pub async fn track_records(
                                                         para_record.inc_implicit_votes(para_id);
                                                     }
                                                 }
-                                            } else {
-                                                // Try to guarantee that one of the peers is in the same group
-                                                if group_authorities.len() > 0 {
-                                                    if let Some(group_idx) = para_record.group() {
-                                                        let (para_val_idx, _) =
-                                                            &group_authorities[0];
-
-                                                        for (idx, group) in
-                                                            validator_groups.iter().enumerate()
-                                                        {
-                                                            if group.contains(&para_val_idx) {
-                                                                if idx == group_idx as usize {
-                                                                    para_record
-                                                                        .inc_missed_votes(para_id);
-                                                                    break;
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                } else {
-                                                    para_record.inc_missed_votes(para_id);
-                                                }
                                             }
-
-                                            break;
-                                        } else {
-                                            debug!("On chain votes para_id: {:?} is different from the para_id: {:?} current assigned to the validator index: {}.", para_id, para_record.para_id(), para_record.para_index());
                                         }
+                                        // assign current para_id to the group
+                                        records.update_para_id_by_group(
+                                            para_id,
+                                            u32::try_from(group_idx).unwrap(),
+                                            Some(backing_votes.session),
+                                        );
+                                        continue 'outer;
+                                    }
+                                }
+                            }
+                            if authorities_present.len() > 0 && para_id_flagged.is_some() {
+                                records.inc_missing_vote_for_the_missing_authorities(
+                                    authorities_present,
+                                    para_id_flagged.unwrap(),
+                                    u32::try_from(group_idx).unwrap(),
+                                    Some(backing_votes.session),
+                                );
+                            }
+                        }
+
+                        // ***********************************************************************
+                        // Track Core Assignments
+                        // ***********************************************************************
+                        // Fetch availability_cores
+                        let availability_cores_addr = node_runtime::storage()
+                            .para_scheduler()
+                            .availability_cores();
+
+                        if let Some(availability_cores) = api
+                            .storage()
+                            .at(block_hash)
+                            .fetch(&availability_cores_addr)
+                            .await?
+                        {
+                            for (i, core_occupied) in availability_cores.iter().enumerate() {
+                                let core_idx = u32::try_from(i).unwrap();
+                                match &core_occupied {
+                                    CoreOccupied::Free => records
+                                        .update_core_free(core_idx, Some(backing_votes.session)),
+                                    CoreOccupied::Paras(paras_entry) => {
+                                        // destructure para_id
+                                        let Id(para_id) = paras_entry.assignment.para_id;
+                                        records.update_core_by_para_id(
+                                            para_id,
+                                            core_idx,
+                                            Some(backing_votes.session),
+                                        );
                                     }
                                 }
                             }
                         }
 
-                        // Record Initiated Disputes
+                        // ***********************************************************************
+                        // Track Initiated Disputes
+                        // ***********************************************************************
                         for dispute_statement_set in backing_votes.disputes.iter() {
                             for (statement, ValidatorIndex(para_idx), _) in
                                 dispute_statement_set.statements.iter()
                             {
                                 match statement {
                                     DisputeStatement::Invalid(_) => {
-                                        // Fetch para validator indices
-                                        let active_validator_indices_addr = node_runtime::storage()
-                                            .paras_shared()
-                                            .active_validator_indices();
-                                        if let Some(active_validator_indices) = api
-                                            .storage()
-                                            .at(block_hash)
-                                            .fetch(&active_validator_indices_addr)
-                                            .await?
+                                        if let Some(ValidatorIndex(auth_idx)) =
+                                            active_validator_indices.get(*para_idx as usize)
                                         {
-                                            if let Some(ValidatorIndex(auth_idx)) =
-                                                active_validator_indices.get(*para_idx as usize)
+                                            // Log stash address for the initiated dispute
+                                            if let Some(authority_record) = records
+                                                .get_mut_authority_record(
+                                                    *auth_idx,
+                                                    Some(backing_votes.session),
+                                                )
                                             {
-                                                // Log stash address for the initiated dispute
-                                                if let Some(authority_record) = records
-                                                    .get_mut_authority_record(
-                                                        *auth_idx,
-                                                        Some(backing_votes.session),
-                                                    )
-                                                {
-                                                    if let Some(stash) = authority_record.address()
-                                                    {
-                                                        warn!(
+                                                if let Some(stash) = authority_record.address() {
+                                                    warn!(
                                                         "Dispute initiated for stash: {} ({}) {:?}",
                                                         stash, auth_idx, statement
                                                     );
-                                                    }
                                                 }
-                                                // Get para_record for the same on chain votes session
-                                                if let Some(para_record) = records
-                                                    .get_mut_para_record(
-                                                        *auth_idx,
-                                                        Some(backing_votes.session),
-                                                    )
-                                                {
-                                                    para_record.push_dispute(
-                                                        block_number,
-                                                        format!("{:?}", statement),
-                                                    );
-                                                }
-                                            } else {
-                                                warn!("Dispute initiated at block {block_number} but authority record for para_idx: {para_idx} not found!");
+                                            }
+                                            // Get para_record for the same on chain votes session
+                                            if let Some(para_record) = records.get_mut_para_record(
+                                                *auth_idx,
+                                                Some(backing_votes.session),
+                                            ) {
+                                                para_record.push_dispute(
+                                                    block_number,
+                                                    format!("{:?}", statement),
+                                                );
                                             }
                                         } else {
+                                            warn!("Dispute initiated at block {block_number} but authority record for para_idx: {para_idx} not found!");
                                         }
                                     }
                                     _ => continue,
                                 }
                             }
                         }
+                    } else {
+                        warn!("None on chain voted recorded.");
                     }
                 } else {
-                    warn!("None on chain voted recorded.");
+                    warn!("None para validator indices defined.");
                 }
             } else {
                 warn!("None validator groups defined.");
@@ -1307,7 +1371,7 @@ pub async fn run_val_perf_report(
     let onet: Onet = Onet::new().await;
     let api = onet.client().clone();
 
-    let network = Network::load(&api).await?;
+    let network = Network::load(onet.rpc()).await?;
     // Set era/session details
     let start_block = records
         .start_block(Some(EpochKey(era_index, epoch_index)))
@@ -1469,9 +1533,9 @@ pub async fn run_groups_report(
     records: &Records,
 ) -> Result<(), OnetError> {
     let onet: Onet = Onet::new().await;
-    let client = onet.client();
+    let _client = onet.client();
 
-    let network = Network::load(client).await?;
+    let network = Network::load(onet.rpc()).await?;
 
     // Set era/session details
     let start_block = records
@@ -1562,9 +1626,8 @@ pub async fn run_parachains_report(
     records: &Records,
 ) -> Result<(), OnetError> {
     let onet: Onet = Onet::new().await;
-    let client = onet.client();
 
-    let network = Network::load(client).await?;
+    let network = Network::load(onet.rpc()).await?;
 
     // Set era/session details
     let start_block = records
@@ -1666,7 +1729,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     let api = onet.client().clone();
 
-    let network = Network::load(&api).await?;
+    let network = Network::load(onet.rpc()).await?;
 
     // Fetch active era index
     let active_era_addr = node_runtime::storage().staking().active_era();
@@ -1732,14 +1795,14 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         .await?
     {
         // Fetch all validators
-        let validators_addr = node_runtime::storage().staking().validators_root();
+        let validators_addr = node_runtime::storage().staking().validators_iter();
         let mut iter = api
             .storage()
             .at_latest()
             .await?
-            .iter(validators_addr, 10)
+            .iter(validators_addr)
             .await?;
-        while let Some((key, validator_prefs)) = iter.next().await? {
+        while let Some(Ok((key, validator_prefs))) = iter.next().await {
             let stash = get_account_id_from_storage_key(key);
             let mut v = Validator::new(stash.clone());
             if validator_prefs.commission != Perbill(1000000000) {
@@ -2666,12 +2729,15 @@ async fn try_run_nomination(
         let tx_events = response.fetch_events().await?;
 
         // Get block number
-        let block_number =
-            if let Some(header) = api.rpc().header(Some(tx_events.block_hash())).await? {
-                header.number
-            } else {
-                0
-            };
+        let block_number = if let Some(header) = onet
+            .rpc()
+            .chain_get_header(Some(tx_events.block_hash()))
+            .await?
+        {
+            header.number
+        } else {
+            0
+        };
 
         let failed_event = tx_events.find_first::<ExtrinsicFailed>()?;
 
@@ -2741,9 +2807,9 @@ async fn verify_oversubscribed(
 
     let block_hash = match block_hash {
         Some(bh) => bh,
-        None => api
+        None => onet
             .rpc()
-            .block_hash(None)
+            .chain_get_block_hash(None)
             .await?
             .expect("didn't pass a block number; qed"),
     };
@@ -2890,8 +2956,7 @@ async fn get_authority_index(
     onet: &Onet,
     block_hash: Option<H256>,
 ) -> Result<Option<AuthorityIndex>, OnetError> {
-    let api = onet.client().clone();
-    if let Some(header) = api.rpc().header(block_hash).await? {
+    if let Some(header) = onet.rpc().chain_get_header(block_hash).await? {
         match header.digest {
             Digest { logs } => {
                 for digests in logs.iter() {
@@ -2947,12 +3012,12 @@ pub async fn cache_session_stats_records(
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
     // Load network details
-    let network = Network::load(&api).await?;
+    let network = Network::load(onet.rpc()).await?;
 
     // ---
     // cache all validators profile every new session and snapshot session stats
 
-    if let Some(block) = api.rpc().header(Some(block_hash)).await? {
+    if let Some(block) = onet.rpc().chain_get_header(Some(block_hash)).await? {
         let active_era_addr = node_runtime::storage().staking().active_era();
         let era_index = match api
             .storage()
@@ -2996,13 +3061,13 @@ pub async fn cache_session_stats_records(
             .await?
         {
             // Fetch all validators
-            let validators_addr = node_runtime::storage().staking().validators_root();
+            let validators_addr = node_runtime::storage().staking().validators_iter();
             let mut iter = api
                 .storage()
                 .at(block.parent_hash)
-                .iter(validators_addr, 10)
+                .iter(validators_addr)
                 .await?;
-            while let Some((key, validator_prefs)) = iter.next().await? {
+            while let Some(Ok((key, validator_prefs))) = iter.next().await {
                 // validator stash address
                 let stash = get_account_id_from_storage_key(key);
                 // create a new validator instance
@@ -3388,9 +3453,9 @@ async fn collect_nominators_data(
     let mut nominators_map: BTreeMap<AccountId32, Vec<(AccountId32, u128, u128)>> = BTreeMap::new();
 
     let mut counter = 0;
-    let storage_addr = node_runtime::storage().staking().nominators_root();
-    let mut iter = api.storage().at(block_hash).iter(storage_addr, 10).await?;
-    while let Some((key, nominations)) = iter.next().await? {
+    let storage_addr = node_runtime::storage().staking().nominators_iter();
+    let mut iter = api.storage().at(block_hash).iter(storage_addr).await?;
+    while let Some(Ok((key, nominations))) = iter.next().await {
         let nominator_stash = get_account_id_from_storage_key(key);
         let bonded_addr = node_runtime::storage()
             .staking()
