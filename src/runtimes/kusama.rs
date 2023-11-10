@@ -286,22 +286,28 @@ pub async fn process_finalized_block(
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
-    let config = CONFIG.clone();
     let api = onet.client().clone();
 
-    let exceptional_blocks: Vec<String> =
-        config.blocks_where_metadata_is_fetched_from_previous_block;
+    // DEPRECATE exceptional_blocks, see note below
+    // let exceptional_blocks: Vec<String> =
+    //     config.blocks_where_metadata_is_fetched_from_previous_block;
+    // // // NOTE: this exceptional cases handle the cases where the events of a certain block is
+    // // only able to be decoded if metadata presented is from previous block
+    // // an example is the block_number 15426015 in Kusama
+    // let block_hash_metadata = if exceptional_blocks.contains(&block_number.to_string()) {
+    //     onet.rpc()
+    //         .chain_get_block_hash(Some((block_number - 1).into()))
+    //         .await?
+    // } else {
+    //     Some(block_hash)
+    // };
 
-    // NOTE: this exceptional cases handle the cases where the events of a certain block is
-    // only able to be decoded if metadata presented is from previous block
-    // an example is the block_number 15426015 in Kusama
-    let block_hash_metadata = if exceptional_blocks.contains(&block_number.to_string()) {
-        onet.rpc()
-            .chain_get_block_hash(Some((block_number - 1).into()))
-            .await?
-    } else {
-        Some(block_hash)
-    };
+    // NOTE: To better handle runtime upgrades where the event system.code_updated can only be decoded by the parent metadata,
+    // we than use this principle for all blocks
+    let block_hash_metadata = onet
+        .rpc()
+        .chain_get_block_hash(Some((block_number - 1).into()))
+        .await?;
 
     let metadata = onet.rpc().state_get_metadata(block_hash_metadata).await?;
     debug!("metadata_legacy: {:?}", metadata);
