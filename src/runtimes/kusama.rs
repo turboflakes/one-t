@@ -1269,32 +1269,48 @@ pub async fn track_records(
                         }
 
                         // ***********************************************************************
-                        // Track Core Assignments
+                        // Track Core Assignments only after specVersion > 1000000
                         // ***********************************************************************
-                        // Fetch availability_cores
-                        let availability_cores_addr = node_runtime::storage()
-                            .para_scheduler()
-                            .availability_cores();
+                        // Fetch last_runtime_upgrade
+                        let last_runtime_upgrade_addr =
+                            node_runtime::storage().system().last_runtime_upgrade();
 
-                        if let Some(availability_cores) = api
+                        if let Some(info) = api
                             .storage()
                             .at(block_hash)
-                            .fetch(&availability_cores_addr)
+                            .fetch(&last_runtime_upgrade_addr)
                             .await?
                         {
-                            for (i, core_occupied) in availability_cores.iter().enumerate() {
-                                let core_idx = u32::try_from(i).unwrap();
-                                match &core_occupied {
-                                    CoreOccupied::Free => records
-                                        .update_core_free(core_idx, Some(backing_votes.session)),
-                                    CoreOccupied::Paras(paras_entry) => {
-                                        // destructure para_id
-                                        let Id(para_id) = paras_entry.assignment.para_id;
-                                        records.update_core_by_para_id(
-                                            para_id,
-                                            core_idx,
-                                            Some(backing_votes.session),
-                                        );
+                            if info.spec_version >= 1000000 {
+                                // Fetch availability_cores
+                                let availability_cores_addr = node_runtime::storage()
+                                    .para_scheduler()
+                                    .availability_cores();
+
+                                if let Some(availability_cores) = api
+                                    .storage()
+                                    .at(block_hash)
+                                    .fetch(&availability_cores_addr)
+                                    .await?
+                                {
+                                    for (i, core_occupied) in availability_cores.iter().enumerate()
+                                    {
+                                        let core_idx = u32::try_from(i).unwrap();
+                                        match &core_occupied {
+                                            CoreOccupied::Free => records.update_core_free(
+                                                core_idx,
+                                                Some(backing_votes.session),
+                                            ),
+                                            CoreOccupied::Paras(paras_entry) => {
+                                                // destructure para_id
+                                                let Id(para_id) = paras_entry.assignment.para_id;
+                                                records.update_core_by_para_id(
+                                                    para_id,
+                                                    core_idx,
+                                                    Some(backing_votes.session),
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                             }
