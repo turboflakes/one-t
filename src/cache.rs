@@ -33,11 +33,6 @@ use std::time::Duration;
 use std::{thread, time};
 use subxt::{ext::sp_core::H256, utils::AccountId32};
 
-const CACHE_POOL_MAX_OPEN: u64 = 20;
-const CACHE_POOL_MAX_IDLE: u64 = 8;
-const CACHE_POOL_TIMEOUT_SECONDS: u64 = 30;
-const CACHE_POOL_EXPIRE_SECONDS: u64 = 60;
-
 pub type RedisPool = Pool<RedisConnectionManager>;
 pub type RedisConn = Connection<RedisConnectionManager>;
 
@@ -256,14 +251,15 @@ fn get_redis_url(config: Config) -> String {
 }
 
 pub fn create_pool(config: Config) -> Result<RedisPool, CacheError> {
+    let config = CONFIG.clone();
     let redis_url = get_redis_url(config);
     let client = redis::Client::open(redis_url).map_err(CacheError::RedisClientError)?;
     let manager = RedisConnectionManager::new(client);
     Ok(Pool::builder()
-        .get_timeout(Some(Duration::from_secs(CACHE_POOL_TIMEOUT_SECONDS)))
-        .max_open(CACHE_POOL_MAX_OPEN)
-        .max_idle(CACHE_POOL_MAX_IDLE)
-        .max_lifetime(Some(Duration::from_secs(CACHE_POOL_EXPIRE_SECONDS)))
+        .get_timeout(Some(Duration::from_secs(config.redis_pool_timeout_seconds)))
+        .max_open(config.redis_pool_max_open)
+        .max_idle(config.redis_pool_max_idle)
+        .max_lifetime(Some(Duration::from_secs(config.redis_pool_expire_seconds)))
         .build(manager))
 }
 

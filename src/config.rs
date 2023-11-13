@@ -194,6 +194,26 @@ fn default_redis_database() -> u8 {
     0
 }
 
+/// sets the maximum number of connections managed by the pool.
+fn default_redis_pool_max_open() -> u64 {
+    20
+}
+
+/// sets the maximum number of connections managed by the pool.
+fn default_redis_pool_max_idle() -> u64 {
+    8
+}
+
+/// sets the get timeout used by the pool
+fn default_redis_pool_timeout_seconds() -> u64 {
+    30
+}
+
+/// sets the maximum lifetime of connections in the pool.
+fn default_redis_pool_expire_seconds() -> u64 {
+    60
+}
+
 #[derive(Clone, Deserialize, Debug)]
 pub struct Config {
     // general
@@ -299,6 +319,14 @@ pub struct Config {
     pub redis_password: String,
     #[serde(default = "default_redis_database")]
     pub redis_database: u8,
+    #[serde(default = "default_redis_pool_max_open")]
+    pub redis_pool_max_open: u64,
+    #[serde(default = "default_redis_pool_max_idle")]
+    pub redis_pool_max_idle: u64,
+    #[serde(default = "default_redis_pool_timeout_seconds")]
+    pub redis_pool_timeout_seconds: u64,
+    #[serde(default = "default_redis_pool_expire_seconds")]
+    pub redis_pool_expire_seconds: u64,
 }
 
 /// Inject dotenv and env vars into the Config struct
