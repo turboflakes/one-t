@@ -161,6 +161,23 @@ pub enum Grade {
     NA,
 }
 
+impl Grade {
+    pub fn leading_spaces(&self, leading_spaces: usize) -> String {
+        match self {
+            Self::Ap => format!("{:width$}A+", "", width = leading_spaces),
+            Self::A => format!("{:width$}A", "", width = leading_spaces + 1),
+            Self::Bp => format!("{:width$}B+", "", width = leading_spaces),
+            Self::B => format!("{:width$}B", "", width = leading_spaces + 1),
+            Self::Cp => format!("{:width$}C+", "", width = leading_spaces),
+            Self::C => format!("{:width$}C", "", width = leading_spaces + 1),
+            Self::Dp => format!("{:width$}D+", "", width = leading_spaces),
+            Self::D => format!("{:width$}D", "", width = leading_spaces + 1),
+            Self::F => format!("{:width$}F", "", width = leading_spaces + 1),
+            Self::NA => format!("{:width$}-", "", width = leading_spaces + 1),
+        }
+    }
+}
+
 impl std::fmt::Display for Grade {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
