@@ -1653,7 +1653,7 @@ fn top_performers_report<'a>(
             for v in &validators[..max] {
                 report.add_raw_text(format!(
                     "* {} ({:.2}%, {}, {}, {}x)",
-                    v.name,
+                    format!("<a href=\"https://apps.turboflakes.io/?chain={}&app=onet#/validator/{}\">{}</a>", data.network.name.to_lowercase(), v.stash, v.name),
                     v.score * 100.0,
                     (v.missed_ratio.unwrap() * 10000.0).round() / 10000.0,
                     v.avg_para_points,
