@@ -251,8 +251,7 @@ fn get_redis_url(config: Config) -> String {
 }
 
 pub fn create_pool(config: Config) -> Result<RedisPool, CacheError> {
-    let config = CONFIG.clone();
-    let redis_url = get_redis_url(config);
+    let redis_url = get_redis_url(config.clone());
     let client = redis::Client::open(redis_url).map_err(CacheError::RedisClientError)?;
     let manager = RedisConnectionManager::new(client);
     Ok(Pool::builder()
