@@ -800,7 +800,7 @@ impl From<RawDataPara> for Report {
                                 peer.2.total_implicit_votes(),
                                 peer.2.total_explicit_votes(),
                                 peer.2.total_missed_votes(),
-                                grade(1.0_f64 - mvr),
+                                grade(1.0_f64 - mvr).leading_spaces(2),
                                 (mvr * 10000.0).round() / 10000.0,
                                 peer.1.para_points(),
                                 peer.1.points()
