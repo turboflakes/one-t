@@ -675,7 +675,7 @@ impl From<RawDataPara> for Report {
             if let Some(authority_index) = authority_record.authority_index() {
                 report.add_raw_text(format!(
                     // "<b><a href=\"https://{}.subscan.io/validator/{}\">{}</a></b>",
-                    "<b><a href=\"https://apps.turboflakes.io/?chain={}&app=onet#/validator/{}\">{}</a></b>",
+                    "<b><a href=\"https://apps.turboflakes.io/?chain={}&app=onet#/validator/{}?mode=history\">{}</a></b>",
                     data.network.name.to_lowercase(),
                     data.validator.stash,
                     data.validator.name
@@ -1584,7 +1584,7 @@ fn top_validators_report<'a>(
         for v in &tvp_sorted[..max] {
             report.add_raw_text(format!(
                 "* {} ({})",
-                format!("<a href=\"https://apps.turboflakes.io/?chain={}&app=onet#/validator/{}\">{}</a>", data.network.name.to_lowercase(), v.stash, v.name),
+                format!("<a href=\"https://apps.turboflakes.io/?chain={}&app=onet#/validator/{}?mode=history\">{}</a>", data.network.name.to_lowercase(), v.stash, v.name),
                 v.maximum_history_total_points / v.maximum_history_total_eras
             ));
         }
@@ -1653,7 +1653,7 @@ fn top_performers_report<'a>(
             for v in &validators[..max] {
                 report.add_raw_text(format!(
                     "* {} ({:.2}%, {}, {}, {}x)",
-                    format!("<a href=\"https://apps.turboflakes.io/?chain={}&app=onet#/validator/{}\">{}</a>", data.network.name.to_lowercase(), v.stash, v.name),
+                    format!("<a href=\"https://apps.turboflakes.io/?chain={}&app=onet#/validator/{}?mode=history\">{}</a>", data.network.name.to_lowercase(), v.stash, v.name),
                     v.score * 100.0,
                     (v.missed_ratio.unwrap() * 10000.0).round() / 10000.0,
                     v.avg_para_points,
