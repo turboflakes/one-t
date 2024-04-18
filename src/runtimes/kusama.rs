@@ -81,8 +81,10 @@ use node_runtime::{
     runtime_types::{
         bounded_collections::bounded_vec::BoundedVec, pallet_identity::types::Data,
         pallet_nomination_pools::PoolState, polkadot_parachain_primitives::primitives::Id,
-        polkadot_primitives::v5::CoreOccupied, polkadot_primitives::v5::DisputeStatement,
-        polkadot_primitives::v5::ValidatorIndex, polkadot_primitives::v5::ValidityAttestation,
+        polkadot_primitives::v6::DisputeStatement, polkadot_primitives::v6::ValidatorIndex,
+        polkadot_primitives::v6::ValidityAttestation,
+        polkadot_runtime_parachains::scheduler::common::Assignment,
+        polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
         sp_arithmetic::per_things::Perbill, sp_consensus_babe::digests::PreDigest,
     },
     session::events::NewSession,
@@ -1287,7 +1289,43 @@ pub async fn track_records(
                             .fetch(&last_runtime_upgrade_addr)
                             .await?
                         {
-                            if info.spec_version >= 1000000 {
+                            // TODO: evaluate how history can also be imported with different metadata
+                            //
+                            // if info.spec_version >= 1000000 && info.spec_version < 1002000 {
+                            //     // Fetch availability_cores
+                            //     let availability_cores_addr = node_runtime::storage()
+                            //         .para_scheduler()
+                            //         .availability_cores();
+
+                            //     if let Some(availability_cores) = api
+                            //         .storage()
+                            //         .at(block_hash)
+                            //         .fetch(&availability_cores_addr)
+                            //         .await?
+                            //     {
+                            //         for (i, core_occupied) in availability_cores.iter().enumerate()
+                            //         {
+                            //             let core_idx = u32::try_from(i).unwrap();
+                            //             match &core_occupied {
+                            //                 CoreOccupied::Free => records.update_core_free(
+                            //                     core_idx,
+                            //                     Some(backing_votes.session),
+                            //                 ),
+                            //                 CoreOccupied::Paras(paras_entry) => {
+                            //                     // destructure para_id
+                            //                     let Id(para_id) = paras_entry.assignment.para_id;
+                            //                     records.update_core_by_para_id(
+                            //                         para_id,
+                            //                         core_idx,
+                            //                         Some(backing_votes.session),
+                            //                     );
+                            //                 }
+                            //             }
+                            //         }
+                            //     }
+                            // }
+
+                            if info.spec_version >= 1002000 {
                                 // Fetch availability_cores
                                 let availability_cores_addr = node_runtime::storage()
                                     .para_scheduler()
@@ -1308,13 +1346,26 @@ pub async fn track_records(
                                                 Some(backing_votes.session),
                                             ),
                                             CoreOccupied::Paras(paras_entry) => {
-                                                // destructure para_id
-                                                let Id(para_id) = paras_entry.assignment.para_id;
-                                                records.update_core_by_para_id(
-                                                    para_id,
-                                                    core_idx,
-                                                    Some(backing_votes.session),
-                                                );
+                                                match &paras_entry.assignment {
+                                                    //     ParasEntry::<u32>
+                                                    Assignment::Pool {
+                                                        para_id: Id(para_id),
+                                                        core_index: _,
+                                                    } => {
+                                                        records.update_core_by_para_id(
+                                                            para_id.clone(),
+                                                            core_idx,
+                                                            Some(backing_votes.session),
+                                                        );
+                                                    }
+                                                    Assignment::Bulk(Id(para_id)) => {
+                                                        records.update_core_by_para_id(
+                                                            para_id.clone(),
+                                                            core_idx,
+                                                            Some(backing_votes.session),
+                                                        );
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -1833,8 +1884,6 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                 } else {
                     v.subset = Subset::TVP;
                 }
-                v.is_oversubscribed =
-                    verify_oversubscribed(&onet, active_era_index, &stash, None).await?;
             } else {
                 v.subset = Subset::C100;
             }
@@ -2814,41 +2863,42 @@ async fn try_run_nomination(
     ))
 }
 
-async fn verify_oversubscribed(
-    onet: &Onet,
-    era_index: u32,
-    stash: &AccountId32,
-    block_hash: Option<H256>,
-) -> Result<bool, OnetError> {
-    let api = onet.client().clone();
+// TODO: DEPRECATE, no longer needed after runtime upgrade v1.2
+// async fn verify_oversubscribed(
+//     onet: &Onet,
+//     era_index: u32,
+//     stash: &AccountId32,
+//     block_hash: Option<H256>,
+// ) -> Result<bool, OnetError> {
+//     let api = onet.client().clone();
 
-    let max_addr = node_runtime::constants()
-        .staking()
-        .max_nominator_rewarded_per_validator();
-    let max: u32 = api.constants().at(&max_addr)?;
+//     let max_addr = node_runtime::constants()
+//         .staking()
+//         .max_nominator_rewarded_per_validator();
+//     let max: u32 = api.constants().at(&max_addr)?;
 
-    let block_hash = match block_hash {
-        Some(bh) => bh,
-        None => onet
-            .rpc()
-            .chain_get_block_hash(None)
-            .await?
-            .expect("didn't pass a block number; qed"),
-    };
+//     let block_hash = match block_hash {
+//         Some(bh) => bh,
+//         None => onet
+//             .rpc()
+//             .chain_get_block_hash(None)
+//             .await?
+//             .expect("didn't pass a block number; qed"),
+//     };
 
-    let eras_stakers_addr = node_runtime::storage()
-        .staking()
-        .eras_stakers(&era_index, stash);
-    if let Some(exposure) = api
-        .storage()
-        .at(block_hash)
-        .fetch(&eras_stakers_addr)
-        .await?
-    {
-        return Ok(exposure.others.len() as u32 > max);
-    }
-    return Ok(false);
-}
+//     let eras_stakers_addr = node_runtime::storage()
+//         .staking()
+//         .eras_stakers(&era_index, stash);
+//     if let Some(exposure) = api
+//         .storage()
+//         .at(block_hash)
+//         .fetch(&eras_stakers_addr)
+//         .await?
+//     {
+//         return Ok(exposure.others.len() as u32 > max);
+//     }
+//     return Ok(false);
+// }
 
 async fn get_own_stake_via_controller(
     onet: &Onet,
@@ -2902,7 +2952,7 @@ async fn get_identity(
         .fetch(&identity_of_addr)
         .await?
     {
-        Some(identity) => {
+        Some((identity, _)) => {
             debug!("identity {:?}", identity);
             let parent = parse_identity_data(identity.info.display);
             let identity = match sub_account_name {
@@ -3121,11 +3171,6 @@ pub async fn cache_session_stats_records(
                     } else {
                         Subset::C100
                     };
-
-                    // check if is oversubscribed
-                    v.is_oversubscribed =
-                        verify_oversubscribed(&onet, era_index, &stash, Some(block.parent_hash))
-                            .await?;
 
                     // check if is in active set
                     v.is_active = authorities.contains(&stash);

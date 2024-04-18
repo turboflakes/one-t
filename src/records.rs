@@ -1522,6 +1522,7 @@ pub struct ValidatorProfileRecord {
     pub mvr: Option<u64>,
     // mvr_session contains the session from where the mvr was last updated
     pub mvr_session: Option<EpochIndex>,
+    // TODO: DEPRECATE is_oversubscribed, after runtime v1.2 no longer needed
     pub is_oversubscribed: bool,
     pub is_active: bool,
     pub is_chilled: bool,
