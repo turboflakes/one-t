@@ -81,8 +81,10 @@ use node_runtime::{
     runtime_types::{
         bounded_collections::bounded_vec::BoundedVec, pallet_identity::types::Data,
         pallet_nomination_pools::PoolState, polkadot_parachain_primitives::primitives::Id,
-        polkadot_primitives::v5::CoreOccupied, polkadot_primitives::v5::DisputeStatement,
-        polkadot_primitives::v5::ValidatorIndex, polkadot_primitives::v5::ValidityAttestation,
+        polkadot_primitives::v6::DisputeStatement, polkadot_primitives::v6::ValidatorIndex,
+        polkadot_primitives::v6::ValidityAttestation,
+        polkadot_runtime_parachains::scheduler::common::Assignment,
+        polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
         sp_arithmetic::per_things::Perbill, sp_consensus_babe::digests::PreDigest,
     },
     session::events::NewSession,
@@ -1287,7 +1289,43 @@ pub async fn track_records(
                             .fetch(&last_runtime_upgrade_addr)
                             .await?
                         {
-                            if info.spec_version >= 1000000 {
+                            // TODO: evaluate how history can also be imported with different metadata
+                            //
+                            // if info.spec_version >= 1000000 && info.spec_version < 1002000 {
+                            //     // Fetch availability_cores
+                            //     let availability_cores_addr = node_runtime::storage()
+                            //         .para_scheduler()
+                            //         .availability_cores();
+
+                            //     if let Some(availability_cores) = api
+                            //         .storage()
+                            //         .at(block_hash)
+                            //         .fetch(&availability_cores_addr)
+                            //         .await?
+                            //     {
+                            //         for (i, core_occupied) in availability_cores.iter().enumerate()
+                            //         {
+                            //             let core_idx = u32::try_from(i).unwrap();
+                            //             match &core_occupied {
+                            //                 CoreOccupied::Free => records.update_core_free(
+                            //                     core_idx,
+                            //                     Some(backing_votes.session),
+                            //                 ),
+                            //                 CoreOccupied::Paras(paras_entry) => {
+                            //                     // destructure para_id
+                            //                     let Id(para_id) = paras_entry.assignment.para_id;
+                            //                     records.update_core_by_para_id(
+                            //                         para_id,
+                            //                         core_idx,
+                            //                         Some(backing_votes.session),
+                            //                     );
+                            //                 }
+                            //             }
+                            //         }
+                            //     }
+                            // }
+
+                            if info.spec_version >= 1002000 {
                                 // Fetch availability_cores
                                 let availability_cores_addr = node_runtime::storage()
                                     .para_scheduler()
@@ -1308,13 +1346,26 @@ pub async fn track_records(
                                                 Some(backing_votes.session),
                                             ),
                                             CoreOccupied::Paras(paras_entry) => {
-                                                // destructure para_id
-                                                let Id(para_id) = paras_entry.assignment.para_id;
-                                                records.update_core_by_para_id(
-                                                    para_id,
-                                                    core_idx,
-                                                    Some(backing_votes.session),
-                                                );
+                                                match &paras_entry.assignment {
+                                                    //     ParasEntry::<u32>
+                                                    Assignment::Pool {
+                                                        para_id: Id(para_id),
+                                                        core_index: _,
+                                                    } => {
+                                                        records.update_core_by_para_id(
+                                                            para_id.clone(),
+                                                            core_idx,
+                                                            Some(backing_votes.session),
+                                                        );
+                                                    }
+                                                    Assignment::Bulk(Id(para_id)) => {
+                                                        records.update_core_by_para_id(
+                                                            para_id.clone(),
+                                                            core_idx,
+                                                            Some(backing_votes.session),
+                                                        );
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -1833,8 +1884,6 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                 } else {
                     v.subset = Subset::TVP;
                 }
-                v.is_oversubscribed =
-                    verify_oversubscribed(&onet, active_era_index, &stash, None).await?;
             } else {
                 v.subset = Subset::C100;
             }
@@ -2500,74 +2549,95 @@ pub async fn cache_nomination_pools_stats(
             None => return Err("Current session index not defined".into()),
         };
 
-        let mut valid_pool = Some(1);
-        while let Some(pool_id) = valid_pool {
-            if pool_id > last_pool_id {
-                valid_pool = None;
-            } else {
-                let mut pool_stats = PoolStats::new();
-                pool_stats.block_number = block_number;
+        // ***********************************************************************
+        // TODO: verify how to decode with the metadata available at the block_hash being queried
+        // SpecVersion > 1002000 changed nomination_pools.bonded_pools resopnse
+        // ***********************************************************************
+        let last_runtime_upgrade_addr = node_runtime::storage().system().last_runtime_upgrade();
 
-                let bonded_pools_addr = node_runtime::storage()
-                    .nomination_pools()
-                    .bonded_pools(&pool_id);
-                if let Some(bonded) = api
-                    .storage()
-                    .at(block_hash)
-                    .fetch(&bonded_pools_addr)
-                    .await?
-                {
-                    pool_stats.points = bonded.points;
-                    pool_stats.member_counter = bonded.member_counter;
+        if let Some(info) = api
+            .storage()
+            .at(block_hash)
+            .fetch(&last_runtime_upgrade_addr)
+            .await?
+        {
+            if info.spec_version >= 1002000 {
+                let mut valid_pool = Some(1);
+                while let Some(pool_id) = valid_pool {
+                    if pool_id > last_pool_id {
+                        valid_pool = None;
+                    } else {
+                        let mut pool_stats = PoolStats::new();
+                        pool_stats.block_number = block_number;
 
-                    // fetch pool stash account staked amount
-                    // let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
-                    // let account_addr = node_runtime::storage().system().account(&stash_account);
-                    // if let Some(account_info) =
-                    //     api.storage().fetch(&account_addr, block_hash).await?
-                    // {
-                    //     pool_stats.staked = account_info.data.fee_frozen;
-                    // }
+                        let bonded_pools_addr = node_runtime::storage()
+                            .nomination_pools()
+                            .bonded_pools(&pool_id);
+                        if let Some(bonded) = api
+                            .storage()
+                            .at(block_hash)
+                            .fetch(&bonded_pools_addr)
+                            .await?
+                        {
+                            pool_stats.points = bonded.points;
+                            pool_stats.member_counter = bonded.member_counter;
 
-                    // fetch pool stash account staked amount from staking pallet
-                    let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
-                    let ledger_addr = node_runtime::storage().staking().ledger(&stash_account);
-                    if let Some(data) = api.storage().at(block_hash).fetch(&ledger_addr).await? {
-                        pool_stats.staked = data.active;
-                        pool_stats.unbonding = data.total - data.active;
+                            // fetch pool stash account staked amount
+                            // let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
+                            // let account_addr = node_runtime::storage().system().account(&stash_account);
+                            // if let Some(account_info) =
+                            //     api.storage().fetch(&account_addr, block_hash).await?
+                            // {
+                            //     pool_stats.staked = account_info.data.fee_frozen;
+                            // }
+
+                            // fetch pool stash account staked amount from staking pallet
+                            let stash_account =
+                                nomination_pool_account(AccountType::Bonded, pool_id);
+                            let ledger_addr =
+                                node_runtime::storage().staking().ledger(&stash_account);
+                            if let Some(data) =
+                                api.storage().at(block_hash).fetch(&ledger_addr).await?
+                            {
+                                pool_stats.staked = data.active;
+                                pool_stats.unbonding = data.total - data.active;
+                            }
+
+                            // fetch pool reward account free amount
+                            let stash_account =
+                                nomination_pool_account(AccountType::Reward, pool_id);
+                            let account_addr =
+                                node_runtime::storage().system().account(&stash_account);
+                            if let Some(account_info) =
+                                api.storage().at(block_hash).fetch(&account_addr).await?
+                            {
+                                pool_stats.reward = account_info.data.free;
+                            }
+
+                            // serialize and cache pool
+                            let serialized = serde_json::to_string(&pool_stats)?;
+                            redis::cmd("SET")
+                                .arg(CacheKey::NominationPoolStatsByPoolAndSession(
+                                    pool_id,
+                                    epoch_index,
+                                ))
+                                .arg(serialized)
+                                .query_async(&mut cache as &mut Connection)
+                                .await
+                                .map_err(CacheError::RedisCMDError)?;
+                        }
+
+                        valid_pool = Some(pool_id + 1);
                     }
-
-                    // fetch pool reward account free amount
-                    let stash_account = nomination_pool_account(AccountType::Reward, pool_id);
-                    let account_addr = node_runtime::storage().system().account(&stash_account);
-                    if let Some(account_info) =
-                        api.storage().at(block_hash).fetch(&account_addr).await?
-                    {
-                        pool_stats.reward = account_info.data.free;
-                    }
-
-                    // serialize and cache pool
-                    let serialized = serde_json::to_string(&pool_stats)?;
-                    redis::cmd("SET")
-                        .arg(CacheKey::NominationPoolStatsByPoolAndSession(
-                            pool_id,
-                            epoch_index,
-                        ))
-                        .arg(serialized)
-                        .query_async(&mut cache as &mut Connection)
-                        .await
-                        .map_err(CacheError::RedisCMDError)?;
                 }
-
-                valid_pool = Some(pool_id + 1);
+                // Log cache processed duration time
+                info!(
+                    "Pools stats #{} cached ({:?})",
+                    epoch_index,
+                    start.elapsed()
+                );
             }
         }
-        // Log cache processed duration time
-        info!(
-            "Pools stats #{} cached ({:?})",
-            epoch_index,
-            start.elapsed()
-        );
     }
     Ok(())
 }
@@ -2600,90 +2670,108 @@ pub async fn cache_nomination_pools(
             None => return Err("Current session index not defined".into()),
         };
 
-        let mut valid_pool = Some(1);
-        while let Some(pool_id) = valid_pool {
-            if pool_id > last_pool_id {
-                valid_pool = None;
-            } else {
-                // Load chain data
-                let metadata_addr = node_runtime::storage()
-                    .nomination_pools()
-                    .metadata(&pool_id);
-                if let Some(BoundedVec(metadata)) =
-                    api.storage().at(block_hash).fetch(&metadata_addr).await?
-                {
-                    let metadata = str(metadata);
-                    let mut pool = Pool::with_id_and_metadata(pool_id, metadata);
+        // ***********************************************************************
+        // TODO: verify how to decode with the metadata available at the block_hash being queried
+        // SpecVersion > 1002000 changed nomination_pools.bonded_pools resopnse
+        // ***********************************************************************
+        let last_runtime_upgrade_addr = node_runtime::storage().system().last_runtime_upgrade();
 
-                    let bonded_pools_addr = node_runtime::storage()
-                        .nomination_pools()
-                        .bonded_pools(&pool_id);
-                    if let Some(bonded) = api
-                        .storage()
-                        .at(block_hash)
-                        .fetch(&bonded_pools_addr)
-                        .await?
-                    {
-                        let state = match bonded.state {
-                            PoolState::Blocked => pools::PoolState::Blocked,
-                            PoolState::Destroying => pools::PoolState::Destroying,
-                            _ => pools::PoolState::Open,
-                        };
-                        pool.state = state;
+        if let Some(info) = api
+            .storage()
+            .at(block_hash)
+            .fetch(&last_runtime_upgrade_addr)
+            .await?
+        {
+            if info.spec_version >= 1002000 {
+                let mut valid_pool = Some(1);
+                while let Some(pool_id) = valid_pool {
+                    if pool_id > last_pool_id {
+                        valid_pool = None;
+                    } else {
+                        // Load chain data
+                        let metadata_addr = node_runtime::storage()
+                            .nomination_pools()
+                            .metadata(&pool_id);
+                        if let Some(BoundedVec(metadata)) =
+                            api.storage().at(block_hash).fetch(&metadata_addr).await?
+                        {
+                            let metadata = str(metadata);
+                            let mut pool = Pool::with_id_and_metadata(pool_id, metadata.clone());
 
-                        // assign roles
-                        let mut depositor = Account::with_address(bonded.roles.depositor.clone());
-                        depositor.identity =
-                            get_identity(&onet, &bonded.roles.depositor, None).await?;
-                        let root = if let Some(root) = bonded.roles.root {
-                            let mut root_acc = Account::with_address(root.clone());
-                            root_acc.identity = get_identity(&onet, &root, None).await?;
-                            Some(root_acc)
-                        } else {
-                            None
-                        };
-                        let nominator = if let Some(acc) = bonded.roles.nominator {
-                            let mut nominator = Account::with_address(acc.clone());
-                            nominator.identity = get_identity(&onet, &acc, None).await?;
-                            Some(nominator)
-                        } else {
-                            None
-                        };
-                        let state_toggler = if let Some(acc) = bonded.roles.bouncer {
-                            let mut state_toggler = Account::with_address(acc.clone());
-                            state_toggler.identity = get_identity(&onet, &acc, None).await?;
-                            Some(state_toggler)
-                        } else {
-                            None
-                        };
+                            let bonded_pools_addr = node_runtime::storage()
+                                .nomination_pools()
+                                .bonded_pools(&pool_id);
+                            if let Some(bonded) = api
+                                .storage()
+                                .at(block_hash)
+                                .fetch(&bonded_pools_addr)
+                                .await?
+                            {
+                                let state = match bonded.state {
+                                    PoolState::Blocked => pools::PoolState::Blocked,
+                                    PoolState::Destroying => pools::PoolState::Destroying,
+                                    _ => pools::PoolState::Open,
+                                };
+                                pool.state = state;
 
-                        pool.roles = Some(Roles::with(depositor, root, nominator, state_toggler));
-                        pool.block_number = block_number;
+                                // assign roles
+                                let mut depositor =
+                                    Account::with_address(bonded.roles.depositor.clone());
+                                depositor.identity =
+                                    get_identity(&onet, &bonded.roles.depositor, None).await?;
+                                let root = if let Some(root) = bonded.roles.root {
+                                    let mut root_acc = Account::with_address(root.clone());
+                                    root_acc.identity = get_identity(&onet, &root, None).await?;
+                                    Some(root_acc)
+                                } else {
+                                    None
+                                };
+                                let nominator = if let Some(acc) = bonded.roles.nominator {
+                                    let mut nominator = Account::with_address(acc.clone());
+                                    nominator.identity = get_identity(&onet, &acc, None).await?;
+                                    Some(nominator)
+                                } else {
+                                    None
+                                };
+                                let state_toggler = if let Some(acc) = bonded.roles.bouncer {
+                                    let mut state_toggler = Account::with_address(acc.clone());
+                                    state_toggler.identity =
+                                        get_identity(&onet, &acc, None).await?;
+                                    Some(state_toggler)
+                                } else {
+                                    None
+                                };
 
-                        // serialize and cache pool
-                        let serialized = serde_json::to_string(&pool)?;
-                        redis::cmd("SET")
-                            .arg(CacheKey::NominationPoolRecord(pool_id))
-                            .arg(serialized)
+                                pool.roles =
+                                    Some(Roles::with(depositor, root, nominator, state_toggler));
+                                pool.block_number = block_number;
+
+                                // serialize and cache pool
+                                let serialized = serde_json::to_string(&pool)?;
+                                redis::cmd("SET")
+                                    .arg(CacheKey::NominationPoolRecord(pool_id))
+                                    .arg(serialized)
+                                    .query_async(&mut cache as &mut Connection)
+                                    .await
+                                    .map_err(CacheError::RedisCMDError)?;
+                            }
+                        }
+                        // cache pool_id into a sorted set by session
+                        redis::cmd("ZADD")
+                            .arg(CacheKey::NominationPoolIdsBySession(epoch_index))
+                            .arg(0)
+                            .arg(pool_id)
                             .query_async(&mut cache as &mut Connection)
                             .await
                             .map_err(CacheError::RedisCMDError)?;
+
+                        valid_pool = Some(pool_id + 1);
                     }
                 }
-                // cache pool_id into a sorted set by session
-                redis::cmd("ZADD")
-                    .arg(CacheKey::NominationPoolIdsBySession(epoch_index))
-                    .arg(0)
-                    .arg(pool_id)
-                    .query_async(&mut cache as &mut Connection)
-                    .await
-                    .map_err(CacheError::RedisCMDError)?;
-
-                valid_pool = Some(pool_id + 1);
+                // Log cache processed duration time
+                info!("Pools #{} cached ({:?})", epoch_index, start.elapsed());
             }
         }
-        // Log cache processed duration time
-        info!("Pools #{} cached ({:?})", epoch_index, start.elapsed());
     }
     Ok(())
 }
@@ -2814,41 +2902,42 @@ async fn try_run_nomination(
     ))
 }
 
-async fn verify_oversubscribed(
-    onet: &Onet,
-    era_index: u32,
-    stash: &AccountId32,
-    block_hash: Option<H256>,
-) -> Result<bool, OnetError> {
-    let api = onet.client().clone();
+// TODO: DEPRECATE, no longer needed after runtime upgrade v1.2
+// async fn verify_oversubscribed(
+//     onet: &Onet,
+//     era_index: u32,
+//     stash: &AccountId32,
+//     block_hash: Option<H256>,
+// ) -> Result<bool, OnetError> {
+//     let api = onet.client().clone();
 
-    let max_addr = node_runtime::constants()
-        .staking()
-        .max_nominator_rewarded_per_validator();
-    let max: u32 = api.constants().at(&max_addr)?;
+//     let max_addr = node_runtime::constants()
+//         .staking()
+//         .max_nominator_rewarded_per_validator();
+//     let max: u32 = api.constants().at(&max_addr)?;
 
-    let block_hash = match block_hash {
-        Some(bh) => bh,
-        None => onet
-            .rpc()
-            .chain_get_block_hash(None)
-            .await?
-            .expect("didn't pass a block number; qed"),
-    };
+//     let block_hash = match block_hash {
+//         Some(bh) => bh,
+//         None => onet
+//             .rpc()
+//             .chain_get_block_hash(None)
+//             .await?
+//             .expect("didn't pass a block number; qed"),
+//     };
 
-    let eras_stakers_addr = node_runtime::storage()
-        .staking()
-        .eras_stakers(&era_index, stash);
-    if let Some(exposure) = api
-        .storage()
-        .at(block_hash)
-        .fetch(&eras_stakers_addr)
-        .await?
-    {
-        return Ok(exposure.others.len() as u32 > max);
-    }
-    return Ok(false);
-}
+//     let eras_stakers_addr = node_runtime::storage()
+//         .staking()
+//         .eras_stakers(&era_index, stash);
+//     if let Some(exposure) = api
+//         .storage()
+//         .at(block_hash)
+//         .fetch(&eras_stakers_addr)
+//         .await?
+//     {
+//         return Ok(exposure.others.len() as u32 > max);
+//     }
+//     return Ok(false);
+// }
 
 async fn get_own_stake_via_controller(
     onet: &Onet,
@@ -2902,7 +2991,7 @@ async fn get_identity(
         .fetch(&identity_of_addr)
         .await?
     {
-        Some(identity) => {
+        Some((identity, _)) => {
             debug!("identity {:?}", identity);
             let parent = parse_identity_data(identity.info.display);
             let identity = match sub_account_name {
@@ -3121,11 +3210,6 @@ pub async fn cache_session_stats_records(
                     } else {
                         Subset::C100
                     };
-
-                    // check if is oversubscribed
-                    v.is_oversubscribed =
-                        verify_oversubscribed(&onet, era_index, &stash, Some(block.parent_hash))
-                            .await?;
 
                     // check if is in active set
                     v.is_active = authorities.contains(&stash);
