@@ -10,9 +10,13 @@ TODO: Improve the runtimes implementation without the need of replicating the sa
 Download metadata from a substrate node, for use with `subxt` codegen.
 
 ```bash
+# Relay Chains
 subxt metadata --url wss://rpc.turboflakes.io:443/westend -f bytes > westend_metadata.scale
 subxt metadata --url wss://rpc.turboflakes.io:443/kusama -f bytes > kusama_metadata.scale
 subxt metadata --url wss://rpc.turboflakes.io:443/polkadot -f bytes > polkadot_metadata.scale
+# People Chains
+subxt metadata --url wss://sys.turboflakes.io:443/people-westend -f bytes > people_westend_metadata.scale
+subxt metadata --url wss://sys.turboflakes.io:443/people-kusama -f bytes > people_kusama_metadata.scale
 ```
 
 Generate runtime API client code from metadata.

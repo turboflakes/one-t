@@ -1875,10 +1875,10 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
             .await?
             .iter(validators_addr)
             .await?;
-        while let Some(Ok((key, validator_prefs))) = iter.next().await {
-            let stash = get_account_id_from_storage_key(key);
+        while let Some(Ok(storage_resp)) = iter.next().await {
+            let stash = get_account_id_from_storage_key(storage_resp.key_bytes);
             let mut v = Validator::new(stash.clone());
-            if validator_prefs.commission != Perbill(1000000000) {
+            if storage_resp.value.commission != Perbill(1000000000) {
                 if !tvp_stashes.contains(&stash) {
                     v.subset = Subset::NONTVP;
                 } else {
@@ -1888,7 +1888,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                 v.subset = Subset::C100;
             }
             // Commisssion
-            let Perbill(commission) = validator_prefs.commission;
+            let Perbill(commission) = storage_resp.value.commission;
             v.commission = commission as f64 / 1_000_000_000.0_f64;
             // Check if validator is in active set
             v.is_active = authorities.contains(&stash);
@@ -3178,9 +3178,9 @@ pub async fn cache_session_stats_records(
                 .at(block.parent_hash)
                 .iter(validators_addr)
                 .await?;
-            while let Some(Ok((key, validator_prefs))) = iter.next().await {
+            while let Some(Ok(storage_resp)) = iter.next().await {
                 // validator stash address
-                let stash = get_account_id_from_storage_key(key);
+                let stash = get_account_id_from_storage_key(storage_resp.key_bytes);
                 // create a new validator instance
                 let mut v = ValidatorProfileRecord::new(stash.clone());
                 // validator controller address
@@ -3197,7 +3197,7 @@ pub async fn cache_session_stats_records(
                         get_own_stake_via_controller(&onet, &controller, block.parent_hash).await?;
 
                     // deconstruct commisssion
-                    let Perbill(commission) = validator_prefs.commission;
+                    let Perbill(commission) = storage_resp.value.commission;
                     v.commission = commission;
 
                     // verify subset (1_000_000_000 = 100% commission)
@@ -3227,7 +3227,7 @@ pub async fn cache_session_stats_records(
                     }
 
                     // check if block nominations
-                    v.is_blocked = validator_prefs.blocked;
+                    v.is_blocked = storage_resp.value.blocked;
 
                     // get identity
                     v.identity = get_identity(&onet, &stash, None).await?;
@@ -3561,8 +3561,8 @@ async fn collect_nominators_data(
     let mut counter = 0;
     let storage_addr = node_runtime::storage().staking().nominators_iter();
     let mut iter = api.storage().at(block_hash).iter(storage_addr).await?;
-    while let Some(Ok((key, nominations))) = iter.next().await {
-        let nominator_stash = get_account_id_from_storage_key(key);
+    while let Some(Ok(storage_resp)) = iter.next().await {
+        let nominator_stash = get_account_id_from_storage_key(storage_resp.key_bytes);
         let bonded_addr = node_runtime::storage()
             .staking()
             .bonded(&nominator_stash.clone());
@@ -3575,7 +3575,7 @@ async fn collect_nominators_data(
                     0
                 };
 
-            let BoundedVec(targets) = nominations.targets.clone();
+            let BoundedVec(targets) = storage_resp.value.targets.clone();
             for target in targets.iter() {
                 let n = nominators_map.entry(target.clone()).or_insert(vec![]);
                 n.push((
