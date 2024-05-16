@@ -227,7 +227,9 @@ pub struct Config {
     pub blocks_per_session: u32,
     #[serde(default = "default_error_interval")]
     pub error_interval: u64,
+    #[serde(default)]
     pub substrate_ws_url: String,
+    #[serde(default)]
     pub substrate_people_ws_url: String,
     #[serde(default = "default_data_path")]
     pub data_path: String,
@@ -499,7 +501,7 @@ fn get_config() -> Config {
             }
             if env::var("ONET_SUBSTRATE_PEOPLE_WS_URL").is_err() {
                 env::set_var(
-                    "ONET_SUBSTRATE_WS_URL",
+                    "ONET_SUBSTRATE_PEOPLE_WS_URL",
                     "wss://sys.ibp.network:443/people-kusama",
                 );
             }
