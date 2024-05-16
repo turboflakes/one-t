@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::config::CONFIG;
 pub type ChainPrefix = u16;
 pub type ChainTokenSymbol = String;
 
@@ -35,6 +36,22 @@ impl SupportedRuntime {
             Self::Polkadot => 0,
             Self::Kusama => 2,
             Self::Westend => 42,
+        }
+    }
+
+    pub fn is_people_runtime_available(&self) -> bool {
+        match &self {
+            Self::Polkadot => false,
+            Self::Kusama => true,
+            Self::Westend => false,
+        }
+    }
+
+    pub fn people_runtime(&self) -> SupportedParasRuntime {
+        match &self {
+            Self::Polkadot => SupportedParasRuntime::PeoplePolkadot,
+            Self::Kusama => SupportedParasRuntime::PeopleKusama,
+            _ => unimplemented!("Chain not supported"),
         }
     }
 }
@@ -70,6 +87,31 @@ impl std::fmt::Display for SupportedRuntime {
             Self::Polkadot => write!(f, "Polkadot"),
             Self::Kusama => write!(f, "Kusama"),
             Self::Westend => write!(f, "Westend"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum SupportedParasRuntime {
+    PeoplePolkadot,
+    PeopleKusama,
+}
+
+impl SupportedParasRuntime {
+    pub fn default_rpc_url(&self) -> String {
+        let config = CONFIG.clone();
+        match &self {
+            Self::PeopleKusama => config.substrate_people_ws_url,
+            _ => unimplemented!("Chain not supported"),
+        }
+    }
+}
+
+impl std::fmt::Display for SupportedParasRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PeoplePolkadot => write!(f, "People Polkadot"),
+            Self::PeopleKusama => write!(f, "People Kusama"),
         }
     }
 }

@@ -25,7 +25,7 @@ use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
 use crate::records::EpochIndex;
 use crate::report::Network;
 use crate::runtimes::{
-    kusama, 
+    kusama,
     polkadot,
     support::{ChainPrefix, ChainTokenSymbol, SupportedRuntime},
     // westend,
@@ -49,10 +49,13 @@ use std::{
 use subxt::{
     backend::{
         legacy::{rpc_methods::StorageKey, LegacyRpcMethods},
-        rpc::RpcClient,
+        rpc::{
+            reconnecting_rpc_client::{Client as ReconnectingClient, ExponentialBackoff, RpcError},
+            RpcClient,
+        },
     },
     ext::sp_core::crypto,
-    utils::AccountId32,
+    utils::{validate_url_is_secure, AccountId32},
     OnlineClient, PolkadotConfig,
 };
 use subxt_signer::{bip39::Mnemonic, sr25519::Keypair};
@@ -139,22 +142,65 @@ impl std::fmt::Display for ReportType {
     }
 }
 
+// DEPRECATED
 pub async fn _create_substrate_node_client(
     config: Config,
 ) -> Result<OnlineClient<PolkadotConfig>, subxt::Error> {
     OnlineClient::<PolkadotConfig>::from_url(config.substrate_ws_url).await
 }
 
-pub async fn create_substrate_rpc_client_from_config(
+// DEPRECATED
+pub async fn _create_substrate_rpc_client_from_config(
     config: Config,
 ) -> Result<RpcClient, subxt::Error> {
     RpcClient::from_url(config.substrate_ws_url).await
 }
 
+pub async fn create_substrate_rpc_client_from_config(
+    config: Config,
+) -> Result<ReconnectingClient, RpcError> {
+    if let Err(_) = validate_url_is_secure(config.substrate_ws_url.as_ref()) {
+        warn!("Insecure URL provided: {}", config.substrate_ws_url);
+    };
+
+    ReconnectingClient::builder()
+        .retry_policy(
+            ExponentialBackoff::from_millis(100)
+                .max_delay(time::Duration::from_secs(10))
+                .take(10),
+        )
+        .build(config.substrate_ws_url)
+        .await
+}
+
+pub async fn create_substrate_client_from_supported_runtime(
+    runtime: SupportedRuntime,
+) -> Result<Option<OnlineClient<PolkadotConfig>>, OnetError> {
+    if runtime.is_people_runtime_available() {
+        let reconnecting_client = ReconnectingClient::builder()
+            .retry_policy(
+                ExponentialBackoff::from_millis(100)
+                    .max_delay(time::Duration::from_secs(10))
+                    .take(10),
+            )
+            .build(runtime.people_runtime().default_rpc_url())
+            .await
+            .map_err(|err| OnetError::RpcError(err.into()))?;
+
+        let client =
+            create_substrate_client_from_rpc_client(reconnecting_client.clone().into()).await?;
+        Ok(Some(client))
+    } else {
+        Ok(None)
+    }
+}
+
 pub async fn create_substrate_client_from_rpc_client(
     rpc_client: RpcClient,
-) -> Result<OnlineClient<PolkadotConfig>, subxt::Error> {
-    OnlineClient::<PolkadotConfig>::from_rpc_client(rpc_client).await
+) -> Result<OnlineClient<PolkadotConfig>, OnetError> {
+    OnlineClient::<PolkadotConfig>::from_rpc_client(rpc_client)
+        .await
+        .map_err(|err| OnetError::SubxtError(err.into()))
 }
 
 pub async fn create_or_await_substrate_node_client(
@@ -162,16 +208,17 @@ pub async fn create_or_await_substrate_node_client(
 ) -> (
     OnlineClient<PolkadotConfig>,
     LegacyRpcMethods<PolkadotConfig>,
+    Option<OnlineClient<PolkadotConfig>>,
     SupportedRuntime,
 ) {
     loop {
         match create_substrate_rpc_client_from_config(config.clone()).await {
             Ok(rpc_client) => {
-                let rpc = LegacyRpcMethods::<PolkadotConfig>::new(rpc_client.clone());
-                let chain = rpc.system_chain().await.unwrap_or_default();
-                let name = rpc.system_name().await.unwrap_or_default();
-                let version = rpc.system_version().await.unwrap_or_default();
-                let properties = rpc.system_properties().await.unwrap_or_default();
+                let legacy_rpc = LegacyRpcMethods::<PolkadotConfig>::new(rpc_client.clone().into());
+                let chain = legacy_rpc.system_chain().await.unwrap_or_default();
+                let name = legacy_rpc.system_name().await.unwrap_or_default();
+                let version = legacy_rpc.system_version().await.unwrap_or_default();
+                let properties = legacy_rpc.system_properties().await.unwrap_or_default();
 
                 // Display SS58 addresses based on the connected chain
                 let chain_prefix: ChainPrefix =
@@ -199,9 +246,21 @@ pub async fn create_or_await_substrate_node_client(
                     chain, config.substrate_ws_url, name, version
                 );
 
-                match create_substrate_client_from_rpc_client(rpc_client.clone()).await {
-                    Ok(client) => {
-                        break (client, rpc, SupportedRuntime::from(chain_token_symbol));
+                match create_substrate_client_from_rpc_client(rpc_client.clone().into()).await {
+                    Ok(relay_client) => {
+                        // Create people chain client depending on the runtime selected
+                        let runtime = SupportedRuntime::from(chain_token_symbol);
+                        match create_substrate_client_from_supported_runtime(runtime).await {
+                            Ok(people_client_option) => {
+                                break (relay_client, legacy_rpc, people_client_option, runtime);
+                            }
+
+                            Err(e) => {
+                                error!("{}", e);
+                                info!("Awaiting for connection using {}", config.substrate_ws_url);
+                                thread::sleep(time::Duration::from_secs(6));
+                            }
+                        }
                     }
                     Err(e) => {
                         error!("{}", e);
@@ -223,13 +282,17 @@ pub struct Onet {
     runtime: SupportedRuntime,
     client: OnlineClient<PolkadotConfig>,
     rpc: LegacyRpcMethods<PolkadotConfig>,
+    // Note: Use people client as optional only until we get people chain available
+    // on Polkadot, as soon as it is available it can go away
+    people_client_option: Option<OnlineClient<PolkadotConfig>>,
     matrix: Matrix,
     pub cache: RedisPool,
 }
 
 impl Onet {
     pub async fn new() -> Onet {
-        let (client, rpc, runtime) = create_or_await_substrate_node_client(CONFIG.clone()).await;
+        let (client, rpc, people_client_option, runtime) =
+            create_or_await_substrate_node_client(CONFIG.clone()).await;
 
         // Initialize matrix client
         let mut matrix: Matrix = Matrix::new();
@@ -242,6 +305,7 @@ impl Onet {
             runtime,
             client,
             rpc,
+            people_client_option,
             matrix,
             cache: create_or_await_pool(CONFIG.clone()),
         }
@@ -263,6 +327,10 @@ impl Onet {
 
     pub fn client(&self) -> &OnlineClient<PolkadotConfig> {
         &self.client
+    }
+
+    pub fn people_client(&self) -> &Option<OnlineClient<PolkadotConfig>> {
+        &self.people_client_option
     }
 
     pub fn rpc(&self) -> &LegacyRpcMethods<PolkadotConfig> {

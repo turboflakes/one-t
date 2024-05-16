@@ -36,7 +36,7 @@ mobc-redis = { version = "0.7", default-features = false, features = ["async-std
 ctrlc = { version = "3.0", features = ["termination"] }
 
 # Subxt crates:
-subxt = { version = "0.35.3", features = ["substrate-compat", "native"] }
+subxt = { version = "0.35.3", features = ["substrate-compat", "native", "unstable-reconnecting-rpc-client"] }
 subxt-signer = { version = "0.35.3", features = ["subxt"] }
 sp-core-hashing = "12.0.0"
 #

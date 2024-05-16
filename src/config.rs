@@ -228,6 +228,7 @@ pub struct Config {
     #[serde(default = "default_error_interval")]
     pub error_interval: u64,
     pub substrate_ws_url: String,
+    pub substrate_people_ws_url: String,
     #[serde(default = "default_data_path")]
     pub data_path: String,
     #[serde(default = "default_data_path_read_only")]
@@ -417,9 +418,17 @@ fn get_config() -> Config {
         .long("substrate-ws-url")
         .takes_value(true)
         .help(
-          "Substrate websocket endpoint for which 'onet' will try to connect. (e.g. wss://kusama-rpc.polkadot.io) (NOTE: substrate_ws_url takes precedence than <CHAIN> argument)",
+          "Substrate websocket endpoint for which 'onet' will try to connect. (e.g. wss://rpc.ibp.network:443/kusama) (NOTE: substrate_ws_url takes precedence than <CHAIN> argument)",
         ),
     )
+    .arg(
+        Arg::with_name("substrate-people-ws-url")
+          .long("substrate-people-ws-url")
+          .takes_value(true)
+          .help(
+            "Substrate websocket endpoint for which 'onet' will try to connect and retrieve identities from. (e.g. wss://sys.ibp.network:443/people-kusama))",
+          ),
+      )
     .arg(
       Arg::with_name("maximum-history-eras")
             .long("maximum-history-eras")
@@ -480,19 +489,28 @@ fn get_config() -> Config {
     match matches.value_of("CHAIN") {
         Some("westend") => {
             if env::var("ONET_SUBSTRATE_WS_URL").is_err() {
-                env::set_var("ONET_SUBSTRATE_WS_URL", "wss://westend-rpc.polkadot.io:443");
+                env::set_var("ONET_SUBSTRATE_WS_URL", "wss://rpc.ibp.network:443/westend");
             }
             env::set_var("ONET_CHAIN_NAME", "westend");
         }
         Some("kusama") => {
             if env::var("ONET_SUBSTRATE_WS_URL").is_err() {
-                env::set_var("ONET_SUBSTRATE_WS_URL", "wss://kusama-rpc.polkadot.io:443");
+                env::set_var("ONET_SUBSTRATE_WS_URL", "wss://rpc.ibp.network:443/kusama");
+            }
+            if env::var("ONET_SUBSTRATE_PEOPLE_WS_URL").is_err() {
+                env::set_var(
+                    "ONET_SUBSTRATE_WS_URL",
+                    "wss://sys.ibp.network:443/people-kusama",
+                );
             }
             env::set_var("ONET_CHAIN_NAME", "kusama");
         }
         Some("polkadot") => {
             if env::var("ONET_SUBSTRATE_WS_URL").is_err() {
-                env::set_var("ONET_SUBSTRATE_WS_URL", "wss://rpc.polkadot.io:443");
+                env::set_var(
+                    "ONET_SUBSTRATE_WS_URL",
+                    "wss://rpc.ibp.network:443/polkadot",
+                );
             }
             env::set_var("ONET_CHAIN_NAME", "polkadot");
         }
@@ -509,6 +527,10 @@ fn get_config() -> Config {
 
     if let Some(substrate_ws_url) = matches.value_of("substrate-ws-url") {
         env::set_var("ONET_SUBSTRATE_WS_URL", substrate_ws_url);
+    }
+
+    if let Some(substrate_people_ws_url) = matches.value_of("substrate-people-ws-url") {
+        env::set_var("ONET_SUBSTRATE_PEOPLE_WS_URL", substrate_people_ws_url);
     }
 
     if let Some(maximum_subscribers) = matches.value_of("maximum-subscribers") {
