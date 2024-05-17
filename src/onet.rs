@@ -50,7 +50,7 @@ use subxt::{
     backend::{
         legacy::{rpc_methods::StorageKey, LegacyRpcMethods},
         rpc::{
-            reconnecting_rpc_client::{Client as ReconnectingClient, ExponentialBackoff, RpcError},
+            reconnecting_rpc_client::{Client as ReconnectingClient, ExponentialBackoff},
             RpcClient,
         },
     },
@@ -158,7 +158,7 @@ pub async fn _create_substrate_rpc_client_from_config(
 
 pub async fn create_substrate_rpc_client_from_config(
     config: Config,
-) -> Result<ReconnectingClient, RpcError> {
+) -> Result<ReconnectingClient, subxt::error::RpcError> {
     if let Err(_) = validate_url_is_secure(config.substrate_ws_url.as_ref()) {
         warn!("Insecure URL provided: {}", config.substrate_ws_url);
     };

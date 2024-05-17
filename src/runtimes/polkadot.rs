@@ -64,8 +64,8 @@ use subxt::{
         substrate::{Digest, DigestItem},
         Header,
     },
-    events::Events,
     ext::sp_core::H256,
+    tx::TxStatus,
     utils::AccountId32,
 };
 
@@ -79,13 +79,17 @@ mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        bounded_collections::bounded_vec::BoundedVec, pallet_identity::types::Data,
-        pallet_nomination_pools::PoolState, polkadot_parachain_primitives::primitives::Id,
-        polkadot_primitives::v6::DisputeStatement, polkadot_primitives::v6::ValidatorIndex,
+        bounded_collections::bounded_vec::{BoundedVec1, BoundedVec4},
+        pallet_identity::types::Data,
+        pallet_nomination_pools::PoolState,
+        polkadot_parachain_primitives::primitives::Id,
+        polkadot_primitives::v6::DisputeStatement,
+        polkadot_primitives::v6::ValidatorIndex,
         polkadot_primitives::v6::ValidityAttestation,
         polkadot_runtime_parachains::scheduler::common::Assignment,
         polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
-        sp_arithmetic::per_things::Perbill, sp_consensus_babe::digests::PreDigest,
+        sp_arithmetic::per_things::Perbill,
+        sp_consensus_babe::digests::PreDigest,
     },
     session::events::NewSession,
     // Event,
@@ -312,9 +316,13 @@ pub async fn process_finalized_block(
         .await?;
 
     let metadata = onet.rpc().state_get_metadata(block_hash_metadata).await?;
-    debug!("metadata_legacy: {:?}", metadata);
+    // debug!("metadata_legacy: {:?}", metadata);
 
-    let events = Events::new_from_client(metadata, block_hash, api.clone()).await?;
+    // assign metadata to the api
+    api.set_metadata(metadata);
+
+    let events = api.events().at(block_hash).await?;
+
     if let Some(new_session_event) = events.find_first::<NewSession>()? {
         info!("{:?}", new_session_event);
 
@@ -2235,8 +2243,9 @@ fn define_second_pool_call(
     )))
 }
 
+// DEPRECATED
 // * APR is the annualized average of all stashes from the last X eras.
-pub async fn calculate_apr_from_stashes(
+pub async fn _calculate_apr_from_stashes(
     onet: &Onet,
     stashes: Vec<AccountId32>,
     block_hash: H256,
@@ -2465,28 +2474,34 @@ pub async fn cache_nomination_pools_nominees(
                     api.storage().at(block_hash).fetch(&nominators_addr).await?
                 {
                     // deconstruct targets
-                    let BoundedVec(stashes) = nominations.targets;
+                    let BoundedVec1(stashes) = nominations.targets;
 
-                    // calculate APR
-                    pool_nominees.apr =
-                        calculate_apr_from_stashes(&onet, stashes.clone(), block_hash).await?;
+                    // DEPRECATE calculate APR
+                    // pool_nominees.apr =
+                    //     calculate_apr_from_stashes(&onet, stashes.clone(), block_hash).await?;
 
                     pool_nominees.nominees = stashes.clone();
 
                     let mut active = Vec::<ActiveNominee>::new();
                     // check active nominees
                     for stash in stashes {
-                        let eras_stakers_addr = node_runtime::storage()
+                        // Identify which active validators have pool stake assigned
+                        let eras_stakers_paged_addr = node_runtime::storage()
                             .staking()
-                            .eras_stakers(era_index, &stash);
-                        if let Some(exposure) = api
+                            .eras_stakers_paged_iter2(&era_index, &stash);
+                        let mut iter = api
                             .storage()
-                            .at(block_hash)
-                            .fetch(&eras_stakers_addr)
+                            .at_latest()
                             .await?
-                        {
-                            if let Some(individual) =
-                                exposure.others.iter().find(|x| x.who == pool_stash_account)
+                            .iter(eras_stakers_paged_addr)
+                            .await?;
+
+                        while let Some(Ok(storage_kv)) = iter.next().await {
+                            if let Some(individual) = storage_kv
+                                .value
+                                .others
+                                .iter()
+                                .find(|x| x.who == pool_stash_account)
                             {
                                 active.push(ActiveNominee::with(stash.clone(), individual.value));
                             }
@@ -2692,7 +2707,7 @@ pub async fn cache_nomination_pools(
                         let metadata_addr = node_runtime::storage()
                             .nomination_pools()
                             .metadata(&pool_id);
-                        if let Some(BoundedVec(metadata)) =
+                        if let Some(BoundedVec4(metadata)) =
                             api.storage().at(block_hash).fetch(&metadata_addr).await?
                         {
                             let metadata = str(metadata);
@@ -2829,71 +2844,60 @@ async fn try_run_nomination(
         // Submit batch call with nominations
         let tx = node_runtime::tx().utility().batch(calls).unvalidated();
 
-        let response = api
+        let mut tx_progress = api
             .tx()
             .sign_and_submit_then_watch_default(&tx, &signer)
-            .await?
-            .wait_for_finalized()
             .await?;
 
-        let tx_events = response.fetch_events().await?;
+        while let Some(status) = tx_progress.next().await {
+            match status? {
+                TxStatus::InFinalizedBlock(in_block) => {
+                    // Get block number
+                    let block_number = if let Some(header) = onet
+                        .rpc()
+                        .chain_get_header(Some(in_block.block_hash()))
+                        .await?
+                    {
+                        header.number
+                    } else {
+                        0
+                    };
 
-        // Get block number
-        let block_number = if let Some(header) = onet
-            .rpc()
-            .chain_get_header(Some(tx_events.block_hash()))
-            .await?
-        {
-            header.number
-        } else {
-            0
-        };
+                    // Fetch events from block
+                    let tx_events = in_block.fetch_events().await?;
 
-        let failed_event = tx_events.find_first::<ExtrinsicFailed>()?;
+                    //
+                    let failed_event = tx_events.find_first::<ExtrinsicFailed>()?;
 
-        if let Some(ev) = failed_event {
-            return Err(OnetError::PoolError(format!(
-                "Nomination for <i>Pool Is {}</i> and <i>{}</i> failed at block #{} with event: {:?}",
-                config.pool_id_1, config.pool_id_2, block_number, ev
-            )));
-        } else {
-            let explorer_url = format!(
-                "https://{}.subscan.io/extrinsic/{:?}",
-                config.chain_name.to_lowercase(),
-                tx_events.extrinsic_hash()
-            );
-            let mut message: String =
-                format!("🗳️ Nomination for <i>Pool Id {}</i> ", config.pool_id_1,);
-            if config.pools_second_pool_enabled {
-                message.push_str(&format!("and <i>Pool Id {}</i> ", config.pool_id_2,));
+                    if let Some(ev) = failed_event {
+                        return Err(OnetError::PoolError(format!(
+                                "Nomination for <i>Pool Is {}</i> and <i>{}</i> failed at block #{} with event: {:?}",
+                                config.pool_id_1, config.pool_id_2, block_number, ev
+                            )));
+                    } else {
+                        let explorer_url = format!(
+                            "https://{}.subscan.io/extrinsic/{:?}",
+                            config.chain_name.to_lowercase(),
+                            tx_events.extrinsic_hash()
+                        );
+                        let mut message: String =
+                            format!("🗳️ Nomination for <i>Pool Id {}</i> ", config.pool_id_1,);
+                        if config.pools_second_pool_enabled {
+                            message.push_str(&format!("and <i>Pool Id {}</i> ", config.pool_id_2,));
+                        }
+                        message.push_str(&format!(
+                            "finalized at block #{} (<a href=\"{}\">{}</a>)",
+                            block_number,
+                            explorer_url,
+                            tx_events.extrinsic_hash().to_string()
+                        ));
+                        return Ok(message);
+                    }
+                }
+                other => {
+                    warn!("TxStatus: {other:?}");
+                }
             }
-            message.push_str(&format!(
-                "finalized at block #{} (<a href=\"{}\">{}</a>)",
-                block_number,
-                explorer_url,
-                tx_events.extrinsic_hash().to_string()
-            ));
-            // // Cache pool nomination
-            // let unix_now = SystemTime::now()
-            //     .duration_since(SystemTime::UNIX_EPOCH)
-            //     .unwrap();
-            // let pool_nomination = PoolNomination {
-            //     id: config.pool_id_1,
-            //     sessions_counter: records.total_full_epochs(),
-            //     block_number,
-            //     extrinsic_hash: tx_events.extrinsic_hash(),
-            //     ts: unix_now.as_secs(),
-            // };
-            // pool_nomination.cache()?;
-            // let pool_nomination = PoolNomination {
-            //     id: config.pool_id_2,
-            //     sessions_counter: records.total_full_epochs(),
-            //     block_number,
-            //     extrinsic_hash: tx_events.extrinsic_hash(),
-            //     ts: unix_now.as_secs(),
-            // };
-            // pool_nomination.cache()?;
-            return Ok(message);
         }
     }
     Err(OnetError::PoolError(
@@ -3575,7 +3579,7 @@ async fn collect_nominators_data(
                     0
                 };
 
-            let BoundedVec(targets) = storage_resp.value.targets.clone();
+            let BoundedVec1(targets) = storage_resp.value.targets.clone();
             for target in targets.iter() {
                 let n = nominators_map.entry(target.clone()).or_insert(vec![]);
                 n.push((

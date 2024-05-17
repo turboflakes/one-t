@@ -25,7 +25,7 @@ use derive_more::Display;
 use reqwest;
 use serde::{Deserialize, Serialize};
 use std::{str::Utf8Error, string::String};
-use subxt::{backend::rpc::reconnecting_rpc_client::RpcError, error::MetadataError};
+use subxt::error::{MetadataError, RpcError};
 use thiserror::Error;
 
 /// On specific error messages
@@ -35,7 +35,9 @@ pub enum OnetError {
     CacheError(#[from] CacheError),
     #[error("Subxt error: {0}")]
     SubxtError(#[from] subxt::Error),
-    #[error("Reconnecting error: {0}")]
+    #[error("SubxtCore error: {0}")]
+    SubxtCoreError(#[from] subxt::ext::subxt_core::Error),
+    #[error("RPC error: {0}")]
     RpcError(#[from] RpcError),
     #[error("Codec error: {0}")]
     CodecError(#[from] codec::Error),
