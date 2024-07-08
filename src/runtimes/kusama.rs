@@ -79,16 +79,12 @@ mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        bounded_collections::bounded_vec::{BoundedVec1, BoundedVec4},
-        pallet_nomination_pools::PoolState,
-        polkadot_parachain_primitives::primitives::Id,
-        polkadot_primitives::v6::DisputeStatement,
-        polkadot_primitives::v6::ValidatorIndex,
-        polkadot_primitives::v6::ValidityAttestation,
+        bounded_collections::bounded_vec::BoundedVec, pallet_nomination_pools::PoolState,
+        polkadot_parachain_primitives::primitives::Id, polkadot_primitives::v6::DisputeStatement,
+        polkadot_primitives::v6::ValidatorIndex, polkadot_primitives::v6::ValidityAttestation,
         polkadot_runtime_parachains::scheduler::common::Assignment,
         polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
-        sp_arithmetic::per_things::Perbill,
-        sp_consensus_babe::digests::PreDigest,
+        sp_arithmetic::per_things::Perbill, sp_consensus_babe::digests::PreDigest,
     },
     session::events::NewSession,
     // Event,
@@ -2483,7 +2479,7 @@ pub async fn cache_nomination_pools_nominees(
                     api.storage().at(block_hash).fetch(&nominators_addr).await?
                 {
                     // deconstruct targets
-                    let BoundedVec1(stashes) = nominations.targets;
+                    let BoundedVec(stashes) = nominations.targets;
 
                     // DEPRECATE calculate APR
                     // pool_nominees.apr =
@@ -2716,7 +2712,7 @@ pub async fn cache_nomination_pools(
                         let metadata_addr = node_runtime::storage()
                             .nomination_pools()
                             .metadata(&pool_id);
-                        if let Some(BoundedVec4(metadata)) =
+                        if let Some(BoundedVec(metadata)) =
                             api.storage().at(block_hash).fetch(&metadata_addr).await?
                         {
                             let metadata = str(metadata);
@@ -3592,7 +3588,7 @@ async fn collect_nominators_data(
                     0
                 };
 
-            let BoundedVec1(targets) = storage_resp.value.targets.clone();
+            let BoundedVec(targets) = storage_resp.value.targets.clone();
             for target in targets.iter() {
                 let n = nominators_map.entry(target.clone()).or_insert(vec![]);
                 n.push((
