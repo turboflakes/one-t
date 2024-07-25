@@ -79,10 +79,9 @@ mod node_runtime {}
 
 use node_runtime::{
     runtime_types::{
-        bounded_collections::bounded_vec::BoundedVec, pallet_identity::types::Data,
-        pallet_nomination_pools::PoolState, polkadot_parachain_primitives::primitives::Id,
-        polkadot_primitives::v6::DisputeStatement, polkadot_primitives::v6::ValidatorIndex,
-        polkadot_primitives::v6::ValidityAttestation,
+        bounded_collections::bounded_vec::BoundedVec, pallet_nomination_pools::PoolState,
+        polkadot_parachain_primitives::primitives::Id, polkadot_primitives::v6::DisputeStatement,
+        polkadot_primitives::v6::ValidatorIndex, polkadot_primitives::v6::ValidityAttestation,
         polkadot_runtime_parachains::scheduler::common::Assignment,
         polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
         sp_arithmetic::per_things::Perbill, sp_consensus_babe::digests::PreDigest,
@@ -91,6 +90,14 @@ use node_runtime::{
     // Event,
     system::events::ExtrinsicFailed,
 };
+
+#[subxt::subxt(
+    runtime_metadata_path = "metadata/people_polkadot_metadata.scale",
+    derive_for_all_types = "PartialEq, Clone"
+)]
+mod people_node_runtime {}
+
+use people_node_runtime::runtime_types::pallet_identity::types::Data;
 
 type Call = node_runtime::runtime_types::polkadot_runtime::RuntimeCall;
 type NominationPoolsCall = node_runtime::runtime_types::pallet_nomination_pools::pallet::Call;
@@ -305,7 +312,9 @@ pub async fn process_finalized_block(
     // };
 
     // NOTE: To better handle runtime upgrades where the event system.code_updated can only be decoded by the parent metadata,
-    // we than use this principle for all blocks
+    // (an example is the block_number 15426015 in Kusama) we retrieve first the metadata from parent block
+    // and use it to decode the current block
+    //
     let block_hash_metadata = onet
         .rpc()
         .chain_get_block_hash(Some((block_number - 1).into()))
@@ -2981,9 +2990,13 @@ async fn get_identity(
     stash: &AccountId32,
     sub_account_name: Option<String>,
 ) -> Result<Option<Identity>, OnetError> {
-    let api = onet.client().clone();
+    let api = if let Some(client) = onet.people_client() {
+        client.clone()
+    } else {
+        onet.client().clone()
+    };
 
-    let identity_of_addr = node_runtime::storage().identity().identity_of(stash);
+    let identity_of_addr = people_node_runtime::storage().identity().identity_of(stash);
     match api
         .storage()
         .at_latest()
@@ -3001,7 +3014,7 @@ async fn get_identity(
             Ok(Some(identity))
         }
         None => {
-            let super_of_addr = node_runtime::storage().identity().super_of(stash);
+            let super_of_addr = people_node_runtime::storage().identity().super_of(stash);
             if let Some((parent_account, data)) = api
                 .storage()
                 .at_latest()
