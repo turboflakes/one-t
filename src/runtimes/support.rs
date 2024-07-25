@@ -41,7 +41,7 @@ impl SupportedRuntime {
 
     pub fn is_people_runtime_available(&self) -> bool {
         match &self {
-            Self::Polkadot => false,
+            Self::Polkadot => true,
             Self::Kusama => true,
             Self::Westend => false,
         }
@@ -101,8 +101,7 @@ impl SupportedParasRuntime {
     pub fn default_rpc_url(&self) -> String {
         let config = CONFIG.clone();
         match &self {
-            Self::PeopleKusama => config.substrate_people_ws_url,
-            _ => unimplemented!("Chain not supported"),
+            _ => config.substrate_people_ws_url,
         }
     }
 }
