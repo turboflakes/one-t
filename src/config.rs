@@ -342,7 +342,7 @@ fn get_config() -> Config {
     .arg(
       Arg::with_name("CHAIN")
           .index(1)
-          .possible_values(&["westend", "kusama", "polkadot"])
+          .possible_values(&["paseo", "kusama", "polkadot"])
           .help(
             "Sets the substrate-based chain for which 'onet' will try to connect",
           )
@@ -489,11 +489,11 @@ fn get_config() -> Config {
     }
 
     match matches.value_of("CHAIN") {
-        Some("westend") => {
+        Some("paseo") => {
             if env::var("ONET_SUBSTRATE_WS_URL").is_err() {
-                env::set_var("ONET_SUBSTRATE_WS_URL", "wss://rpc.ibp.network:443/westend");
+                env::set_var("ONET_SUBSTRATE_WS_URL", "wss://rpc.ibp.network:443/paseo");
             }
-            env::set_var("ONET_CHAIN_NAME", "westend");
+            env::set_var("ONET_CHAIN_NAME", "paseo");
         }
         Some("kusama") => {
             if env::var("ONET_SUBSTRATE_WS_URL").is_err() {

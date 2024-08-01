@@ -27,7 +27,7 @@ pub type ChainTokenSymbol = String;
 pub enum SupportedRuntime {
     Polkadot,
     Kusama,
-    Westend,
+    Paseo,
 }
 
 impl SupportedRuntime {
@@ -35,7 +35,7 @@ impl SupportedRuntime {
         match &self {
             Self::Polkadot => 0,
             Self::Kusama => 2,
-            Self::Westend => 42,
+            Self::Paseo => 42,
         }
     }
 
@@ -43,7 +43,7 @@ impl SupportedRuntime {
         match &self {
             Self::Polkadot => true,
             Self::Kusama => true,
-            Self::Westend => false,
+            Self::Paseo => false,
         }
     }
 
@@ -63,8 +63,8 @@ impl From<String> for SupportedRuntime {
             "DOT" => Self::Polkadot,
             "kusama" => Self::Kusama,
             "KSM" => Self::Kusama,
-            "westend" => Self::Westend,
-            "WND" => Self::Westend,
+            "paseo" => Self::Paseo,
+            "PAS" => Self::Paseo,
             _ => unimplemented!("Chain prefix not supported"),
         }
     }
@@ -75,7 +75,7 @@ impl From<ChainPrefix> for SupportedRuntime {
         match v {
             0 => Self::Polkadot,
             2 => Self::Kusama,
-            42 => Self::Westend,
+            42 => Self::Paseo,
             _ => unimplemented!("Chain prefix not supported"),
         }
     }
@@ -86,7 +86,7 @@ impl std::fmt::Display for SupportedRuntime {
         match self {
             Self::Polkadot => write!(f, "Polkadot"),
             Self::Kusama => write!(f, "Kusama"),
-            Self::Westend => write!(f, "Westend"),
+            Self::Paseo => write!(f, "Paseo"),
         }
     }
 }

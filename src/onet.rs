@@ -25,10 +25,8 @@ use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
 use crate::records::EpochIndex;
 use crate::report::Network;
 use crate::runtimes::{
-    kusama,
-    polkadot,
+    kusama, paseo, polkadot,
     support::{ChainPrefix, ChainTokenSymbol, SupportedRuntime},
-    // westend,
 };
 use log::{debug, error, info, warn};
 use redis::aio::Connection;
@@ -385,15 +383,21 @@ impl Onet {
 
     async fn subscribe_on_chain_events(&self) -> Result<(), OnetError> {
         // initialize and load TVP stashes
-        try_fetch_stashes_from_remote_url(false).await?;
+        match self.runtime {
+            SupportedRuntime::Polkadot | SupportedRuntime::Kusama => {
+                try_fetch_stashes_from_remote_url(false).await?;
+            }
+            _ => {}
+        };
 
+        // initialize cache
         self.cache_network().await?;
 
         match self.runtime {
             SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
-            // SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(self).await,
-            _ => unreachable!(),
+            SupportedRuntime::Paseo => paseo::init_and_subscribe_on_chain_events(self).await,
+            // _ => unreachable!(),
         }
     }
     // cache methods
