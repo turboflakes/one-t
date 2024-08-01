@@ -3447,6 +3447,11 @@ pub async fn cache_session_stats_records(
                     .try_into()
                     .unwrap();
 
+                // check to skip subset stats if no validators
+                if ss.vals_total == 0 {
+                    continue;
+                }
+
                 // active validators
                 ss.vals_active = validators
                     .iter()
