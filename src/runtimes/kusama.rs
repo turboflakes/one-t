@@ -80,8 +80,8 @@ mod node_runtime {}
 use node_runtime::{
     runtime_types::{
         bounded_collections::bounded_vec::BoundedVec, pallet_nomination_pools::PoolState,
-        polkadot_parachain_primitives::primitives::Id, polkadot_primitives::v6::DisputeStatement,
-        polkadot_primitives::v6::ValidatorIndex, polkadot_primitives::v6::ValidityAttestation,
+        polkadot_parachain_primitives::primitives::Id, polkadot_primitives::v7::DisputeStatement,
+        polkadot_primitives::v7::ValidatorIndex, polkadot_primitives::v7::ValidityAttestation,
         polkadot_runtime_parachains::scheduler::common::Assignment,
         polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
         sp_arithmetic::per_things::Perbill, sp_consensus_babe::digests::PreDigest,
@@ -201,7 +201,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     // finalized_head can always be queried so as soon as it changes we process th repective block_hash
     let mut blocks_sub = api.blocks().subscribe_best().await?;
     while let Some(Ok(best_block)) = blocks_sub.next().await {
-        debug!("block head {:?} received", best_block.number());
+        info!("block head {:?} received", best_block.number());
         // update records best_block number
         process_best_block(&onet, &mut records, best_block.number().into()).await?;
 
@@ -212,7 +212,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
             .chain_get_header(Some(finalized_block_hash))
             .await?
         {
-            debug!("finalized block head {:?} in storage", block.number);
+            info!("finalized block head {:?} in storage", block.number);
             // process older blocks that have not been processed first
             while let Some(processed_block_number) = latest_block_number_processed {
                 if block.number as u64 == processed_block_number {
@@ -295,6 +295,7 @@ pub async fn process_finalized_block(
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
+    debug!("Block #{} to be processed now", block_number);
     let api = onet.client().clone();
 
     // DEPRECATE exceptional_blocks, see note below
@@ -311,20 +312,21 @@ pub async fn process_finalized_block(
     //     Some(block_hash)
     // };
 
+    //NOTE: Clone static metadata has it might be useful later to be restored again!
+    let static_metadata = api.metadata().clone();
+
     // NOTE: To better handle runtime upgrades where the event system.code_updated can only be decoded by the parent metadata,
     // (an example is the block_number 15426015 in Kusama) we retrieve first the metadata from parent block
-    // and use it to decode the current block
-    //
+    // and use it to iterate the events, after if no specific breaking changes aredecode the current block
     let block_hash_metadata = onet
         .rpc()
         .chain_get_block_hash(Some((block_number - 1).into()))
         .await?;
 
-    let metadata = onet.rpc().state_get_metadata(block_hash_metadata).await?;
-    // debug!("metadata_legacy: {:?}", metadata);
+    let block_metadata = onet.rpc().state_get_metadata(block_hash_metadata).await?;
 
-    // assign metadata to the api
-    api.set_metadata(metadata);
+    // Assign block_metadata to the api
+    api.set_metadata(block_metadata);
 
     let events = api.events().at(block_hash).await?;
 
@@ -354,6 +356,15 @@ pub async fn process_finalized_block(
         // Cache nomination pools every new session
         try_run_cache_nomination_pools(block_number, block_hash).await?;
     }
+
+    // NOTE_1: It might require further testing, but since v1003000 the aproach will be to
+    // restore the original static_metadata to process the next records!
+
+    // NOTE_2: Lookup for exceptions where both metadatas (block_metadata or static_metadatas) need to be passed down
+    // and apply them where required!
+
+    // Restore assignement of static_metadata to the api
+    api.set_metadata(static_metadata);
 
     // Update records
     // Note: this records should be updated after the switch of session

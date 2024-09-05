@@ -156,7 +156,7 @@ pub async fn _create_substrate_rpc_client_from_config(
 
 pub async fn create_substrate_rpc_client_from_config(
     config: Config,
-) -> Result<ReconnectingClient, subxt::error::RpcError> {
+) -> Result<ReconnectingClient, OnetError> {
     if let Err(_) = validate_url_is_secure(config.substrate_ws_url.as_ref()) {
         warn!("Insecure URL provided: {}", config.substrate_ws_url);
     };
@@ -169,6 +169,7 @@ pub async fn create_substrate_rpc_client_from_config(
         )
         .build(config.substrate_ws_url)
         .await
+        .map_err(|err| OnetError::RpcError(err.into()))
 }
 
 pub async fn create_substrate_client_from_supported_runtime(
