@@ -162,11 +162,7 @@ pub async fn create_substrate_rpc_client_from_config(
     };
 
     ReconnectingClient::builder()
-        .retry_policy(
-            ExponentialBackoff::from_millis(100)
-                .max_delay(time::Duration::from_secs(10))
-                .take(10),
-        )
+        .retry_policy(ExponentialBackoff::from_millis(100).max_delay(time::Duration::from_secs(10)))
         .build(config.substrate_ws_url)
         .await
         .map_err(|err| OnetError::RpcError(err.into()))
@@ -178,9 +174,7 @@ pub async fn create_substrate_client_from_supported_runtime(
     if runtime.is_people_runtime_available() {
         let reconnecting_client = ReconnectingClient::builder()
             .retry_policy(
-                ExponentialBackoff::from_millis(100)
-                    .max_delay(time::Duration::from_secs(10))
-                    .take(10),
+                ExponentialBackoff::from_millis(100).max_delay(time::Duration::from_secs(10)),
             )
             .build(runtime.people_runtime().default_rpc_url())
             .await
@@ -398,7 +392,6 @@ impl Onet {
             SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Paseo => paseo::init_and_subscribe_on_chain_events(self).await,
-            // _ => unreachable!(),
         }
     }
     // cache methods

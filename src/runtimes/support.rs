@@ -43,7 +43,7 @@ impl SupportedRuntime {
         match &self {
             Self::Polkadot => true,
             Self::Kusama => true,
-            Self::Paseo => false,
+            Self::Paseo => true,
         }
     }
 
@@ -51,7 +51,7 @@ impl SupportedRuntime {
         match &self {
             Self::Polkadot => SupportedParasRuntime::PeoplePolkadot,
             Self::Kusama => SupportedParasRuntime::PeopleKusama,
-            _ => unimplemented!("Chain not supported"),
+            Self::Paseo => SupportedParasRuntime::PeoplePaseo,
         }
     }
 }
@@ -95,6 +95,7 @@ impl std::fmt::Display for SupportedRuntime {
 pub enum SupportedParasRuntime {
     PeoplePolkadot,
     PeopleKusama,
+    PeoplePaseo,
 }
 
 impl SupportedParasRuntime {
@@ -111,6 +112,7 @@ impl std::fmt::Display for SupportedParasRuntime {
         match self {
             Self::PeoplePolkadot => write!(f, "People Polkadot"),
             Self::PeopleKusama => write!(f, "People Kusama"),
+            Self::PeoplePaseo => write!(f, "People Paseo"),
         }
     }
 }
