@@ -1599,3 +1599,19 @@ impl Matrix {
     //     }
     // }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_defines_a_matrix_room() {
+        let config = &CONFIG;
+        assert_eq!(config.matrix_bot_user, "@some-bot-handle:matrix.org".to_string());
+        let user_id = "@ematest:matrix.org";
+        let chain = SupportedRuntime::Polkadot;
+        let room: Room = Room::new_private(chain, user_id);
+        assert_eq!(room.room_alias, "#b25ldC9Qb2xrYWRvdC9AZW1hdGVzdDptYXRyaXgub3JnL0Bzb21lLWJvdC1oYW5kbGU6bWF0cml4Lm9yZw==:matrix.org".to_string());
+    }
+
+}

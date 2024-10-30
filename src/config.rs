@@ -110,6 +110,11 @@ fn default_matrix_network_report_epoch_rate() -> u32 {
     6
 }
 
+/// provides default value for matrix_bot_user if ONET_MATRIX_BOT_USER env var is not set
+fn default_matrix_bot_user() -> String {
+    "@some-bot-handle:matrix.org".to_string()
+}
+
 /// provides default value for callout_epoch_rate if ONET_EPOCH_RATE_THRESHOLD env var is not set
 fn default_epoch_rate_threshold() -> u32 {
     0
@@ -292,7 +297,7 @@ pub struct Config {
     pub matrix_callout_epoch_rate: u32,
     #[serde(default = "default_matrix_network_report_epoch_rate")]
     pub matrix_network_report_epoch_rate: u32,
-    #[serde(default)]
+    #[serde(default = "default_matrix_bot_user")]
     pub matrix_bot_user: String,
     #[serde(default)]
     pub matrix_bot_password: String,
