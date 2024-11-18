@@ -22,6 +22,7 @@
 mod api;
 mod cache;
 mod config;
+mod dn;
 mod errors;
 mod matrix;
 mod mcda;

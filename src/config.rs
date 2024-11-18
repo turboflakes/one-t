@@ -219,6 +219,11 @@ fn default_redis_pool_expire_seconds() -> u64 {
     60
 }
 
+/// provides default value for decentralized nodes public endpoint if ONET_DN_URL env var is not set
+fn default_dn_url() -> String {
+    "https://nodes.web3.foundation/api/cohort/1".into()
+}
+
 #[derive(Clone, Deserialize, Debug)]
 pub struct Config {
     // general
@@ -335,6 +340,8 @@ pub struct Config {
     pub redis_pool_timeout_seconds: u64,
     #[serde(default = "default_redis_pool_expire_seconds")]
     pub redis_pool_expire_seconds: u64,
+    #[serde(default = "default_dn_url")]
+    pub dn_url: String,
 }
 
 /// Inject dotenv and env vars into the Config struct

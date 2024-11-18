@@ -926,7 +926,7 @@ impl From<RawData> for Report {
             data.network.name, data.meta.active_era_index,
         ));
         report.add_raw_text(format!(
-            "<i>Valid <a href=\"https://wiki.polkadot.network/docs/thousand-validators\">TVP validators</a> are shown in bold (100% Commission • Others • <b>TVP</b>).</i>",
+            "<i>Valid <a href=\"https://nodes.web3.foundation/\">Decentralized Nodes</a> are shown in bold (100% Commission • Others • <b>DN</b>).</i>",
         ));
 
         // report.add_raw_text(format!(
@@ -1638,12 +1638,12 @@ fn top_performers_report<'a>(
         if max > 0 {
             if is_short {
                 report.add_raw_text(format!(
-                    "Top {} Best TVP Validators performances of the last {} sessions:",
+                    "Top {} Validators performances of the last {} sessions:",
                     max, data.records_total_full_epochs
                 ));
             } else {
                 report.add_raw_text(format!(
-                    "🏆 <b>Top {} Best TVP Validators performances</b> of the last {} sessions:",
+                    "🏆 <b>Top {} Decentralized Nodes performances</b> of the last {} sessions:",
                     max, data.records_total_full_epochs
                 ));
             }

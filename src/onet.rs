@@ -20,6 +20,7 @@
 // SOFTWARE.
 use crate::cache::{create_or_await_pool, CacheKey, RedisPool};
 use crate::config::{Config, CONFIG};
+use crate::dn::try_fetch_stashes_from_remote_url;
 use crate::errors::{CacheError, OnetError};
 use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
 use crate::records::EpochIndex;
@@ -28,9 +29,8 @@ use crate::runtimes::{
     kusama, paseo, polkadot,
     support::{ChainPrefix, ChainTokenSymbol, SupportedRuntime},
 };
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use redis::aio::Connection;
-use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -38,7 +38,6 @@ use std::{
     fs,
     fs::File,
     io::{BufRead, BufReader},
-    path::Path,
     result::Result,
     str::FromStr,
     sync::mpsc,
@@ -65,7 +64,6 @@ use actix_cors::Cors;
 use actix_web::{dev::ServerHandle, http, middleware, rt, web, App, HttpServer};
 use std::env;
 
-const TVP_VALIDATORS_FILENAME: &str = ".tvp";
 pub const BLOCK_FILENAME: &str = ".block";
 pub const EPOCH_FILENAME: &str = ".epoch";
 
@@ -392,6 +390,7 @@ impl Onet {
             SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Paseo => paseo::init_and_subscribe_on_chain_events(self).await,
+            // _ => todo!(),
         }
     }
     // cache methods
@@ -530,74 +529,6 @@ struct Validity {
     valid: bool,
     #[serde(default)]
     r#type: String,
-}
-
-fn read_tvp_cached_filename(filename: &str) -> Result<Vec<Validator>, OnetError> {
-    // Try to read from cached file
-    if Path::new(filename).exists() {
-        let serialized = fs::read_to_string(filename)?;
-        let validators: Vec<Validator> = serde_json::from_str(&serialized).unwrap();
-        Ok(validators)
-    } else {
-        Ok(Vec::new())
-    }
-}
-
-/// Fetch stashes from 1kv endpoint https://polkadot.w3f.community/candidates
-pub async fn try_fetch_stashes_from_remote_url(
-    is_loading: bool,
-) -> Result<Vec<AccountId32>, OnetError> {
-    let config = CONFIG.clone();
-    let url = format!(
-        "https://{}.w3f.community/candidates",
-        config.chain_name.to_lowercase()
-    );
-    let url = Url::parse(&*url)?;
-
-    let tvp_validators_filename = format!(
-        "{}{}_{}",
-        config.data_path,
-        TVP_VALIDATORS_FILENAME,
-        config.chain_name.to_lowercase()
-    );
-
-    let validators: Vec<Validator> = if is_loading {
-        // Try to read from cached file
-        read_tvp_cached_filename(&tvp_validators_filename)?
-    } else {
-        match reqwest::get(url.to_string()).await {
-            Ok(request) => {
-                match request.json::<Vec<Validator>>().await {
-                    Ok(validators) => {
-                        debug!("validators {:?}", validators);
-                        // Serialize and cache
-                        let serialized = serde_json::to_string(&validators)?;
-                        fs::write(&tvp_validators_filename, serialized)?;
-                        validators
-                    }
-                    Err(e) => {
-                        warn!("Parsing json from url {} failed with error: {:?}", url, e);
-                        // Try to read from cached file
-                        read_tvp_cached_filename(&tvp_validators_filename)?
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("Fetching url {} failed with error: {:?}", url, e);
-                // Try to read from cached file
-                read_tvp_cached_filename(&tvp_validators_filename)?
-            }
-        }
-    };
-
-    // Parse stashes
-    let v: Vec<AccountId32> = validators
-        .iter()
-        .filter(|v| v.validity.iter().all(|x| x.valid))
-        .map(|x| AccountId32::from_str(&x.stash).unwrap())
-        .collect();
-
-    Ok(v)
 }
 
 pub fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {

@@ -20,13 +20,14 @@
 // SOFTWARE.
 use crate::cache::{CacheKey, Index, Trait, Verbosity};
 use crate::config::CONFIG;
+use crate::dn::try_fetch_stashes_from_remote_url;
 use crate::errors::{CacheError, OnetError};
 use crate::matrix::FileInfo;
 use crate::mcda::criterias::build_limits_from_session;
 use crate::onet::{
     get_account_id_from_storage_key, get_latest_block_number_processed, get_signer_from_seed,
-    get_subscribers, get_subscribers_by_epoch, try_fetch_stashes_from_remote_url,
-    write_latest_block_number_processed, Onet, ReportType, EPOCH_FILENAME,
+    get_subscribers, get_subscribers_by_epoch, write_latest_block_number_processed, Onet,
+    ReportType, EPOCH_FILENAME,
 };
 use crate::records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EpochKey, EraIndex, Identity,
