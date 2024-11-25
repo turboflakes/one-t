@@ -56,6 +56,7 @@ use std::{
     fs,
     iter::FromIterator,
     result::Result,
+    str::FromStr,
     thread, time,
     time::Instant,
 };
@@ -105,6 +106,12 @@ type NominationPoolsCall = node_runtime::runtime_types::pallet_nomination_pools:
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     let api = onet.client().clone();
+
+    let stashes: Vec<String> = config.pools_featured_nominees;
+    info!(
+        "{} featured nominees loaded from 'config.pools_featured_nominees'",
+        stashes.len()
+    );
 
     // Initialize from the first block of the session of last block processed
     let latest_block_number = get_latest_block_number_processed()?;
@@ -2189,10 +2196,25 @@ fn define_first_pool_call(
 
         validators.truncate(max);
 
-        let accounts = validators
+        let nominees = validators
             .iter()
             .map(|v| v.stash.clone())
             .collect::<Vec<AccountId32>>();
+
+        // Load featured stashes
+        let stashes: Vec<String> = config.pools_featured_nominees;
+        info!(
+            "{} featured nominees loaded from 'config.pools_featured_nominees'",
+            stashes.len()
+        );
+
+        let mut accounts: Vec<AccountId32> = stashes
+            .iter()
+            .map(|s| AccountId32::from_str(&s).unwrap())
+            .collect();
+
+        accounts.extend(nominees);
+        accounts.truncate(max);
 
         // Define call
         let call = Call::NominationPools(NominationPoolsCall::nominate {

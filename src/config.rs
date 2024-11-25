@@ -291,6 +291,8 @@ pub struct Config {
     pub pools_minimum_sessions: u32,
     #[serde(default = "default_pools_maximum_nominations")]
     pub pools_maximum_nominations: u32,
+    #[serde(default)]
+    pub pools_featured_nominees: Vec<String>,
     // matrix configuration
     #[serde(default)]
     pub matrix_public_room: String,
