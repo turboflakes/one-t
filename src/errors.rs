@@ -25,7 +25,8 @@ use derive_more::Display;
 use reqwest;
 use serde::{Deserialize, Serialize};
 use std::{str::Utf8Error, string::String};
-use subxt::error::{MetadataError, RpcError};
+use subxt::backend::rpc::reconnecting_rpc_client::RpcError;
+use subxt::error::MetadataError;
 use thiserror::Error;
 
 /// On specific error messages

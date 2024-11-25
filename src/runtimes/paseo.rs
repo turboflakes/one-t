@@ -64,9 +64,8 @@ use subxt::{
         substrate::{Digest, DigestItem},
         Header,
     },
-    ext::sp_core::H256,
     tx::TxStatus,
-    utils::AccountId32,
+    utils::{AccountId32, H256},
 };
 
 use subxt_signer::sr25519::Keypair;

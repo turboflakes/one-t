@@ -46,10 +46,7 @@ use std::{
 use subxt::{
     backend::{
         legacy::{rpc_methods::StorageKey, LegacyRpcMethods},
-        rpc::{
-            reconnecting_rpc_client::{Client as ReconnectingClient, ExponentialBackoff},
-            RpcClient,
-        },
+        rpc::reconnecting_rpc_client::{ExponentialBackoff, RpcClient},
     },
     ext::sp_core::crypto,
     utils::{validate_url_is_secure, AccountId32},
@@ -145,21 +142,14 @@ pub async fn _create_substrate_node_client(
     OnlineClient::<PolkadotConfig>::from_url(config.substrate_ws_url).await
 }
 
-// DEPRECATED
-pub async fn _create_substrate_rpc_client_from_config(
-    config: Config,
-) -> Result<RpcClient, subxt::Error> {
-    RpcClient::from_url(config.substrate_ws_url).await
-}
-
 pub async fn create_substrate_rpc_client_from_config(
     config: Config,
-) -> Result<ReconnectingClient, OnetError> {
+) -> Result<RpcClient, OnetError> {
     if let Err(_) = validate_url_is_secure(config.substrate_ws_url.as_ref()) {
         warn!("Insecure URL provided: {}", config.substrate_ws_url);
     };
 
-    ReconnectingClient::builder()
+    RpcClient::builder()
         .retry_policy(ExponentialBackoff::from_millis(100).max_delay(time::Duration::from_secs(10)))
         .build(config.substrate_ws_url)
         .await
@@ -170,7 +160,7 @@ pub async fn create_substrate_client_from_supported_runtime(
     runtime: SupportedRuntime,
 ) -> Result<Option<OnlineClient<PolkadotConfig>>, OnetError> {
     if runtime.is_people_runtime_available() {
-        let reconnecting_client = ReconnectingClient::builder()
+        let reconnecting_client = RpcClient::builder()
             .retry_policy(
                 ExponentialBackoff::from_millis(100).max_delay(time::Duration::from_secs(10)),
             )
