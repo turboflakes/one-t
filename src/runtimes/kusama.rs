@@ -2196,10 +2196,25 @@ fn define_first_pool_call(
 
         validators.truncate(max);
 
-        let accounts = validators
+        let nominees = validators
             .iter()
             .map(|v| v.stash.clone())
             .collect::<Vec<AccountId32>>();
+
+        // Load featured stashes
+        let stashes: Vec<String> = config.pools_featured_nominees;
+        info!(
+            "{} featured nominees loaded from 'config.pools_featured_nominees'",
+            stashes.len()
+        );
+
+        let mut accounts: Vec<AccountId32> = stashes
+            .iter()
+            .map(|s| AccountId32::from_str(&s).unwrap())
+            .collect();
+
+        accounts.extend(nominees);
+        accounts.truncate(max);
 
         // Define call
         let call = Call::NominationPools(NominationPoolsCall::nominate {
@@ -2248,25 +2263,10 @@ fn define_second_pool_call(
 
         validators.truncate(max);
 
-        let nominees = validators
+        let accounts = validators
             .iter()
             .map(|v| v.stash.clone())
             .collect::<Vec<AccountId32>>();
-
-        // Load featured stashes
-        let stashes: Vec<String> = config.pools_featured_nominees;
-        info!(
-            "{} featured nominees loaded from 'config.pools_featured_nominees'",
-            stashes.len()
-        );
-
-        let mut accounts: Vec<AccountId32> = stashes
-            .iter()
-            .map(|s| AccountId32::from_str(&s).unwrap())
-            .collect();
-
-        accounts.extend(nominees);
-        accounts.truncate(max);
 
         // Define call
         let call = Call::NominationPools(NominationPoolsCall::nominate {
