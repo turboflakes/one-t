@@ -17,7 +17,13 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
             profile: minimal
-            toolchain: stable
+            # TODO: Use `toolchain: stable` once wasm-bindgen-macro is stable
+            # 
+            # Compiling wasm-bindgen-macro v0.2.97
+            # error[E0554]: `#![feature]` may not be used on the stable release channel
+            # Error:  --> /home/runner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/wasm-bindgen-macro-0.2.97/src/lib.rs:4:5
+            #
+            toolchain: nightly
             override: true
             components: rustfmt, clippy
 
