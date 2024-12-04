@@ -146,6 +146,12 @@ impl From<&str> for ApiError {
     }
 }
 
+impl From<OnetError> for ApiError {
+    fn from(error: OnetError) -> Self {
+        ApiError::InternalServerError(error.into())
+    }
+}
+
 /// User-friendly error messages
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ErrorResponse {

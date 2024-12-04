@@ -771,6 +771,9 @@ pub struct ValidatorGradeResult {
     pub grade: String,
     pub authority_inclusion: f64,
     pub para_authority_inclusion: f64,
+    pub explicit_votes_total: u32,
+    pub implicit_votes_total: u32,
+    pub missed_votes_total: u32,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sessions: Vec<u32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -839,4 +842,16 @@ impl From<Vec<PoolResult>> for PoolsResult {
     fn from(data: Vec<PoolResult>) -> Self {
         PoolsResult { data }
     }
+}
+
+// Cohorts
+#[derive(Debug, Serialize, Default)]
+pub struct CohortsResult {
+    pub data: Vec<u32>,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct CohortValidatorsGradesResult {
+    pub cohort: u32,
+    pub data: Vec<ValidatorGradeResult>,
 }

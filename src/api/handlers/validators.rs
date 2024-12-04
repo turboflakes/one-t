@@ -22,12 +22,14 @@
 use crate::api::{
     helpers::respond_json,
     responses::{
-        AuthorityKey, AuthorityKeyCache, CacheMap, RankingStats, ValidatorGradeResult,
-        ValidatorProfileResult, ValidatorResult, ValidatorsResult,
+        AuthorityKey, AuthorityKeyCache, CacheMap, CohortValidatorsGradesResult, CohortsResult,
+        RankingStats, ValidatorGradeResult, ValidatorProfileResult, ValidatorResult,
+        ValidatorsResult,
     },
 };
 use crate::cache::{get_conn, CacheKey, Index, RedisPool, Verbosity};
 use crate::config::CONFIG;
+use crate::dn::try_fetch_stashes_from_remote_url;
 use crate::errors::{ApiError, CacheError};
 use crate::pools::{PoolId, PoolNominees};
 use crate::records::{grade, EpochIndex, Grade};
@@ -36,6 +38,7 @@ use actix_web::{
     web::{Data, Json, Path, Query},
     HttpRequest,
 };
+use log::info;
 use log::warn;
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize};
@@ -111,6 +114,9 @@ pub struct Params {
     // show_profile indicates whether validator identity should be retrieved or not, default false
     #[serde(default)]
     show_profile: bool,
+    // show_sessions indicates whether the list of sessions involved in the grade calculation should be retrieved or not, default false
+    #[serde(default)]
+    show_sessions: bool,
     // nominees_only indicates validators that are present on nomination pools as nominees, dafault false
     #[serde(default)]
     nominees_only: bool,
@@ -140,6 +146,7 @@ pub struct Params {
     ranking: Ranking,
     // ranking indicates which ranking should be pulled, default not_defined
     #[serde(default = "default_subset")]
+    #[serde(deserialize_with = "deserialize_subset_from_any_case")]
     subset: Subset,
 }
 fn default_role() -> Role {
@@ -195,6 +202,19 @@ where
             .collect();
         sessions
     })
+}
+
+fn deserialize_subset_from_any_case<'de, D>(deserializer: D) -> Result<Subset, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    match s.to_lowercase().as_str() {
+        "tvp" | "dn" => Ok(Subset::TVP),
+        "nontvp" | "nondn" => Ok(Subset::NONTVP),
+        "c100" | "100%" => Ok(Subset::C100),
+        &_ => Ok(Subset::NotDefined),
+    }
 }
 
 /// Get active validators
@@ -982,12 +1002,11 @@ pub async fn get_validator_profile_by_stash(
     respond_json(serialized_data.into())
 }
 
-/// Get a validator grade by stash
-pub async fn get_validator_grade_by_stash(
-    stash: Path<String>,
+async fn calculate_validator_grade_by_stash(
+    stash: String,
     params: Query<Params>,
     cache: Data<RedisPool>,
-) -> Result<Json<ValidatorGradeResult>, ApiError> {
+) -> Result<ValidatorGradeResult, ApiError> {
     let mut conn = get_conn(&cache).await?;
     let stash = AccountId32::from_str(&*stash.to_string()).map_err(|e| {
         ApiError::BadRequest(format!(
@@ -1055,7 +1074,7 @@ pub async fn get_validator_grade_by_stash(
 
     if para_epochs == 0 {
         if params.show_summary {
-            return respond_json(ValidatorGradeResult {
+            return Ok(ValidatorGradeResult {
                 address: stash.to_string(),
                 grade: Grade::NA.to_string(),
                 authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
@@ -1064,7 +1083,7 @@ pub async fn get_validator_grade_by_stash(
                 ..Default::default()
             });
         }
-        return respond_json(ValidatorGradeResult {
+        return Ok(ValidatorGradeResult {
             address: stash.to_string(),
             grade: Grade::NA.to_string(),
             authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
@@ -1093,22 +1112,97 @@ pub async fn get_validator_grade_by_stash(
     let mvr = mvrs.iter().sum::<f64>() / para_epochs as f64;
 
     if params.show_summary {
-        return respond_json(ValidatorGradeResult {
+        return Ok(ValidatorGradeResult {
             address: stash.to_string(),
             grade: grade(1.0 - mvr).to_string(),
             authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
             para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
+            explicit_votes_total: data
+                .iter()
+                .filter(|v| v.is_para)
+                .map(|v| v.para_summary.explicit_votes)
+                .sum(),
+            implicit_votes_total: data
+                .iter()
+                .filter(|v| v.is_para)
+                .map(|v| v.para_summary.implicit_votes)
+                .sum(),
+            missed_votes_total: data
+                .iter()
+                .filter(|v| v.is_para)
+                .map(|v| v.para_summary.missed_votes)
+                .sum(),
             sessions_data: data.into(),
             ..Default::default()
         });
     }
 
-    return respond_json(ValidatorGradeResult {
+    return Ok(ValidatorGradeResult {
         address: stash.to_string(),
         grade: grade(1.0 - mvr).to_string(),
         authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
         para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
+        explicit_votes_total: data
+            .iter()
+            .filter(|v| v.is_para)
+            .map(|v| v.para_summary.explicit_votes)
+            .sum(),
+        implicit_votes_total: data
+            .iter()
+            .filter(|v| v.is_para)
+            .map(|v| v.para_summary.implicit_votes)
+            .sum(),
+        missed_votes_total: data
+            .iter()
+            .filter(|v| v.is_para)
+            .map(|v| v.para_summary.missed_votes)
+            .sum(),
         sessions: data.iter().map(|v| v.session).collect(),
         ..Default::default()
+    });
+}
+
+/// Get a validator grade by stash
+pub async fn get_validator_grade_by_stash(
+    stash: Path<String>,
+    params: Query<Params>,
+    cache: Data<RedisPool>,
+) -> Result<Json<ValidatorGradeResult>, ApiError> {
+    let data = calculate_validator_grade_by_stash(stash.to_string(), params, cache).await?;
+
+    return respond_json(data);
+}
+
+/// Get list o cohorts
+/// NOTE: currently is fixed to one cohort
+pub async fn get_cohorts() -> Result<Json<CohortsResult>, ApiError> {
+    let cohorts = CohortsResult { data: vec![1_u32] };
+    respond_json(cohorts)
+}
+
+/// Get all validators grades assigned to the specific cohort
+pub async fn get_cohort_validators_grades(
+    cohort: Path<u32>,
+    params: Query<Params>,
+    cache: Data<RedisPool>,
+) -> Result<Json<CohortValidatorsGradesResult>, ApiError> {
+    // TODO: implement cohort as a parameter in try_fetch_stashes_from_remote_url
+    let stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url(false).await?;
+
+    let mut data: Vec<ValidatorGradeResult> = Vec::new();
+    for stash in stashes.iter() {
+        let mut tmp =
+            calculate_validator_grade_by_stash(stash.to_string(), params.clone(), cache.clone())
+                .await?;
+        // Note: sessions are empty by default
+        if !params.show_sessions {
+            tmp.sessions = vec![];
+        }
+        data.push(tmp);
+    }
+
+    return respond_json(CohortValidatorsGradesResult {
+        cohort: 1_u32,
+        data,
     });
 }
