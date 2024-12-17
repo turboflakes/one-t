@@ -29,6 +29,7 @@ use crate::onet::{
     get_subscribers, get_subscribers_by_epoch, write_latest_block_number_processed, Onet,
     ReportType, EPOCH_FILENAME,
 };
+use crate::p2p::try_fetch_p2p_data;
 use crate::records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EpochKey, EraIndex, Identity,
     NetworkSessionStats, ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records,
@@ -198,74 +199,77 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     cache_session_records(&records, block_hash).await?;
     cache_track_records(&onet, &records).await?;
 
-    // Start indexing from the start_block_number
-    let mut latest_block_number_processed: Option<u64> = Some(start_block_number.into());
-    let mut is_loading = true;
+    // Initialize p2p-explorer
+    try_run_cache_p2p_records(&records, block_hash).await?;
 
-    // Subscribe head
-    // NOTE: the reason why we subscribe head and not finalized_head,
-    // is just because head is in sync more frequently.
-    // finalized_head can always be queried so as soon as it changes we process th repective block_hash
-    let mut blocks_sub = api.blocks().subscribe_best().await?;
-    while let Some(Ok(best_block)) = blocks_sub.next().await {
-        info!("block head {:?} received", best_block.number());
-        // update records best_block number
-        process_best_block(&onet, &mut records, best_block.number().into()).await?;
+    // // Start indexing from the start_block_number
+    // let mut latest_block_number_processed: Option<u64> = Some(start_block_number.into());
+    // let mut is_loading = true;
 
-        // fetch latest finalized block
-        let finalized_block_hash = onet.rpc().chain_get_finalized_head().await?;
-        if let Some(block) = onet
-            .rpc()
-            .chain_get_header(Some(finalized_block_hash))
-            .await?
-        {
-            info!("finalized block head {:?} in storage", block.number);
-            // process older blocks that have not been processed first
-            while let Some(processed_block_number) = latest_block_number_processed {
-                if block.number as u64 == processed_block_number {
-                    latest_block_number_processed = None;
-                    is_loading = false;
-                } else {
-                    // process the next block
-                    let block_number = processed_block_number + 1;
+    // // Subscribe head
+    // // NOTE: the reason why we subscribe head and not finalized_head,
+    // // is just because head is in sync more frequently.
+    // // finalized_head can always be queried so as soon as it changes we process th repective block_hash
+    // let mut blocks_sub = api.blocks().subscribe_best().await?;
+    // while let Some(Ok(best_block)) = blocks_sub.next().await {
+    //     info!("block head {:?} received", best_block.number());
+    //     // update records best_block number
+    //     process_best_block(&onet, &mut records, best_block.number().into()).await?;
 
-                    // if finalized_head process block otherwise fetch block_hash and process the pending block
-                    if block.number as u64 == block_number {
-                        process_finalized_block(
-                            &onet,
-                            &mut subscribers,
-                            &mut records,
-                            block_number,
-                            block.hash(),
-                            is_loading,
-                        )
-                        .await?;
-                    } else {
-                        // fetch block_hash if not the finalized head
-                        if let Some(block_hash) = onet
-                            .rpc()
-                            .chain_get_block_hash(Some(block_number.into()))
-                            .await?
-                        {
-                            process_finalized_block(
-                                &onet,
-                                &mut subscribers,
-                                &mut records,
-                                block_number,
-                                block_hash,
-                                is_loading,
-                            )
-                            .await?;
-                        }
-                    };
+    //     // fetch latest finalized block
+    //     let finalized_block_hash = onet.rpc().chain_get_finalized_head().await?;
+    //     if let Some(block) = onet
+    //         .rpc()
+    //         .chain_get_header(Some(finalized_block_hash))
+    //         .await?
+    //     {
+    //         info!("finalized block head {:?} in storage", block.number);
+    //         // process older blocks that have not been processed first
+    //         while let Some(processed_block_number) = latest_block_number_processed {
+    //             if block.number as u64 == processed_block_number {
+    //                 latest_block_number_processed = None;
+    //                 is_loading = false;
+    //             } else {
+    //                 // process the next block
+    //                 let block_number = processed_block_number + 1;
 
-                    //
-                    latest_block_number_processed = Some(block_number);
-                }
-            }
-        }
-        latest_block_number_processed = Some(get_latest_block_number_processed()?);
-    }
+    //                 // if finalized_head process block otherwise fetch block_hash and process the pending block
+    //                 if block.number as u64 == block_number {
+    //                     process_finalized_block(
+    //                         &onet,
+    //                         &mut subscribers,
+    //                         &mut records,
+    //                         block_number,
+    //                         block.hash(),
+    //                         is_loading,
+    //                     )
+    //                     .await?;
+    //                 } else {
+    //                     // fetch block_hash if not the finalized head
+    //                     if let Some(block_hash) = onet
+    //                         .rpc()
+    //                         .chain_get_block_hash(Some(block_number.into()))
+    //                         .await?
+    //                     {
+    //                         process_finalized_block(
+    //                             &onet,
+    //                             &mut subscribers,
+    //                             &mut records,
+    //                             block_number,
+    //                             block_hash,
+    //                             is_loading,
+    //                         )
+    //                         .await?;
+    //                     }
+    //                 };
+
+    //                 //
+    //                 latest_block_number_processed = Some(block_number);
+    //             }
+    //         }
+    //     }
+    //     latest_block_number_processed = Some(get_latest_block_number_processed()?);
+    // }
 
     Err(OnetError::SubscriptionFinished)
 }
@@ -598,6 +602,23 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                 }
             }
         }
+    }
+
+    Ok(())
+}
+
+pub async fn try_run_cache_p2p_records(
+    records: &Records,
+    block_hash: H256,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if config.p2p_enabled {
+        let records_cloned = records.clone();
+        async_std::task::spawn(async move {
+            if let Err(e) = try_fetch_p2p_data(&records_cloned, block_hash).await {
+                error!("try_fetch_p2p_data error: {:?}", e);
+            }
+        });
     }
 
     Ok(())

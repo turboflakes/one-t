@@ -224,6 +224,11 @@ fn default_dn_url() -> String {
     "https://nodes.web3.foundation/api/cohort/1".into()
 }
 
+/// sets the timeout used by p2p-explorer
+fn default_p2p_timeout_seconds() -> u64 {
+    240
+}
+
 #[derive(Clone, Deserialize, Debug)]
 pub struct Config {
     // general
@@ -342,8 +347,16 @@ pub struct Config {
     pub redis_pool_timeout_seconds: u64,
     #[serde(default = "default_redis_pool_expire_seconds")]
     pub redis_pool_expire_seconds: u64,
+    // decentralized nodes configuration endpoint
     #[serde(default = "default_dn_url")]
     pub dn_url: String,
+    // p2p-explorer configuration
+    #[serde(default)]
+    pub p2p_enabled: bool,
+    #[serde(default = "default_p2p_timeout_seconds")]
+    pub p2p_timeout: u64,
+    pub p2p_bootnodes: Vec<String>,
+    pub p2p_skip_ips: Vec<String>,
 }
 
 /// Inject dotenv and env vars into the Config struct

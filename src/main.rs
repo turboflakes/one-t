@@ -27,6 +27,7 @@ mod errors;
 mod matrix;
 mod mcda;
 mod onet;
+mod p2p;
 mod pools;
 mod records;
 mod report;

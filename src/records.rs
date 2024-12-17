@@ -26,10 +26,12 @@ use crate::report::Subset;
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap, collections::HashMap, collections::HashSet, convert::TryInto, hash::Hash,
+    collections::{BTreeMap, HashMap, HashSet},
+    convert::TryInto,
+    hash::Hash,
+    net::IpAddr,
 };
 use subxt::utils::AccountId32;
-
 pub trait Validity {
     fn is_empty(&self) -> bool;
 }
@@ -74,6 +76,7 @@ pub type FlaggedEpochs = Vec<EpochIndex>;
 // pub type RecordKey = String;
 pub type SS58 = String;
 pub type DisputeKind = String;
+pub type AuthorityDiscoveryKey = [u8; 32];
 
 // Keys to be easily used in BTreeMap
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -84,6 +87,8 @@ pub struct RecordKey(EpochKey, AuthorityIndex);
 pub struct AddressKey(EpochKey, SS58);
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct BlockKey(EpochKey, BlockKind);
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct PublicKey(EpochKey, String);
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 enum BlockKind {
@@ -222,10 +227,12 @@ pub struct Records {
     authority_records: HashMap<RecordKey, AuthorityRecord>,
     para_authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
     para_records: HashMap<RecordKey, ParaRecord>,
+    p2p_records: HashMap<RecordKey, P2PRecord>,
     // Note: we use the following maps to easily manage missed votes and para_id assignment changes and core assignments
     core_para: HashMap<CoreIndex, Option<ParaId>>,
     para_group: HashMap<ParaId, GroupIndex>,
     groups: HashMap<GroupIndex, Vec<AuthorityIndex>>,
+    authority_discovery_keys: HashMap<PublicKey, AuthorityIndex>,
 }
 
 impl Records {
@@ -252,9 +259,11 @@ impl Records {
             authority_records: HashMap::new(),
             para_authorities: HashMap::new(),
             para_records: HashMap::new(),
+            p2p_records: HashMap::new(),
             core_para: HashMap::new(),
             para_group: HashMap::new(),
             groups: HashMap::new(),
+            authority_discovery_keys: HashMap::new(),
         }
     }
 
@@ -679,7 +688,9 @@ impl Records {
         &mut self,
         address: &AccountId32,
         authority_index: AuthorityIndex,
+        authority_discovery_key: AuthorityDiscoveryKey,
         authority_record: AuthorityRecord,
+        p2p_record: P2PRecord,
         para_record: Option<ParaRecord>,
     ) {
         // Insert authority_index to the set of authorities for the current epoch
@@ -698,6 +709,15 @@ impl Records {
             address.to_string(),
         );
         self.addresses.entry(address_key).or_insert(authority_index);
+
+        // Map authority_discovery_keys to the record_key
+        let public_key = PublicKey(
+            EpochKey(self.current_era, self.current_epoch),
+            hex::encode(authority_discovery_key),
+        );
+        self.authority_discovery_keys
+            .entry(public_key)
+            .or_insert(authority_index);
 
         // Map authority_index to the AuthorityRecord for the current epoch
         let record_key = RecordKey(
@@ -719,8 +739,15 @@ impl Records {
                     HashSet::from([authority_index]),
                 );
             }
-            self.para_records.entry(record_key).or_insert(para_record);
+            self.para_records
+                .entry(record_key.clone())
+                .or_insert(para_record);
         }
+
+        // Map authority_index to the P2PRecord for the current epoch
+        self.p2p_records
+            .entry(record_key.clone())
+            .or_insert(p2p_record);
     }
 
     pub fn get_authorities(&self, key: Option<EpochKey>) -> Option<Vec<AuthorityIndex>> {
@@ -858,6 +885,42 @@ impl Records {
         }
     }
 
+    pub fn get_p2p_record(
+        &self,
+        index: AuthorityIndex,
+        key: Option<EpochKey>,
+    ) -> Option<&P2PRecord> {
+        let epoch_key = if let Some(key) = key {
+            key
+        } else {
+            EpochKey(self.current_era, self.current_epoch)
+        };
+
+        self.p2p_records.get(&RecordKey(epoch_key, index))
+    }
+
+    pub fn get_p2p_record_with_authority_discovery_key(
+        &self,
+        authority_discovery_key: &AuthorityDiscoveryKey,
+        key: Option<EpochKey>,
+    ) -> Option<&P2PRecord> {
+        let epoch_key = if let Some(key) = key {
+            key
+        } else {
+            EpochKey(self.current_era, self.current_epoch)
+        };
+
+        if let Some(authority_index) = self.authority_discovery_keys.get(&PublicKey(
+            epoch_key.clone(),
+            hex::encode(authority_discovery_key),
+        )) {
+            self.p2p_records
+                .get(&RecordKey(epoch_key, *authority_index))
+        } else {
+            None
+        }
+    }
+
     pub fn get_para_record_with_address(
         &self,
         address: &AccountId32,
@@ -888,6 +951,8 @@ impl Records {
         // authority_records: HashMap<RecordKey, AuthorityRecord>,
         // para_authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
         // para_records: HashMap<RecordKey, ParaRecord>,
+        // authorithy_discovery_keys: HashMap<PublicKey, AuthorityIndex>,
+        // p2p_records: HashMap<RecordKey, P2PRecord>,
 
         let mut counter = 0;
         // Remove blocks map
@@ -935,6 +1000,31 @@ impl Records {
                 // remove authority records
                 if self
                     .authority_records
+                    .remove(&RecordKey(epoch_key.clone(), *auth_idx))
+                    .is_some()
+                {
+                    counter += 1;
+                }
+                // remove authorithy_discovery_keys records
+                if let Some(p2p_record) = self
+                    .p2p_records
+                    .get(&RecordKey(epoch_key.clone(), *auth_idx))
+                {
+                    // remove public key address from authority_discovery_keys map
+                    if self
+                        .authority_discovery_keys
+                        .remove(&PublicKey(
+                            epoch_key.clone(),
+                            hex::encode(p2p_record.authority_discovery_key()),
+                        ))
+                        .is_some()
+                    {
+                        counter += 1;
+                    }
+                }
+                // remove p2p records
+                if self
+                    .p2p_records
                     .remove(&RecordKey(epoch_key.clone(), *auth_idx))
                     .is_some()
                 {
@@ -1071,6 +1161,43 @@ impl AuthorityRecord {
 impl Validity for AuthorityRecord {
     fn is_empty(&self) -> bool {
         self.index.is_none()
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct P2PRecord {
+    #[serde(rename = "adk")]
+    authority_discovery_key: AuthorityDiscoveryKey,
+    ips: Vec<IpAddr>,
+    #[serde(rename = "nv")]
+    node_version: String,
+    #[serde(rename = "nn")]
+    node_name: String,
+}
+
+impl P2PRecord {
+    pub fn with_authority_discovery_key(authority_discovery_key: AuthorityDiscoveryKey) -> Self {
+        Self {
+            authority_discovery_key,
+            ips: Vec::new(),
+            ..Default::default()
+        }
+    }
+
+    pub fn authority_discovery_key(&self) -> AuthorityDiscoveryKey {
+        self.authority_discovery_key
+    }
+
+    pub fn set_ips(&mut self, ips: Vec<IpAddr>) {
+        self.ips = ips;
+    }
+
+    pub fn set_node_version(&mut self, version: String) {
+        self.node_version = version;
+    }
+
+    pub fn set_node_name(&mut self, name: String) {
+        self.node_name = name;
     }
 }
 
@@ -1583,6 +1710,30 @@ impl Validity for ValidatorProfileRecord {
         self.stash.is_none()
     }
 }
+
+// // Note: the following structs are useful for api/cache support
+// #[derive(Serialize, Deserialize, Debug, Clone, Default)]
+// pub struct ValidatorP2PRecord {
+//     pub stash: Option<AccountId32>,
+//     pub ipv4s: u32,
+//     pub own_stake: u128,
+//     // Note: nominators_stake is the sum of all nominators stake
+//     pub nominators_stake: u128,
+//     // Note: nominators_raw_stake is the sum of all nominators stake divided by the number of nominees
+//     pub nominators_raw_stake: u128,
+//     pub nominators_counter: u128,
+//     pub points: u32,
+//     pub subset: Subset,
+//     // mvr is calculated based on the mvr from previous sessions and the latest obtained
+//     pub mvr: Option<u64>,
+//     // mvr_session contains the session from where the mvr was last updated
+//     pub mvr_session: Option<EpochIndex>,
+//     // TODO: DEPRECATE is_oversubscribed, after runtime v1.2 no longer needed
+//     pub is_oversubscribed: bool,
+//     pub is_active: bool,
+//     pub is_chilled: bool,
+//     pub is_blocked: bool,
+// }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SessionStats {
