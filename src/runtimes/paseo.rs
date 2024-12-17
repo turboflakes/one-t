@@ -20,6 +20,7 @@
 // SOFTWARE.
 use crate::cache::{CacheKey, Index, Trait, Verbosity};
 use crate::config::CONFIG;
+use crate::discovery::try_fetch_discovery_data;
 use crate::errors::{CacheError, OnetError};
 use crate::matrix::FileInfo;
 use crate::mcda::criterias::build_limits_from_session;
@@ -28,11 +29,10 @@ use crate::onet::{
     get_subscribers, get_subscribers_by_epoch, write_latest_block_number_processed, Onet,
     ReportType, EPOCH_FILENAME,
 };
-use crate::p2p::try_fetch_p2p_data;
 use crate::records::{
-    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EpochKey, EraIndex, Identity,
-    NetworkSessionStats, P2PRecord, ParaId, ParaRecord, ParaStats, ParachainRecord, Points,
-    Records, SessionStats, Subscribers, SubsetStats, ValidatorProfileRecord,
+    AuthorityIndex, AuthorityRecord, BlockNumber, DiscoveryRecord, EpochIndex, EpochKey, EraIndex,
+    Identity, NetworkSessionStats, ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records,
+    SessionStats, Subscribers, SubsetStats, ValidatorProfileRecord,
 };
 use crate::report::{
     group_by_points, position, Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara,
@@ -198,8 +198,8 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     cache_session_records(&records, block_hash).await?;
     cache_track_records(&onet, &records).await?;
 
-    // Initialize p2p-explorer
-    try_run_cache_p2p_records(&records, block_hash).await?;
+    // Initialize p2p discovery
+    try_run_cache_discovery_records(&records, block_hash).await?;
 
     // Start indexing from the start_block_number
     let mut latest_block_number_processed: Option<u64> = Some(start_block_number.into());
@@ -606,7 +606,7 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
     Ok(())
 }
 
-pub async fn try_run_cache_p2p_records(
+pub async fn try_run_cache_discovery_records(
     records: &Records,
     block_hash: H256,
 ) -> Result<(), OnetError> {
@@ -614,8 +614,8 @@ pub async fn try_run_cache_p2p_records(
     if config.p2p_enabled {
         let records_cloned = records.clone();
         async_std::task::spawn(async move {
-            if let Err(e) = try_fetch_p2p_data(&records_cloned, block_hash).await {
-                error!("try_fetch_p2p_data error: {:?}", e);
+            if let Err(e) = try_fetch_discovery_data(&records_cloned, block_hash).await {
+                error!("try_fetch_discovery_data error: {:?}", e);
             }
         });
     }
@@ -985,9 +985,10 @@ pub async fn initialize_records(
                                     .1
                                     .authority_discovery;
 
-                                let p2p_record = P2PRecord::with_authority_discovery_key(
-                                    authority_discovery_key.clone(),
-                                );
+                                let discovery_record =
+                                    DiscoveryRecord::with_authority_discovery_key(
+                                        authority_discovery_key.clone(),
+                                    );
 
                                 // Insert a record for each validator in group
                                 records.insert(
@@ -995,7 +996,7 @@ pub async fn initialize_records(
                                     *auth_idx,
                                     authority_discovery_key,
                                     authority_record,
-                                    p2p_record,
+                                    discovery_record,
                                     Some(para_record),
                                 );
                             }
@@ -1026,15 +1027,15 @@ pub async fn initialize_records(
                 .1
                 .authority_discovery;
 
-            let p2p_record =
-                P2PRecord::with_authority_discovery_key(authority_discovery_key.clone());
+            let discovery_record =
+                DiscoveryRecord::with_authority_discovery_key(authority_discovery_key.clone());
 
             records.insert(
                 stash,
                 auth_idx,
                 authority_discovery_key,
                 authority_record,
-                p2p_record,
+                discovery_record,
                 None,
             );
         }

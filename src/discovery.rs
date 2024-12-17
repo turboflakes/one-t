@@ -16,7 +16,7 @@ use subxt::utils::H256;
 
 type AgentVersion = String;
 
-pub async fn try_fetch_p2p_data(records: &Records, block_hash: H256) -> Result<(), OnetError> {
+pub async fn try_fetch_discovery_data(records: &Records, block_hash: H256) -> Result<(), OnetError> {
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
     let api = onet.client().clone();
@@ -24,7 +24,7 @@ pub async fn try_fetch_p2p_data(records: &Records, block_hash: H256) -> Result<(
     let config = CONFIG.clone();
 
     info!(
-        "Exploring p2p network using {} and bootnodes {:?}",
+        "Start P2P discovery using {} and bootnodes {:?}",
         config.substrate_ws_url, config.p2p_bootnodes,
     );
 
@@ -94,7 +94,7 @@ pub async fn try_fetch_p2p_data(records: &Records, block_hash: H256) -> Result<(
                 let authority_key =
                     CacheKey::AuthorityRecord(current_era, current_epoch, *authority_idx);
 
-                if let Some(para_record) = records.get_p2p_record(*authority_idx, None) {
+                if let Some(para_record) = records.get_discovery_record(*authority_idx, None) {
                     // debug!("para_record ({:?})", para_record);
 
                     let mut data = para_record.clone();
@@ -121,14 +121,14 @@ pub async fn try_fetch_p2p_data(records: &Records, block_hash: H256) -> Result<(
                         .cmd("HSET")
                         .arg(CacheKey::AuthorityRecordVerbose(
                             authority_key.to_string(),
-                            Verbosity::P2P,
+                            Verbosity::Discovery,
                         ))
-                        .arg(String::from("p2p"))
+                        .arg(String::from("discovery"))
                         .arg(serialized)
                         .cmd("EXPIRE")
                         .arg(CacheKey::AuthorityRecordVerbose(
                             authority_key.to_string(),
-                            Verbosity::P2P,
+                            Verbosity::Discovery,
                         ))
                         .arg(config.cache_writer_prunning)
                         .query_async(&mut cache as &mut Connection)

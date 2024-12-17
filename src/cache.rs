@@ -63,7 +63,7 @@ pub type AuthorityRecordKey = String;
 pub enum Verbosity {
     Stats,
     Summary,
-    P2P,
+    Discovery,
 }
 
 impl std::fmt::Display for Verbosity {
@@ -71,7 +71,7 @@ impl std::fmt::Display for Verbosity {
         match self {
             Self::Stats => write!(f, "stats"),
             Self::Summary => write!(f, "summary"),
-            Self::P2P => write!(f, "p2p"),
+            Self::Discovery => write!(f, "discovery"),
         }
     }
 }

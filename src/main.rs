@@ -22,12 +22,12 @@
 mod api;
 mod cache;
 mod config;
+mod discovery;
 mod dn;
 mod errors;
 mod matrix;
 mod mcda;
 mod onet;
-mod p2p;
 mod pools;
 mod records;
 mod report;

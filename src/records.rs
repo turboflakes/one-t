@@ -227,7 +227,7 @@ pub struct Records {
     authority_records: HashMap<RecordKey, AuthorityRecord>,
     para_authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
     para_records: HashMap<RecordKey, ParaRecord>,
-    p2p_records: HashMap<RecordKey, P2PRecord>,
+    discovery_records: HashMap<RecordKey, DiscoveryRecord>,
     // Note: we use the following maps to easily manage missed votes and para_id assignment changes and core assignments
     core_para: HashMap<CoreIndex, Option<ParaId>>,
     para_group: HashMap<ParaId, GroupIndex>,
@@ -259,7 +259,7 @@ impl Records {
             authority_records: HashMap::new(),
             para_authorities: HashMap::new(),
             para_records: HashMap::new(),
-            p2p_records: HashMap::new(),
+            discovery_records: HashMap::new(),
             core_para: HashMap::new(),
             para_group: HashMap::new(),
             groups: HashMap::new(),
@@ -690,7 +690,7 @@ impl Records {
         authority_index: AuthorityIndex,
         authority_discovery_key: AuthorityDiscoveryKey,
         authority_record: AuthorityRecord,
-        p2p_record: P2PRecord,
+        discovery_record: DiscoveryRecord,
         para_record: Option<ParaRecord>,
     ) {
         // Insert authority_index to the set of authorities for the current epoch
@@ -744,10 +744,10 @@ impl Records {
                 .or_insert(para_record);
         }
 
-        // Map authority_index to the P2PRecord for the current epoch
-        self.p2p_records
+        // Map authority_index to the PeerToPeerRecord for the current epoch
+        self.discovery_records
             .entry(record_key.clone())
-            .or_insert(p2p_record);
+            .or_insert(discovery_record);
     }
 
     pub fn get_authorities(&self, key: Option<EpochKey>) -> Option<Vec<AuthorityIndex>> {
@@ -885,25 +885,25 @@ impl Records {
         }
     }
 
-    pub fn get_p2p_record(
+    pub fn get_discovery_record(
         &self,
         index: AuthorityIndex,
         key: Option<EpochKey>,
-    ) -> Option<&P2PRecord> {
+    ) -> Option<&DiscoveryRecord> {
         let epoch_key = if let Some(key) = key {
             key
         } else {
             EpochKey(self.current_era, self.current_epoch)
         };
 
-        self.p2p_records.get(&RecordKey(epoch_key, index))
+        self.discovery_records.get(&RecordKey(epoch_key, index))
     }
 
-    pub fn get_p2p_record_with_authority_discovery_key(
+    pub fn get_discovery_record_with_authority_discovery_key(
         &self,
         authority_discovery_key: &AuthorityDiscoveryKey,
         key: Option<EpochKey>,
-    ) -> Option<&P2PRecord> {
+    ) -> Option<&DiscoveryRecord> {
         let epoch_key = if let Some(key) = key {
             key
         } else {
@@ -914,7 +914,7 @@ impl Records {
             epoch_key.clone(),
             hex::encode(authority_discovery_key),
         )) {
-            self.p2p_records
+            self.discovery_records
                 .get(&RecordKey(epoch_key, *authority_index))
         } else {
             None
@@ -952,7 +952,7 @@ impl Records {
         // para_authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
         // para_records: HashMap<RecordKey, ParaRecord>,
         // authorithy_discovery_keys: HashMap<PublicKey, AuthorityIndex>,
-        // p2p_records: HashMap<RecordKey, P2PRecord>,
+        // discovery_records: HashMap<RecordKey, DiscoveryRecord>,
 
         let mut counter = 0;
         // Remove blocks map
@@ -1006,8 +1006,8 @@ impl Records {
                     counter += 1;
                 }
                 // remove authorithy_discovery_keys records
-                if let Some(p2p_record) = self
-                    .p2p_records
+                if let Some(discovery_record) = self
+                    .discovery_records
                     .get(&RecordKey(epoch_key.clone(), *auth_idx))
                 {
                     // remove public key address from authority_discovery_keys map
@@ -1015,16 +1015,16 @@ impl Records {
                         .authority_discovery_keys
                         .remove(&PublicKey(
                             epoch_key.clone(),
-                            hex::encode(p2p_record.authority_discovery_key()),
+                            hex::encode(discovery_record.authority_discovery_key()),
                         ))
                         .is_some()
                     {
                         counter += 1;
                     }
                 }
-                // remove p2p records
+                // remove discovery records
                 if self
-                    .p2p_records
+                    .discovery_records
                     .remove(&RecordKey(epoch_key.clone(), *auth_idx))
                     .is_some()
                 {
@@ -1165,7 +1165,7 @@ impl Validity for AuthorityRecord {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct P2PRecord {
+pub struct DiscoveryRecord {
     #[serde(rename = "adk")]
     authority_discovery_key: AuthorityDiscoveryKey,
     ips: Vec<IpAddr>,
@@ -1175,7 +1175,7 @@ pub struct P2PRecord {
     node_name: String,
 }
 
-impl P2PRecord {
+impl DiscoveryRecord {
     pub fn with_authority_discovery_key(authority_discovery_key: AuthorityDiscoveryKey) -> Self {
         Self {
             authority_discovery_key,
@@ -1198,6 +1198,12 @@ impl P2PRecord {
 
     pub fn set_node_name(&mut self, name: String) {
         self.node_name = name;
+    }
+}
+
+impl Validity for DiscoveryRecord {
+    fn is_empty(&self) -> bool {
+        self.authority_discovery_key.is_empty()
     }
 }
 
@@ -1925,7 +1931,8 @@ mod tests {
         assert_eq!(pr.group(), Some(2));
         assert_eq!(pr.peers(), vec![456, 789]);
 
-        records.insert(&account, authority_idx, ar, Some(pr));
+        let dr = DiscoveryRecord::with_authority_discovery_key([1; 32]);
+        records.insert(&account, authority_idx, [1; 32], ar, dr, Some(pr));
 
         assert_eq!(records.get_authorities(None).is_some(), true);
         assert_eq!(

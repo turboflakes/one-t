@@ -23,8 +23,9 @@ use crate::pools::{
     Pool, PoolCounter, PoolNominees, PoolNomineesStats, PoolState, PoolStats, Roles,
 };
 use crate::records::{
-    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, NetworkSessionStats,
-    ParaId, ParaStats, ParachainRecord, SessionStats, ValidatorProfileRecord, Validity,
+    AuthorityIndex, AuthorityRecord, BlockNumber, DiscoveryRecord, EpochIndex, EraIndex,
+    NetworkSessionStats, ParaId, ParaStats, ParachainRecord, SessionStats, ValidatorProfileRecord,
+    Validity,
 };
 use serde::{
     de::{Deserializer, MapAccess, Visitor},
@@ -428,6 +429,9 @@ pub struct ValidatorResult {
     pub para_summary: ParaStats,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub para_stats: BTreeMap<ParaId, ParaStats>,
+    // P2P data
+    #[serde(skip_serializing_if = "DiscoveryRecord::is_empty")]
+    pub discovery: DiscoveryRecord,
     //
     #[serde(skip_serializing_if = "PoolCounter::is_empty")]
     pub pool_counter: PoolCounter,
@@ -457,6 +461,7 @@ impl<'de> Deserialize<'de> for ValidatorResult {
             Para,
             ParaSummary,
             ParaStats,
+            Discovery,
             PoolCounter,
             Ranking,
         }
@@ -483,6 +488,7 @@ impl<'de> Deserialize<'de> for ValidatorResult {
                 let mut para: Option<BTreeMap<String, Value>> = None;
                 let mut para_summary: Option<ParaStats> = None;
                 let mut para_stats: Option<BTreeMap<ParaId, ParaStats>> = None;
+                let mut discovery: Option<DiscoveryRecord> = None;
                 let mut pool_counter: Option<PoolCounter> = None;
                 let mut ranking: Option<RankingStats> = None;
 
@@ -542,6 +548,12 @@ impl<'de> Deserialize<'de> for ValidatorResult {
                             }
                             para_stats = Some(map.next_value()?);
                         }
+                        Field::Discovery => {
+                            if discovery.is_some() {
+                                return Err(serde::de::Error::duplicate_field("discovery"));
+                            }
+                            discovery = Some(map.next_value()?);
+                        }
                         Field::PoolCounter => {
                             if pool_counter.is_some() {
                                 return Err(serde::de::Error::duplicate_field("pool_counter"));
@@ -565,6 +577,7 @@ impl<'de> Deserialize<'de> for ValidatorResult {
                 let para = para.unwrap_or_default();
                 let para_summary = para_summary.unwrap_or_default();
                 let para_stats = para_stats.unwrap_or_default();
+                let discovery = discovery.unwrap_or_default();
                 let pool_counter = pool_counter.unwrap_or_default();
                 let ranking = ranking.unwrap_or_default();
                 Ok(ValidatorResult::new(
@@ -577,6 +590,7 @@ impl<'de> Deserialize<'de> for ValidatorResult {
                     para,
                     para_summary,
                     para_stats,
+                    discovery,
                     pool_counter,
                     ranking,
                 ))
@@ -593,6 +607,7 @@ impl<'de> Deserialize<'de> for ValidatorResult {
             "para",
             "para_summary",
             "para_stats",
+            "discovery",
             "pool_counter",
             "ranking",
         ];
@@ -611,6 +626,7 @@ impl ValidatorResult {
         para: BTreeMap<String, Value>,
         para_summary: ParaStats,
         para_stats: BTreeMap<ParaId, ParaStats>,
+        discovery: DiscoveryRecord,
         pool_counter: PoolCounter,
         ranking: RankingStats,
     ) -> Self {
@@ -624,6 +640,7 @@ impl ValidatorResult {
             para,
             para_summary,
             para_stats,
+            discovery,
             pool_counter,
             ranking,
         }
