@@ -211,7 +211,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     // finalized_head can always be queried so as soon as it changes we process th repective block_hash
     let mut blocks_sub = api.blocks().subscribe_best().await?;
     while let Some(Ok(best_block)) = blocks_sub.next().await {
-        info!("block head {:?} received", best_block.number());
+        info!("Block #{:?} received", best_block.number());
         // update records best_block number
         process_best_block(&onet, &mut records, best_block.number().into()).await?;
 
@@ -222,7 +222,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
             .chain_get_header(Some(finalized_block_hash))
             .await?
         {
-            info!("finalized block head {:?} in storage", block.number);
+            info!("Block #{:?} finalized in storage", block.number);
             // process older blocks that have not been processed first
             while let Some(processed_block_number) = latest_block_number_processed {
                 if block.number as u64 == processed_block_number {
@@ -365,6 +365,9 @@ pub async fn process_finalized_block(
 
         // Cache nomination pools every new session
         try_run_cache_nomination_pools(block_number, block_hash).await?;
+
+        // Cache p2p discovery
+        try_run_cache_discovery_records(&records, block_hash).await?;
     }
 
     // NOTE_1: It might require further testing, but since v1003000 the aproach will be to
@@ -611,7 +614,7 @@ pub async fn try_run_cache_discovery_records(
     block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.p2p_enabled {
+    if config.discovery_enabled {
         let records_cloned = records.clone();
         async_std::task::spawn(async move {
             if let Err(e) = try_fetch_discovery_data(&records_cloned, block_hash).await {

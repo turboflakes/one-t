@@ -679,6 +679,13 @@ impl From<CacheMap> for ValidatorResult {
         let para_stats: BTreeMap<ParaId, ParaStats> =
             serde_json::from_str(&serialized).unwrap_or_default();
 
+        // discovery
+        let serialized = data
+            .get("discovery")
+            .unwrap_or(&"{}".to_string())
+            .to_string();
+        let discovery: DiscoveryRecord = serde_json::from_str(&serialized).unwrap_or_default();
+
         // profile
         let serialized = data.get("profile").unwrap_or(&"{}".to_string()).to_string();
         let profile: ValidatorProfileResult = serialized.into();
@@ -697,6 +704,7 @@ impl From<CacheMap> for ValidatorResult {
             para,
             para_summary,
             para_stats,
+            discovery,
             ..Default::default()
         }
     }

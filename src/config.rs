@@ -350,13 +350,15 @@ pub struct Config {
     // decentralized nodes configuration endpoint
     #[serde(default = "default_dn_url")]
     pub dn_url: String,
-    // p2p-explorer configuration
+    // discovery p2p configuration
     #[serde(default)]
-    pub p2p_enabled: bool,
+    pub discovery_enabled: bool,
     #[serde(default = "default_p2p_timeout_seconds")]
-    pub p2p_timeout: u64,
-    pub p2p_bootnodes: Vec<String>,
-    pub p2p_skip_ips: Vec<String>,
+    pub discovery_timeout: u64,
+    #[serde(default)]
+    pub discovery_bootnodes: Vec<String>,
+    #[serde(default)]
+    pub discovery_skip_ips: Vec<String>,
 }
 
 /// Inject dotenv and env vars into the Config struct

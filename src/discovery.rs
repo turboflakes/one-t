@@ -16,7 +16,10 @@ use subxt::utils::H256;
 
 type AgentVersion = String;
 
-pub async fn try_fetch_discovery_data(records: &Records, block_hash: H256) -> Result<(), OnetError> {
+pub async fn try_fetch_discovery_data(
+    records: &Records,
+    block_hash: H256,
+) -> Result<(), OnetError> {
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
     let api = onet.client().clone();
@@ -25,15 +28,15 @@ pub async fn try_fetch_discovery_data(records: &Records, block_hash: H256) -> Re
 
     info!(
         "Start P2P discovery using {} and bootnodes {:?}",
-        config.substrate_ws_url, config.p2p_bootnodes,
+        config.substrate_ws_url, config.discovery_bootnodes,
     );
 
     let (authorithy_discovery, _) =
         subp2p_explorer_cli::commands::authorities::discover_authorities(
             config.substrate_ws_url.clone(),
             format!("{:?}", api.genesis_hash()),
-            config.p2p_bootnodes.clone(),
-            Duration::from_secs(config.p2p_timeout),
+            config.discovery_bootnodes.clone(),
+            Duration::from_secs(config.discovery_timeout),
             onet.runtime().address_format(),
             Default::default(),
         )
@@ -52,7 +55,7 @@ pub async fn try_fetch_discovery_data(records: &Records, block_hash: H256) -> Re
     for (authority, details) in authorities {
         for multiaddr in details {
             if let Some(ip) = get_ip_from_multiaddr(multiaddr) {
-                if config.p2p_skip_ips.contains(&ip.to_string()) {
+                if config.discovery_skip_ips.contains(&ip.to_string()) {
                     continue;
                 }
                 authority_ips_map
@@ -94,18 +97,17 @@ pub async fn try_fetch_discovery_data(records: &Records, block_hash: H256) -> Re
                 let authority_key =
                     CacheKey::AuthorityRecord(current_era, current_epoch, *authority_idx);
 
-                if let Some(para_record) = records.get_discovery_record(*authority_idx, None) {
-                    // debug!("para_record ({:?})", para_record);
+                if let Some(discovery_record) = records.get_discovery_record(*authority_idx, None) {
+                    let mut data = discovery_record.clone();
 
-                    let mut data = para_record.clone();
-
-                    if let Some(ips) = authority_ips_map.get(&para_record.authority_discovery_key())
+                    if let Some(ips) =
+                        authority_ips_map.get(&discovery_record.authority_discovery_key())
                     {
                         data.set_ips(Vec::from_iter(ips.clone()));
                     }
 
                     if let Some(agent_version) =
-                        authority_agent_version_map.get(&para_record.authority_discovery_key())
+                        authority_agent_version_map.get(&discovery_record.authority_discovery_key())
                     {
                         if let Some((node_version, node_name)) =
                             get_node_version_and_name_from_agent_version(agent_version)
@@ -159,7 +161,11 @@ fn get_ip_from_multiaddr(addr: &Multiaddr) -> Option<IpAddr> {
 fn get_node_version_and_name_from_agent_version(agent_version: &str) -> Option<(String, String)> {
     let node_name = get_node_name_from_agent_version(agent_version);
     if let Some(node_name) = node_name {
-        let node_version = agent_version.replace(&format!(" ({})", node_name), "");
+        let node_version = agent_version
+            .replace(&format!("({})", node_name), "")
+            .trim()
+            .to_string();
+        let node_name = node_name.trim().to_string();
         return Some((node_version, node_name));
     }
     None

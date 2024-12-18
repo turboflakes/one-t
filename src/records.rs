@@ -20,11 +20,16 @@
 // SOFTWARE.
 #![allow(dead_code)]
 use crate::config::CONFIG;
+use crate::errors::OnetError;
 use crate::matrix::UserID;
 use crate::onet::Param;
 use crate::report::Subset;
 use log::info;
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{Deserializer, Error as DeError},
+    {Deserialize, Serialize, Serializer},
+};
+
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     convert::TryInto,
@@ -1167,7 +1172,7 @@ impl Validity for AuthorityRecord {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct DiscoveryRecord {
     #[serde(rename = "adk")]
-    authority_discovery_key: AuthorityDiscoveryKey,
+    authority_discovery_key: String,
     ips: Vec<IpAddr>,
     #[serde(rename = "nv")]
     node_version: String,
@@ -1178,14 +1183,20 @@ pub struct DiscoveryRecord {
 impl DiscoveryRecord {
     pub fn with_authority_discovery_key(authority_discovery_key: AuthorityDiscoveryKey) -> Self {
         Self {
-            authority_discovery_key,
+            authority_discovery_key: hex::encode(authority_discovery_key),
             ips: Vec::new(),
             ..Default::default()
         }
     }
 
     pub fn authority_discovery_key(&self) -> AuthorityDiscoveryKey {
-        self.authority_discovery_key
+        let bytes = hex::decode(self.authority_discovery_key.clone()).unwrap();
+        if bytes.len() != 32 {
+            return AuthorityDiscoveryKey::default();
+        }
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&bytes);
+        key
     }
 
     pub fn set_ips(&mut self, ips: Vec<IpAddr>) {
@@ -1203,7 +1214,7 @@ impl DiscoveryRecord {
 
 impl Validity for DiscoveryRecord {
     fn is_empty(&self) -> bool {
-        self.authority_discovery_key.is_empty()
+        self.authority_discovery_key().iter().all(|&byte| byte == 0)
     }
 }
 
