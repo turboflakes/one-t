@@ -263,11 +263,12 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                             .await?;
                         }
                     };
-
                     //
                     latest_block_number_processed = Some(block_number);
                 }
             }
+            // Cache latest block_number processed
+            write_latest_block_number_processed(block.number.into())?;
         }
         latest_block_number_processed = Some(get_latest_block_number_processed()?);
     }
@@ -390,9 +391,6 @@ pub async fn process_finalized_block(
 
     // Cache records at every block
     cache_track_records(&onet, &records).await?;
-
-    // Cache block processed
-    write_latest_block_number_processed(block_number)?;
 
     // Log block processed duration time
     info!("Block #{} processed ({:?})", block_number, start.elapsed());
@@ -982,28 +980,26 @@ pub async fn initialize_records(
                                     peers,
                                 );
 
-                                // Find authority discovery key
-                                let Public(authority_discovery_key) = queued_keys
-                                    .iter()
-                                    .find(|(addr, _)| addr == address)
-                                    .unwrap()
-                                    .1
-                                    .authority_discovery;
-
-                                let discovery_record =
-                                    DiscoveryRecord::with_authority_discovery_key(
-                                        authority_discovery_key.clone(),
-                                    );
-
                                 // Insert a record for each validator in group
                                 records.insert(
                                     address,
                                     *auth_idx,
-                                    authority_discovery_key,
                                     authority_record,
-                                    discovery_record,
                                     Some(para_record),
                                 );
+
+                                // Find authority discovery key
+                                if let Some((_, keys)) =
+                                    queued_keys.iter().find(|(addr, _)| addr == address)
+                                {
+                                    let Public(authority_discovery_key) = keys.authority_discovery;
+                                    let discovery_record =
+                                        DiscoveryRecord::with_authority_discovery_key(
+                                            authority_discovery_key.clone(),
+                                        );
+
+                                    records.set_discovery_record(*auth_idx, discovery_record);
+                                }
                             }
                         }
                     }
@@ -1024,25 +1020,16 @@ pub async fn initialize_records(
             let authority_record =
                 AuthorityRecord::with_index_address_and_points(auth_idx, stash.clone(), points);
 
+            records.insert(stash, auth_idx, authority_record, None);
+
             // Find authority discovery key
-            let Public(authority_discovery_key) = queued_keys
-                .iter()
-                .find(|(addr, _)| addr == stash)
-                .unwrap()
-                .1
-                .authority_discovery;
+            if let Some((_, keys)) = queued_keys.iter().find(|(addr, _)| addr == stash) {
+                let Public(authority_discovery_key) = keys.authority_discovery;
+                let discovery_record =
+                    DiscoveryRecord::with_authority_discovery_key(authority_discovery_key.clone());
 
-            let discovery_record =
-                DiscoveryRecord::with_authority_discovery_key(authority_discovery_key.clone());
-
-            records.insert(
-                stash,
-                auth_idx,
-                authority_discovery_key,
-                authority_record,
-                discovery_record,
-                None,
-            );
+                records.set_discovery_record(auth_idx, discovery_record);
+            }
         }
     }
     // debug!("records {:?}", records);

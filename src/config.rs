@@ -201,12 +201,12 @@ fn default_redis_database() -> u8 {
 
 /// sets the maximum number of connections managed by the pool.
 fn default_redis_pool_max_open() -> u64 {
-    20
+    40
 }
 
 /// sets the maximum number of connections managed by the pool.
 fn default_redis_pool_max_idle() -> u64 {
-    8
+    16
 }
 
 /// sets the get timeout used by the pool

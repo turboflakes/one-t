@@ -38,7 +38,7 @@ use actix_web::{
     web::{Data, Json, Path, Query},
     HttpRequest,
 };
-use log::warn;
+use log::{info, warn};
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
@@ -293,6 +293,15 @@ async fn get_session_authorities(
                 .query_async(&mut conn as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
+
+            // info!("discovery: {:?}", discovery);
+            // if discovery.is_empty() {
+            //     warn!(
+            //         "Discovery data not found for authority key: {}",
+            //         key.to_string()
+            //     );
+            // }
+
             auth.extend(discovery);
         }
 
@@ -307,6 +316,12 @@ async fn get_session_authorities(
             let acc = AccountId32::from_str(&address).map_err(|e| {
                 ApiError::BadRequest(format!("Invalid account: {:?} error: {e:?}", &address))
             })?;
+
+            warn!(
+                "address: {:?} cache: {}",
+                address,
+                CacheKey::ValidatorProfileByAccount(acc.clone())
+            );
 
             let profile: String = redis::cmd("GET")
                 .arg(CacheKey::ValidatorProfileByAccount(acc))

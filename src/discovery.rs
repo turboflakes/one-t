@@ -2,7 +2,6 @@ use crate::cache::{CacheKey, Verbosity};
 use crate::config::CONFIG;
 use crate::errors::{CacheError, OnetError};
 use crate::onet::Onet;
-use crate::records::AuthorityDiscoveryKey;
 use crate::records::Records;
 use log::info;
 use multiaddr::{Multiaddr, Protocol};
@@ -14,11 +13,12 @@ use std::net::IpAddr;
 use std::time::{Duration, Instant};
 use subxt::utils::H256;
 
+type AuthorityDiscoveryHex = String;
 type AgentVersion = String;
 
 pub async fn try_fetch_discovery_data(
     records: &Records,
-    block_hash: H256,
+    _block_hash: H256,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
@@ -49,7 +49,7 @@ pub async fn try_fetch_discovery_data(
     // );
 
     // From the authority_to_details() method, we can get the IPv4 addresses of the nodes
-    let mut authority_ips_map: HashMap<AuthorityDiscoveryKey, HashSet<IpAddr>> = HashMap::new();
+    let mut authority_ips_map: HashMap<AuthorityDiscoveryHex, HashSet<IpAddr>> = HashMap::new();
 
     let authorities = authorithy_discovery.authority_to_details();
     for (authority, details) in authorities {
@@ -59,7 +59,7 @@ pub async fn try_fetch_discovery_data(
                     continue;
                 }
                 authority_ips_map
-                    .entry(authority.clone())
+                    .entry(hex::encode(authority.clone()))
                     .and_modify(|ips| {
                         (*ips).insert(ip);
                     })
@@ -70,19 +70,26 @@ pub async fn try_fetch_discovery_data(
 
     // From the peer_info() method, we can get the agent version, listening addresses, protocols supported, etc.
     // NOTE: currently we only keep track of the agent version
-    let mut authority_agent_version_map: HashMap<AuthorityDiscoveryKey, AgentVersion> =
+    let mut authority_agent_version_map: HashMap<AuthorityDiscoveryHex, AgentVersion> =
         HashMap::new();
     let peers_data = authorithy_discovery.peer_info().clone();
     for (peer_id, info) in peers_data {
         // Get authority key from peer_id
         if let Some(peer_details) = authorithy_discovery.peer_details().get(&peer_id) {
-            peer_details.authority_id();
-
             authority_agent_version_map
-                .entry(peer_details.authority_id().clone())
+                .entry(hex::encode(peer_details.authority_id().clone()))
                 .or_insert(info.agent_version.clone());
         }
     }
+
+    info!(
+        "authority_agent_version_map {:?}",
+        authority_agent_version_map
+    );
+    info!(
+        "authority_agent_version_map counter {:?}",
+        authority_agent_version_map.len()
+    );
 
     // Cache P2P data
     let mut counter = 0;

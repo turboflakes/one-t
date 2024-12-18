@@ -693,9 +693,7 @@ impl Records {
         &mut self,
         address: &AccountId32,
         authority_index: AuthorityIndex,
-        authority_discovery_key: AuthorityDiscoveryKey,
         authority_record: AuthorityRecord,
-        discovery_record: DiscoveryRecord,
         para_record: Option<ParaRecord>,
     ) {
         // Insert authority_index to the set of authorities for the current epoch
@@ -714,15 +712,6 @@ impl Records {
             address.to_string(),
         );
         self.addresses.entry(address_key).or_insert(authority_index);
-
-        // Map authority_discovery_keys to the record_key
-        let public_key = PublicKey(
-            EpochKey(self.current_era, self.current_epoch),
-            hex::encode(authority_discovery_key),
-        );
-        self.authority_discovery_keys
-            .entry(public_key)
-            .or_insert(authority_index);
 
         // Map authority_index to the AuthorityRecord for the current epoch
         let record_key = RecordKey(
@@ -748,8 +737,27 @@ impl Records {
                 .entry(record_key.clone())
                 .or_insert(para_record);
         }
+    }
+
+    pub fn set_discovery_record(
+        &mut self,
+        authority_index: AuthorityIndex,
+        discovery_record: DiscoveryRecord,
+    ) {
+        // Map authority_discovery_keys to the record_key
+        let public_key = PublicKey(
+            EpochKey(self.current_era, self.current_epoch),
+            discovery_record.authority_discovery_key(),
+        );
+        self.authority_discovery_keys
+            .entry(public_key)
+            .or_insert(authority_index);
 
         // Map authority_index to the PeerToPeerRecord for the current epoch
+        let record_key = RecordKey(
+            EpochKey(self.current_era, self.current_epoch),
+            authority_index,
+        );
         self.discovery_records
             .entry(record_key.clone())
             .or_insert(discovery_record);
@@ -1189,14 +1197,8 @@ impl DiscoveryRecord {
         }
     }
 
-    pub fn authority_discovery_key(&self) -> AuthorityDiscoveryKey {
-        let bytes = hex::decode(self.authority_discovery_key.clone()).unwrap();
-        if bytes.len() != 32 {
-            return AuthorityDiscoveryKey::default();
-        }
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&bytes);
-        key
+    pub fn authority_discovery_key(&self) -> String {
+        self.authority_discovery_key.clone()
     }
 
     pub fn set_ips(&mut self, ips: Vec<IpAddr>) {
@@ -1214,7 +1216,7 @@ impl DiscoveryRecord {
 
 impl Validity for DiscoveryRecord {
     fn is_empty(&self) -> bool {
-        self.authority_discovery_key().iter().all(|&byte| byte == 0)
+        self.authority_discovery_key().is_empty()
     }
 }
 
