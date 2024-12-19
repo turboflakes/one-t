@@ -285,24 +285,32 @@ async fn get_session_authorities(
         }
 
         if show_discovery {
-            let discovery: CacheMap = redis::cmd("HGETALL")
-                .arg(CacheKey::AuthorityRecordVerbose(
-                    key.to_string(),
-                    Verbosity::Discovery,
-                ))
-                .query_async(&mut conn as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
-
-            // info!("discovery: {:?}", discovery);
-            // if discovery.is_empty() {
-            //     warn!(
-            //         "Discovery data not found for authority key: {}",
-            //         key.to_string()
-            //     );
-            // }
-
-            auth.extend(discovery);
+            let discovery = get_discovery_from_cache(key, &mut conn).await?;
+            if discovery.is_empty() {
+                // NOTE: try to get discovery data from the previous session
+                let mut ak = AuthorityKey::from(key.to_string());
+                ak.epoch_index = ak.epoch_index - 1;
+                let discovery = get_discovery_from_cache(&ak.to_string(), &mut conn).await?;
+                if discovery.is_empty() {
+                    // NOTE: try to get discovery data from the previous session and previous era
+                    let mut ak = AuthorityKey::from(key.to_string());
+                    ak.era_index = ak.era_index - 1;
+                    ak.epoch_index = ak.epoch_index - 1;
+                    let discovery = get_discovery_from_cache(&ak.to_string(), &mut conn).await?;
+                    if discovery.is_empty() {
+                        warn!(
+                            "Discovery data not found for authority key: {}",
+                            key.to_string()
+                        );
+                    } else {
+                        auth.extend(discovery);
+                    }
+                } else {
+                    auth.extend(discovery);
+                }
+            } else {
+                auth.extend(discovery);
+            }
         }
 
         if show_profile {
@@ -316,12 +324,6 @@ async fn get_session_authorities(
             let acc = AccountId32::from_str(&address).map_err(|e| {
                 ApiError::BadRequest(format!("Invalid account: {:?} error: {e:?}", &address))
             })?;
-
-            warn!(
-                "address: {:?} cache: {}",
-                address,
-                CacheKey::ValidatorProfileByAccount(acc.clone())
-            );
 
             let profile: String = redis::cmd("GET")
                 .arg(CacheKey::ValidatorProfileByAccount(acc))
@@ -339,6 +341,22 @@ async fn get_session_authorities(
         session: index,
         data,
     })
+}
+
+async fn get_discovery_from_cache(
+    key: &str,
+    conn: &mut Connection,
+) -> Result<CacheMap, CacheError> {
+    let discovery = redis::cmd("HGETALL")
+        .arg(CacheKey::AuthorityRecordVerbose(
+            key.to_string(),
+            Verbosity::Discovery,
+        ))
+        .query_async(conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    return Ok(discovery);
 }
 
 /// Get validator by AuthorityKey
