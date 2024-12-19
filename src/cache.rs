@@ -23,7 +23,6 @@ use crate::config::{Config, CONFIG};
 use crate::errors::CacheError;
 use crate::pools::PoolId;
 use crate::records::{AuthorityIndex, EpochIndex, EraIndex};
-
 use actix_web::web;
 use log::{error, info};
 use mobc::{Connection, Pool};
@@ -64,6 +63,7 @@ pub type AuthorityRecordKey = String;
 pub enum Verbosity {
     Stats,
     Summary,
+    Discovery,
 }
 
 impl std::fmt::Display for Verbosity {
@@ -71,6 +71,7 @@ impl std::fmt::Display for Verbosity {
         match self {
             Self::Stats => write!(f, "stats"),
             Self::Summary => write!(f, "summary"),
+            Self::Discovery => write!(f, "discovery"),
         }
     }
 }

@@ -60,6 +60,8 @@ pub enum OnetError {
     IOError(#[from] std::io::Error),
     #[error("Nomination pool error: {0}")]
     PoolError(String),
+    #[error("P2PError error: {0}")]
+    P2PError(#[from] Box<dyn std::error::Error + Send + 'static>),
     #[error("Other error: {0}")]
     Other(String),
 }
@@ -211,3 +213,16 @@ impl From<CacheError> for ApiError {
         ApiError::InternalServerError(error.into())
     }
 }
+
+// /// P2P specific error messages
+// #[derive(Error, Debug)]
+// pub enum P2PError {
+//     #[error("Other error: {0}")]
+//     Other(String),
+// }
+
+// impl From<Box<dyn std::error::Error>> for P2PError {
+//     fn from(error: Box<dyn std::error::Error>) -> Self {
+//         Self::Other(error.into())
+//     }
+// }

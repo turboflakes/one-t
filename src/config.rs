@@ -201,12 +201,12 @@ fn default_redis_database() -> u8 {
 
 /// sets the maximum number of connections managed by the pool.
 fn default_redis_pool_max_open() -> u64 {
-    20
+    40
 }
 
 /// sets the maximum number of connections managed by the pool.
 fn default_redis_pool_max_idle() -> u64 {
-    8
+    16
 }
 
 /// sets the get timeout used by the pool
@@ -222,6 +222,11 @@ fn default_redis_pool_expire_seconds() -> u64 {
 /// provides default value for decentralized nodes public endpoint if ONET_DN_URL env var is not set
 fn default_dn_url() -> String {
     "https://nodes.web3.foundation/api/cohort/1".into()
+}
+
+/// sets the timeout used by p2p-explorer
+fn default_p2p_timeout_seconds() -> u64 {
+    240
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -342,8 +347,18 @@ pub struct Config {
     pub redis_pool_timeout_seconds: u64,
     #[serde(default = "default_redis_pool_expire_seconds")]
     pub redis_pool_expire_seconds: u64,
+    // decentralized nodes configuration endpoint
     #[serde(default = "default_dn_url")]
     pub dn_url: String,
+    // discovery p2p configuration
+    #[serde(default)]
+    pub discovery_enabled: bool,
+    #[serde(default = "default_p2p_timeout_seconds")]
+    pub discovery_timeout: u64,
+    #[serde(default)]
+    pub discovery_bootnodes: Vec<String>,
+    #[serde(default)]
+    pub discovery_skip_ips: Vec<String>,
 }
 
 /// Inject dotenv and env vars into the Config struct

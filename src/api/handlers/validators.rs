@@ -38,8 +38,7 @@ use actix_web::{
     web::{Data, Json, Path, Query},
     HttpRequest,
 };
-use log::info;
-use log::warn;
+use log::{info, warn};
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
@@ -111,6 +110,9 @@ pub struct Params {
     // show_summary indicates whether parachain summary should be retrieved or not, default false
     #[serde(default)]
     show_summary: bool,
+    // show_discovery indicates whether p2p data should be retrieved or not, default false
+    #[serde(default)]
+    show_discovery: bool,
     // show_profile indicates whether validator identity should be retrieved or not, default false
     #[serde(default)]
     show_profile: bool,
@@ -223,6 +225,7 @@ async fn get_session_authorities(
     role: Role,
     show_stats: bool,
     show_summary: bool,
+    show_discovery: bool,
     show_profile: bool,
     cache: Data<RedisPool>,
 ) -> Result<ValidatorsResult, ApiError> {
@@ -281,6 +284,35 @@ async fn get_session_authorities(
             auth.extend(summary);
         }
 
+        if show_discovery {
+            let discovery = get_discovery_from_cache(key, &mut conn).await?;
+            if discovery.is_empty() {
+                // NOTE: try to get discovery data from the previous session
+                let mut ak = AuthorityKey::from(key.to_string());
+                ak.epoch_index = ak.epoch_index - 1;
+                let discovery = get_discovery_from_cache(&ak.to_string(), &mut conn).await?;
+                if discovery.is_empty() {
+                    // NOTE: try to get discovery data from the previous session and previous era
+                    let mut ak = AuthorityKey::from(key.to_string());
+                    ak.era_index = ak.era_index - 1;
+                    ak.epoch_index = ak.epoch_index - 1;
+                    let discovery = get_discovery_from_cache(&ak.to_string(), &mut conn).await?;
+                    if discovery.is_empty() {
+                        warn!(
+                            "Discovery data not found for authority key: {}",
+                            key.to_string()
+                        );
+                    } else {
+                        auth.extend(discovery);
+                    }
+                } else {
+                    auth.extend(discovery);
+                }
+            } else {
+                auth.extend(discovery);
+            }
+        }
+
         if show_profile {
             let address: String = redis::cmd("HGET")
                 .arg(key.to_string())
@@ -311,11 +343,28 @@ async fn get_session_authorities(
     })
 }
 
+async fn get_discovery_from_cache(
+    key: &str,
+    conn: &mut Connection,
+) -> Result<CacheMap, CacheError> {
+    let discovery = redis::cmd("HGETALL")
+        .arg(CacheKey::AuthorityRecordVerbose(
+            key.to_string(),
+            Verbosity::Discovery,
+        ))
+        .query_async(conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    return Ok(discovery);
+}
+
 /// Get validator by AuthorityKey
 async fn get_validator_by_authority_key(
     auth_key: AuthorityKey,
     show_stats: bool,
     show_summary: bool,
+    show_discovery: bool,
     show_profile: bool,
     hide_address: bool,
     cache: Data<RedisPool>,
@@ -352,6 +401,18 @@ async fn get_validator_by_authority_key(
         data.extend(summary);
     }
 
+    if show_discovery {
+        let discovery: CacheMap = redis::cmd("HGETALL")
+            .arg(CacheKey::AuthorityRecordVerbose(
+                auth_key.to_string(),
+                Verbosity::Discovery,
+            ))
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+        data.extend(discovery);
+    }
+
     if show_profile {
         if let Some(stash) = data.get("address") {
             if let Ok(stash) = AccountId32::from_str(&stash) {
@@ -381,6 +442,7 @@ async fn get_validator_by_stash_and_index(
     session_index: EpochIndex,
     show_stats: bool,
     show_summary: bool,
+    show_discovery: bool,
     hide_address: bool,
     cache: Data<RedisPool>,
 ) -> Result<(ValidatorResult, AuthorityKey), ApiError> {
@@ -425,6 +487,7 @@ async fn get_validator_by_stash_and_index(
         authority_key_data.clone().into(),
         show_stats,
         show_summary,
+        show_discovery,
         false,
         hide_address,
         cache,
@@ -495,6 +558,7 @@ pub async fn get_validators(
                     session_index,
                     params.show_stats,
                     params.show_summary,
+                    params.show_discovery,
                     false,
                     cache.clone(),
                 )
@@ -515,6 +579,7 @@ pub async fn get_validators(
                                             authority_key.clone(),
                                             params.show_stats,
                                             params.show_summary,
+                                            params.show_discovery,
                                             params.show_profile,
                                             false,
                                             cache.clone(),
@@ -568,6 +633,7 @@ pub async fn get_validators(
                         (*key).clone().into(),
                         params.show_stats,
                         params.show_summary,
+                        params.show_discovery,
                         params.show_profile,
                         false,
                         cache.clone(),
@@ -633,6 +699,7 @@ pub async fn get_validators(
                             (*key).clone().into(),
                             params.show_stats,
                             true,
+                            false,
                             true,
                             false,
                             cache.clone(),
@@ -827,6 +894,7 @@ pub async fn get_validators(
                             authority_key,
                             params.show_stats,
                             params.show_summary,
+                            params.show_discovery,
                             params.show_profile,
                             false,
                             cache.clone(),
@@ -856,6 +924,7 @@ pub async fn get_validators(
         params.role.clone(),
         params.show_stats,
         params.show_summary,
+        params.show_discovery,
         params.show_profile,
         cache,
     )
@@ -902,6 +971,7 @@ pub async fn get_validator_by_stash(
         session_index,
         params.show_stats,
         params.show_summary,
+        params.show_discovery,
         false,
         cache,
     )
@@ -971,6 +1041,7 @@ pub async fn get_peer_by_authority(
         authority_key,
         params.show_stats,
         params.show_summary,
+        params.show_discovery,
         params.show_profile,
         false,
         cache,
@@ -1051,6 +1122,7 @@ async fn calculate_validator_grade_by_stash(
                     session_index,
                     false,
                     true,
+                    false,
                     true,
                     cache.clone(),
                 )

@@ -54,6 +54,13 @@ impl SupportedRuntime {
             Self::Paseo => SupportedParasRuntime::PeoplePaseo,
         }
     }
+
+    pub fn address_format(&self) -> String {
+        match &self {
+            Self::Polkadot | Self::Kusama => self.to_string().to_lowercase(),
+            _ => "substrate".to_string(),
+        }
+    }
 }
 
 impl From<String> for SupportedRuntime {

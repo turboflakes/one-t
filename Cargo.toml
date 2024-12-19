@@ -45,3 +45,8 @@ env_logger = "0.9.0"
 futures = "0.3.13"
 codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = ["derive", "full", "bit-vec"] }
 hex = "0.4.3"
+# p2p-explorer
+multiaddr = "0.18.1"
+libp2p = "0.52.0"
+subp2p-explorer-cli = { git = "https://github.com/turboflakes/subp2p-explorer", branch="main"}
+subp2p-explorer = { git = "https://github.com/turboflakes/subp2p-explorer", branch="main"}

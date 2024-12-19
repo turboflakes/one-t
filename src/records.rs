@@ -20,16 +20,23 @@
 // SOFTWARE.
 #![allow(dead_code)]
 use crate::config::CONFIG;
+use crate::errors::OnetError;
 use crate::matrix::UserID;
 use crate::onet::Param;
 use crate::report::Subset;
 use log::info;
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{Deserializer, Error as DeError},
+    {Deserialize, Serialize, Serializer},
+};
+
 use std::{
-    collections::BTreeMap, collections::HashMap, collections::HashSet, convert::TryInto, hash::Hash,
+    collections::{BTreeMap, HashMap, HashSet},
+    convert::TryInto,
+    hash::Hash,
+    net::IpAddr,
 };
 use subxt::utils::AccountId32;
-
 pub trait Validity {
     fn is_empty(&self) -> bool;
 }
@@ -74,6 +81,7 @@ pub type FlaggedEpochs = Vec<EpochIndex>;
 // pub type RecordKey = String;
 pub type SS58 = String;
 pub type DisputeKind = String;
+pub type AuthorityDiscoveryKey = [u8; 32];
 
 // Keys to be easily used in BTreeMap
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -84,6 +92,8 @@ pub struct RecordKey(EpochKey, AuthorityIndex);
 pub struct AddressKey(EpochKey, SS58);
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct BlockKey(EpochKey, BlockKind);
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct PublicKey(EpochKey, String);
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 enum BlockKind {
@@ -222,10 +232,12 @@ pub struct Records {
     authority_records: HashMap<RecordKey, AuthorityRecord>,
     para_authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
     para_records: HashMap<RecordKey, ParaRecord>,
+    discovery_records: HashMap<RecordKey, DiscoveryRecord>,
     // Note: we use the following maps to easily manage missed votes and para_id assignment changes and core assignments
     core_para: HashMap<CoreIndex, Option<ParaId>>,
     para_group: HashMap<ParaId, GroupIndex>,
     groups: HashMap<GroupIndex, Vec<AuthorityIndex>>,
+    authority_discovery_keys: HashMap<PublicKey, AuthorityIndex>,
 }
 
 impl Records {
@@ -252,9 +264,11 @@ impl Records {
             authority_records: HashMap::new(),
             para_authorities: HashMap::new(),
             para_records: HashMap::new(),
+            discovery_records: HashMap::new(),
             core_para: HashMap::new(),
             para_group: HashMap::new(),
             groups: HashMap::new(),
+            authority_discovery_keys: HashMap::new(),
         }
     }
 
@@ -719,8 +733,34 @@ impl Records {
                     HashSet::from([authority_index]),
                 );
             }
-            self.para_records.entry(record_key).or_insert(para_record);
+            self.para_records
+                .entry(record_key.clone())
+                .or_insert(para_record);
         }
+    }
+
+    pub fn set_discovery_record(
+        &mut self,
+        authority_index: AuthorityIndex,
+        discovery_record: DiscoveryRecord,
+    ) {
+        // Map authority_discovery_keys to the record_key
+        let public_key = PublicKey(
+            EpochKey(self.current_era, self.current_epoch),
+            discovery_record.authority_discovery_key(),
+        );
+        self.authority_discovery_keys
+            .entry(public_key)
+            .or_insert(authority_index);
+
+        // Map authority_index to the PeerToPeerRecord for the current epoch
+        let record_key = RecordKey(
+            EpochKey(self.current_era, self.current_epoch),
+            authority_index,
+        );
+        self.discovery_records
+            .entry(record_key.clone())
+            .or_insert(discovery_record);
     }
 
     pub fn get_authorities(&self, key: Option<EpochKey>) -> Option<Vec<AuthorityIndex>> {
@@ -858,6 +898,42 @@ impl Records {
         }
     }
 
+    pub fn get_discovery_record(
+        &self,
+        index: AuthorityIndex,
+        key: Option<EpochKey>,
+    ) -> Option<&DiscoveryRecord> {
+        let epoch_key = if let Some(key) = key {
+            key
+        } else {
+            EpochKey(self.current_era, self.current_epoch)
+        };
+
+        self.discovery_records.get(&RecordKey(epoch_key, index))
+    }
+
+    pub fn get_discovery_record_with_authority_discovery_key(
+        &self,
+        authority_discovery_key: &AuthorityDiscoveryKey,
+        key: Option<EpochKey>,
+    ) -> Option<&DiscoveryRecord> {
+        let epoch_key = if let Some(key) = key {
+            key
+        } else {
+            EpochKey(self.current_era, self.current_epoch)
+        };
+
+        if let Some(authority_index) = self.authority_discovery_keys.get(&PublicKey(
+            epoch_key.clone(),
+            hex::encode(authority_discovery_key),
+        )) {
+            self.discovery_records
+                .get(&RecordKey(epoch_key, *authority_index))
+        } else {
+            None
+        }
+    }
+
     pub fn get_para_record_with_address(
         &self,
         address: &AccountId32,
@@ -888,6 +964,8 @@ impl Records {
         // authority_records: HashMap<RecordKey, AuthorityRecord>,
         // para_authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
         // para_records: HashMap<RecordKey, ParaRecord>,
+        // authorithy_discovery_keys: HashMap<PublicKey, AuthorityIndex>,
+        // discovery_records: HashMap<RecordKey, DiscoveryRecord>,
 
         let mut counter = 0;
         // Remove blocks map
@@ -935,6 +1013,31 @@ impl Records {
                 // remove authority records
                 if self
                     .authority_records
+                    .remove(&RecordKey(epoch_key.clone(), *auth_idx))
+                    .is_some()
+                {
+                    counter += 1;
+                }
+                // remove authorithy_discovery_keys records
+                if let Some(discovery_record) = self
+                    .discovery_records
+                    .get(&RecordKey(epoch_key.clone(), *auth_idx))
+                {
+                    // remove public key address from authority_discovery_keys map
+                    if self
+                        .authority_discovery_keys
+                        .remove(&PublicKey(
+                            epoch_key.clone(),
+                            hex::encode(discovery_record.authority_discovery_key()),
+                        ))
+                        .is_some()
+                    {
+                        counter += 1;
+                    }
+                }
+                // remove discovery records
+                if self
+                    .discovery_records
                     .remove(&RecordKey(epoch_key.clone(), *auth_idx))
                     .is_some()
                 {
@@ -1071,6 +1174,49 @@ impl AuthorityRecord {
 impl Validity for AuthorityRecord {
     fn is_empty(&self) -> bool {
         self.index.is_none()
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct DiscoveryRecord {
+    #[serde(rename = "adk")]
+    authority_discovery_key: String,
+    ips: Vec<IpAddr>,
+    #[serde(rename = "nv")]
+    node_version: String,
+    #[serde(rename = "nn")]
+    node_name: String,
+}
+
+impl DiscoveryRecord {
+    pub fn with_authority_discovery_key(authority_discovery_key: AuthorityDiscoveryKey) -> Self {
+        Self {
+            authority_discovery_key: hex::encode(authority_discovery_key),
+            ips: Vec::new(),
+            ..Default::default()
+        }
+    }
+
+    pub fn authority_discovery_key(&self) -> String {
+        self.authority_discovery_key.clone()
+    }
+
+    pub fn set_ips(&mut self, ips: Vec<IpAddr>) {
+        self.ips = ips;
+    }
+
+    pub fn set_node_version(&mut self, version: String) {
+        self.node_version = version;
+    }
+
+    pub fn set_node_name(&mut self, name: String) {
+        self.node_name = name;
+    }
+}
+
+impl Validity for DiscoveryRecord {
+    fn is_empty(&self) -> bool {
+        self.authority_discovery_key().is_empty()
     }
 }
 
@@ -1584,6 +1730,30 @@ impl Validity for ValidatorProfileRecord {
     }
 }
 
+// // Note: the following structs are useful for api/cache support
+// #[derive(Serialize, Deserialize, Debug, Clone, Default)]
+// pub struct ValidatorP2PRecord {
+//     pub stash: Option<AccountId32>,
+//     pub ipv4s: u32,
+//     pub own_stake: u128,
+//     // Note: nominators_stake is the sum of all nominators stake
+//     pub nominators_stake: u128,
+//     // Note: nominators_raw_stake is the sum of all nominators stake divided by the number of nominees
+//     pub nominators_raw_stake: u128,
+//     pub nominators_counter: u128,
+//     pub points: u32,
+//     pub subset: Subset,
+//     // mvr is calculated based on the mvr from previous sessions and the latest obtained
+//     pub mvr: Option<u64>,
+//     // mvr_session contains the session from where the mvr was last updated
+//     pub mvr_session: Option<EpochIndex>,
+//     // TODO: DEPRECATE is_oversubscribed, after runtime v1.2 no longer needed
+//     pub is_oversubscribed: bool,
+//     pub is_active: bool,
+//     pub is_chilled: bool,
+//     pub is_blocked: bool,
+// }
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SessionStats {
     #[serde(rename = "na")]
@@ -1774,7 +1944,8 @@ mod tests {
         assert_eq!(pr.group(), Some(2));
         assert_eq!(pr.peers(), vec![456, 789]);
 
-        records.insert(&account, authority_idx, ar, Some(pr));
+        let dr = DiscoveryRecord::with_authority_discovery_key([1; 32]);
+        records.insert(&account, authority_idx, [1; 32], ar, dr, Some(pr));
 
         assert_eq!(records.get_authorities(None).is_some(), true);
         assert_eq!(
