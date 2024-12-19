@@ -369,8 +369,10 @@ pub async fn process_finalized_block(
         // Cache nomination pools every new session
         try_run_cache_nomination_pools(block_number, block_hash).await?;
 
-        // Cache p2p discovery
-        try_run_cache_discovery_records(&records, block_hash).await?;
+        if !is_loading {
+            // Cache p2p discovery
+            try_run_cache_discovery_records(&records, block_hash).await?;
+        }
     }
 
     // NOTE_1: It might require further testing, but since v1003000 the aproach will be to
