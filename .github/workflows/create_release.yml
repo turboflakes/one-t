@@ -27,6 +27,9 @@ jobs:
             override: true
             components: rustfmt, clippy
 
+      - name: Install protobuf
+        run: apt-get install protobuf-compiler
+
       - name: Run cargo test
         uses: actions-rs/cargo@v1
         env:
