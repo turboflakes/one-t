@@ -1944,8 +1944,7 @@ mod tests {
         assert_eq!(pr.group(), Some(2));
         assert_eq!(pr.peers(), vec![456, 789]);
 
-        let dr = DiscoveryRecord::with_authority_discovery_key([1; 32]);
-        records.insert(&account, authority_idx, [1; 32], ar, dr, Some(pr));
+        records.insert(&account, authority_idx, ar, Some(pr));
 
         assert_eq!(records.get_authorities(None).is_some(), true);
         assert_eq!(
@@ -1989,5 +1988,12 @@ mod tests {
                 assert_eq!(stats.core_assignments(), 2);
             }
         }
+
+        let dr: DiscoveryRecord = DiscoveryRecord::with_authority_discovery_key([0; 32]);
+        assert_eq!(dr.authority_discovery_key(), "0000000000000000000000000000000000000000000000000000000000000000");
+
+        records.set_discovery_record(authority_idx, dr);
+        assert_eq!(records.get_authority_record(authority_idx, None).is_some(), true);
+
     }
 }

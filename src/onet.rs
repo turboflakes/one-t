@@ -26,9 +26,7 @@ use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
 use crate::records::EpochIndex;
 use crate::report::Network;
 use crate::runtimes::{
-    kusama,
-    paseo,
-    polkadot,
+    kusama, paseo, polkadot,
     support::{ChainPrefix, ChainTokenSymbol, SupportedRuntime},
 };
 use log::{error, info, warn};
