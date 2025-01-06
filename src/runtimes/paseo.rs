@@ -1505,25 +1505,49 @@ pub async fn track_records(
                         // ***********************************************************************
                         // Track Availability data from bitfields
                         // ***********************************************************************
+                        // NOTE: authorities_present vec will contain the authorities present in para_inherent.data.bitfields and it's useful 
+                        // to increase unavailability to the authorities not present
+                        let mut authorities_present = Vec::new();
                         let extrinsics = api.blocks().at(block_hash).await?.extrinsics().await?;
                         for res in extrinsics.find::<Enter>() {
                             let extrinsic = res?;
                             for availability_bitfield in extrinsic.value.data.bitfields.iter() {
-                                let ValidatorIndex(auth_idx) =
+                                // Note: availability_bitfield.validator_index is the index of the validator in the paras_shared.active_validator_indices
+                                let ValidatorIndex(para_idx) =
                                     &availability_bitfield.validator_index;
-                                // Get para_record for the same on chain votes session
-                                if let Some(para_record) = records
-                                    .get_mut_para_record(*auth_idx, Some(backing_votes.session))
+
+                                if let Some(ValidatorIndex(auth_idx)) =
+                                    active_validator_indices.get(*para_idx as usize)
                                 {
-                                    let AvailabilityBitfield(decoded_bits) =
-                                        &availability_bitfield.payload;
-                                    if decoded_bits.as_bits().iter().any(|x| x) {
-                                        para_record.inc_availability();
-                                    } else {
+                                    // Get para_record for the same on chain votes session
+                                    if let Some(para_record) = records
+                                        .get_mut_para_record(*auth_idx, Some(backing_votes.session))
+                                    {
+                                        let AvailabilityBitfield(decoded_bits) =
+                                            &availability_bitfield.payload;
+                                        if decoded_bits.as_bits().iter().any(|x| x) {
+                                            para_record.inc_availability();
+                                        } else {
+                                            para_record.push_unavailable_at(block_number);
+                                        }
+                                    }
+                                    // Keep track of the authorities that show up in para_inherent.data.bitfields
+                                    authorities_present.push(*auth_idx);
+                                }
+                            }
+                        }
+                        // Also increase unavailability to the authorities that do not show up in para_inherent.data.bitfields
+                        if active_validator_indices.len() != authorities_present.len() {
+                            for ValidatorIndex(auth_idx) in active_validator_indices.iter() {
+                                if !authorities_present.contains(auth_idx) {
+                                    if let Some(para_record) = records.get_mut_para_record(
+                                        *auth_idx,
+                                        Some(backing_votes.session),
+                                    ) {
                                         para_record.push_unavailable_at(block_number);
                                     }
                                 }
-                            }
+                            }  
                         }
                     } else {
                         warn!("None on chain voted recorded.");
