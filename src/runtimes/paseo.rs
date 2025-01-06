@@ -78,9 +78,12 @@ use subxt_signer::sr25519::Keypair;
 mod node_runtime {}
 
 use node_runtime::{
+    // Event,
+    para_inherent::calls::types::Enter,
     runtime_types::{
         bounded_collections::bounded_vec::BoundedVec, pallet_nomination_pools::PoolState,
-        polkadot_parachain_primitives::primitives::Id, polkadot_primitives::v7::DisputeStatement,
+        polkadot_parachain_primitives::primitives::Id,
+        polkadot_primitives::v7::AvailabilityBitfield, polkadot_primitives::v7::DisputeStatement,
         polkadot_primitives::v7::ValidatorIndex, polkadot_primitives::v7::ValidityAttestation,
         polkadot_runtime_parachains::scheduler::common::Assignment,
         polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
@@ -88,7 +91,6 @@ use node_runtime::{
         sp_consensus_babe::digests::PreDigest,
     },
     session::events::NewSession,
-    // Event,
     system::events::ExtrinsicFailed,
 };
 
@@ -340,6 +342,7 @@ pub async fn process_finalized_block(
     // Assign block_metadata to the api
     api.set_metadata(block_metadata);
 
+    // Fetch events
     let events = api.events().at(block_hash).await?;
 
     if let Some(new_session_event) = events.find_first::<NewSession>()? {
@@ -471,6 +474,8 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                                 explicit_votes: para_record.total_explicit_votes(),
                                 implicit_votes: para_record.total_implicit_votes(),
                                 missed_votes: para_record.total_missed_votes(),
+                                available_bitfields: para_record.total_available_bitfields(),
+                                unavailable_bitfields: para_record.total_unavailable_bitfields(),
                             };
                             let serialized = serde_json::to_string(&summary)?;
                             redis::pipe()
@@ -1492,6 +1497,30 @@ pub async fn track_records(
                                         }
                                     }
                                     _ => continue,
+                                }
+                            }
+                        }
+
+                        // ***********************************************************************
+                        // Track Availability data from bitfields
+                        // ***********************************************************************
+                        let extrinsics = api.blocks().at(block_hash).await?.extrinsics().await?;
+                        for res in extrinsics.find::<Enter>() {
+                            let extrinsic = res?;
+                            for availability_bitfield in extrinsic.value.data.bitfields.iter() {
+                                let ValidatorIndex(auth_idx) =
+                                    &availability_bitfield.validator_index;
+                                // Get para_record for the same on chain votes session
+                                if let Some(para_record) = records
+                                    .get_mut_para_record(*auth_idx, Some(backing_votes.session))
+                                {
+                                    let AvailabilityBitfield(decoded_bits) =
+                                        &availability_bitfield.payload;
+                                    if decoded_bits.as_bits().iter().any(|x| x) {
+                                        para_record.inc_available_bitfields();
+                                    } else {
+                                        para_record.inc_unavailable_bitfields();
+                                    }
                                 }
                             }
                         }

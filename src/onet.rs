@@ -26,7 +26,9 @@ use crate::matrix::{Matrix, UserID, MATRIX_SUBSCRIBERS_FILENAME};
 use crate::records::EpochIndex;
 use crate::report::Network;
 use crate::runtimes::{
-    kusama, paseo, polkadot,
+    // kusama,
+    paseo,
+    // polkadot,
     support::{ChainPrefix, ChainTokenSymbol, SupportedRuntime},
 };
 use log::{error, info, warn};
@@ -381,10 +383,10 @@ impl Onet {
         self.cache_network().await?;
 
         match self.runtime {
-            SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
-            SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
+            // SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
+            // SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
             SupportedRuntime::Paseo => paseo::init_and_subscribe_on_chain_events(self).await,
-            // _ => todo!(),
+            _ => todo!(),
         }
     }
     // cache methods
