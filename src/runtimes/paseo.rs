@@ -440,6 +440,9 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                             session_stats.implicit_votes += para_record.total_implicit_votes();
                             session_stats.missed_votes += para_record.total_missed_votes();
                             session_stats.disputes += para_record.total_disputes();
+                            // data availability
+                            session_stats.data_availability += para_record.total_availability();
+                            session_stats.data_unavailability += para_record.total_unavailability();
 
                             //
                             let serialized = serde_json::to_string(&para_record)?;
@@ -474,8 +477,6 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                                 explicit_votes: para_record.total_explicit_votes(),
                                 implicit_votes: para_record.total_implicit_votes(),
                                 missed_votes: para_record.total_missed_votes(),
-                                available_bitfields: para_record.total_available_bitfields(),
-                                unavailable_bitfields: para_record.total_unavailable_bitfields(),
                             };
                             let serialized = serde_json::to_string(&summary)?;
                             redis::pipe()
@@ -1517,9 +1518,9 @@ pub async fn track_records(
                                     let AvailabilityBitfield(decoded_bits) =
                                         &availability_bitfield.payload;
                                     if decoded_bits.as_bits().iter().any(|x| x) {
-                                        para_record.inc_available_bitfields();
+                                        para_record.inc_availability();
                                     } else {
-                                        para_record.inc_unavailable_bitfields();
+                                        para_record.push_unavailable_at(block_number);
                                     }
                                 }
                             }

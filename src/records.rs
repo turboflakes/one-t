@@ -1221,6 +1221,51 @@ impl Validity for DiscoveryRecord {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct BitfieldsRecord {
+    availability: u32,
+    unavailability: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unavailable_at: Vec<BlockNumber>,
+}
+
+impl BitfieldsRecord {
+    pub fn new() -> Self {
+        Self {
+            availability: 0,
+            unavailability: 0,
+            unavailable_at: Vec::new(),
+        }
+    }
+
+    pub fn availability(&self) -> u32 {
+        self.availability
+    }
+
+    pub fn unavailability(&self) -> u32 {
+        self.unavailability
+    }
+
+    pub fn unavailable(&self) -> Vec<BlockNumber> {
+        self.unavailable_at.to_vec()
+    }
+
+    pub fn inc_availability(&mut self) {
+        self.availability += 1;
+    }
+
+    pub fn push_unavailable_at(&mut self, block_number: BlockNumber) {
+        self.unavailability += 1;
+        self.unavailable_at.push(block_number);
+    }
+}
+
+impl Validity for BitfieldsRecord {
+    fn is_empty(&self) -> bool {
+        self.availability() == 0 && self.unavailability() == 0 && self.unavailable_at.is_empty()
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ParaRecord {
     // index is the position of the authority in paras_shared().active_validator_indices(None)
     #[serde(rename = "pix")]
@@ -1234,6 +1279,7 @@ pub struct ParaRecord {
     disputes: Vec<(BlockNumber, DisputeKind)>,
     #[serde(skip)]
     para_stats: BTreeMap<ParaId, ParaStats>,
+    bitfields: Option<BitfieldsRecord>,
 }
 
 impl ParaRecord {
@@ -1249,6 +1295,7 @@ impl ParaRecord {
             para_id: None,
             peers,
             para_stats: BTreeMap::new(),
+            bitfields: Some(BitfieldsRecord::default()),
             ..Default::default()
         }
     }
@@ -1286,6 +1333,17 @@ impl ParaRecord {
 
     pub fn push_dispute(&mut self, block_number: BlockNumber, msg: String) {
         self.disputes.push((block_number, msg));
+    }
+
+    pub fn inc_availability(&mut self) {
+        self.bitfields.as_mut().unwrap().inc_availability();
+    }
+
+    pub fn push_unavailable_at(&mut self, block_number: BlockNumber) {
+        self.bitfields
+            .as_mut()
+            .unwrap()
+            .push_unavailable_at(block_number);
     }
 
     pub fn update_scheduled_core(&mut self, para_id: ParaId, core: CoreIndex) {
@@ -1382,28 +1440,6 @@ impl ParaRecord {
         stats.missed_votes += 1;
     }
 
-    pub fn inc_available_bitfields(&mut self) {
-        if let Some(para_id) = self.para_id {
-            // increment current available_bitfields
-            let stats = self
-                .para_stats
-                .entry(para_id)
-                .or_insert(ParaStats::default());
-            stats.available_bitfields += 1;
-        }
-    }
-
-    pub fn inc_unavailable_bitfields(&mut self) {
-        if let Some(para_id) = self.para_id {
-            // increment current unavailable_bitfields
-            let stats = self
-                .para_stats
-                .entry(para_id)
-                .or_insert(ParaStats::default());
-            stats.unavailable_bitfields += 1;
-        }
-    }
-
     pub fn total_points(&self) -> Points {
         self.para_stats.iter().map(|(_, stats)| stats.points).sum()
     }
@@ -1467,18 +1503,20 @@ impl ParaRecord {
         self.disputes.len().try_into().unwrap()
     }
 
-    pub fn total_available_bitfields(&self) -> Votes {
-        self.para_stats
-            .iter()
-            .map(|(_, stats)| stats.available_bitfields)
-            .sum()
+    pub fn total_availability(&self) -> u32 {
+        if let Some(bitfields) = &self.bitfields {
+            bitfields.availability()
+        } else {
+            0
+        }
     }
 
-    pub fn total_unavailable_bitfields(&self) -> Votes {
-        self.para_stats
-            .iter()
-            .map(|(_, stats)| stats.unavailable_bitfields)
-            .sum()
+    pub fn total_unavailability(&self) -> u32 {
+        if let Some(bitfields) = &self.bitfields {
+            bitfields.unavailability()
+        } else {
+            0
+        }
     }
 
     pub fn get_para_id_stats(&self, para_id: ParaId) -> Option<&ParaStats> {
@@ -1498,6 +1536,7 @@ impl ParaRecord {
             peers: self.peers.clone(),
             disputes: self.disputes.clone(),
             para_stats: BTreeMap::new(),
+            bitfields: self.bitfields.clone(),
         }
     }
 }
@@ -1516,10 +1555,6 @@ pub struct ParaStats {
     pub implicit_votes: u32,
     #[serde(rename = "mv")]
     pub missed_votes: u32,
-    #[serde(rename = "abf")]
-    pub available_bitfields: u32,
-    #[serde(rename = "ubf")]
-    pub unavailable_bitfields: u32,
 }
 
 impl ParaStats {
@@ -1558,14 +1593,6 @@ impl ParaStats {
     pub fn votes_points(&self) -> Points {
         self.total_votes() * 20
     }
-
-    pub fn available_bitfields(&self) -> u32 {
-        self.available_bitfields
-    }
-
-    pub fn unavailable_bitfields(&self) -> u32 {
-        self.unavailable_bitfields
-    }
 }
 
 impl Validity for ParaStats {
@@ -1575,8 +1602,6 @@ impl Validity for ParaStats {
             && self.authored_blocks() == 0
             && self.core_assignments() == 0
             && self.points() == 0
-            && self.available_bitfields() == 0
-            && self.unavailable_bitfields() == 0
     }
 }
 
@@ -1822,6 +1847,10 @@ pub struct SessionStats {
     pub missed_votes: u32,
     #[serde(rename = "di")]
     pub disputes: u32,
+    #[serde(rename = "da")]
+    pub data_availability: u32,
+    #[serde(rename = "du")]
+    pub data_unavailability: u32,
 }
 
 impl Validity for SessionStats {
