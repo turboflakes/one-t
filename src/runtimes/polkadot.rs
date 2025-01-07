@@ -70,7 +70,6 @@ use subxt::{
     tx::TxStatus,
     utils::{AccountId32, H256},
 };
-
 use subxt_signer::sr25519::Keypair;
 
 #[subxt::subxt(
@@ -80,9 +79,12 @@ use subxt_signer::sr25519::Keypair;
 mod node_runtime {}
 
 use node_runtime::{
+    // Event,
+    para_inherent::calls::types::Enter,
     runtime_types::{
         bounded_collections::bounded_vec::BoundedVec, pallet_nomination_pools::PoolState,
-        polkadot_parachain_primitives::primitives::Id, polkadot_primitives::v7::DisputeStatement,
+        polkadot_parachain_primitives::primitives::Id,
+        polkadot_primitives::v7::AvailabilityBitfield, polkadot_primitives::v7::DisputeStatement,
         polkadot_primitives::v7::ValidatorIndex, polkadot_primitives::v7::ValidityAttestation,
         polkadot_runtime_parachains::scheduler::common::Assignment,
         polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
@@ -90,7 +92,6 @@ use node_runtime::{
         sp_consensus_babe::digests::PreDigest,
     },
     session::events::NewSession,
-    // Event,
     system::events::ExtrinsicFailed,
 };
 
@@ -342,6 +343,7 @@ pub async fn process_finalized_block(
     // Assign block_metadata to the api
     api.set_metadata(block_metadata);
 
+    // Fetch events
     let events = api.events().at(block_hash).await?;
 
     if let Some(new_session_event) = events.find_first::<NewSession>()? {
@@ -439,6 +441,9 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                             session_stats.implicit_votes += para_record.total_implicit_votes();
                             session_stats.missed_votes += para_record.total_missed_votes();
                             session_stats.disputes += para_record.total_disputes();
+                            // data availability
+                            session_stats.data_availability += para_record.total_availability();
+                            session_stats.data_unavailability += para_record.total_unavailability();
 
                             //
                             let serialized = serde_json::to_string(&para_record)?;
@@ -1494,6 +1499,53 @@ pub async fn track_records(
                                         }
                                     }
                                     _ => continue,
+                                }
+                            }
+                        }
+
+                        // ***********************************************************************
+                        // Track Availability data from bitfields
+                        // ***********************************************************************
+                        // NOTE: authorities_present vec will contain the authorities present in para_inherent.data.bitfields and it's useful
+                        // to increase unavailability to the authorities not present
+                        let mut authorities_present = Vec::new();
+                        let extrinsics = api.blocks().at(block_hash).await?.extrinsics().await?;
+                        for res in extrinsics.find::<Enter>() {
+                            let extrinsic = res?;
+                            for availability_bitfield in extrinsic.value.data.bitfields.iter() {
+                                // Note: availability_bitfield.validator_index is the index of the validator in the paras_shared.active_validator_indices
+                                let ValidatorIndex(para_idx) =
+                                    &availability_bitfield.validator_index;
+
+                                if let Some(ValidatorIndex(auth_idx)) =
+                                    active_validator_indices.get(*para_idx as usize)
+                                {
+                                    // Get para_record for the same on chain votes session
+                                    if let Some(para_record) = records
+                                        .get_mut_para_record(*auth_idx, Some(backing_votes.session))
+                                    {
+                                        let AvailabilityBitfield(decoded_bits) =
+                                            &availability_bitfield.payload;
+                                        if decoded_bits.as_bits().iter().any(|x| x) {
+                                            para_record.inc_availability();
+                                        } else {
+                                            para_record.push_unavailable_at(block_number);
+                                        }
+                                    }
+                                    // Keep track of the authorities that show up in para_inherent.data.bitfields
+                                    authorities_present.push(*auth_idx);
+                                }
+                            }
+                        }
+                        // Also increase unavailability to the authorities that do not show up in para_inherent.data.bitfields
+                        if active_validator_indices.len() != authorities_present.len() {
+                            for ValidatorIndex(auth_idx) in active_validator_indices.iter() {
+                                if !authorities_present.contains(auth_idx) {
+                                    if let Some(para_record) = records
+                                        .get_mut_para_record(*auth_idx, Some(backing_votes.session))
+                                    {
+                                        para_record.push_unavailable_at(block_number);
+                                    }
                                 }
                             }
                         }

@@ -21,7 +21,7 @@
 
 #![allow(clippy::all)]
 
-// pub mod kusama;
+pub mod kusama;
 pub mod paseo;
-// pub mod polkadot;
+pub mod polkadot;
 pub mod support;

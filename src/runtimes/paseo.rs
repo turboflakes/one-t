@@ -1505,7 +1505,7 @@ pub async fn track_records(
                         // ***********************************************************************
                         // Track Availability data from bitfields
                         // ***********************************************************************
-                        // NOTE: authorities_present vec will contain the authorities present in para_inherent.data.bitfields and it's useful 
+                        // NOTE: authorities_present vec will contain the authorities present in para_inherent.data.bitfields and it's useful
                         // to increase unavailability to the authorities not present
                         let mut authorities_present = Vec::new();
                         let extrinsics = api.blocks().at(block_hash).await?.extrinsics().await?;
@@ -1540,14 +1540,13 @@ pub async fn track_records(
                         if active_validator_indices.len() != authorities_present.len() {
                             for ValidatorIndex(auth_idx) in active_validator_indices.iter() {
                                 if !authorities_present.contains(auth_idx) {
-                                    if let Some(para_record) = records.get_mut_para_record(
-                                        *auth_idx,
-                                        Some(backing_votes.session),
-                                    ) {
+                                    if let Some(para_record) = records
+                                        .get_mut_para_record(*auth_idx, Some(backing_votes.session))
+                                    {
                                         para_record.push_unavailable_at(block_number);
                                     }
                                 }
-                            }  
+                            }
                         }
                     } else {
                         warn!("None on chain voted recorded.");
