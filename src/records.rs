@@ -1222,8 +1222,11 @@ impl Validity for DiscoveryRecord {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct BitfieldsRecord {
+    #[serde(rename = "a")]
     availability: u32,
+    #[serde(rename = "u")]
     unavailability: u32,
+    #[serde(rename = "uat")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     unavailable_at: Vec<BlockNumber>,
 }
