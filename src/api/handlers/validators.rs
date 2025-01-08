@@ -32,7 +32,7 @@ use crate::config::CONFIG;
 use crate::dn::try_fetch_stashes_from_remote_url;
 use crate::errors::{ApiError, CacheError};
 use crate::pools::{PoolId, PoolNominees};
-use crate::records::{grade, EpochIndex, Grade};
+use crate::records::{grade, BitfieldsRecord, EpochIndex, Grade};
 use crate::report::Subset;
 use actix_web::{
     web::{Data, Json, Path, Query},
@@ -1183,10 +1183,28 @@ async fn calculate_validator_grade_by_stash(
 
     let mvr = mvrs.iter().sum::<f64>() / para_epochs as f64;
 
+    // calculate bur if para_epochs > 0
+    let burs: Vec<f64> = data
+        .iter()
+        .filter(|v| v.is_para)
+        .filter_map(|v| v.para.get("bitfields"))
+        .filter_map(|value| <BitfieldsRecord as Deserialize>::deserialize(value).ok())
+        .map(|bitfields| {
+            let partial = bitfields.availability() + bitfields.unavailability();
+            if partial > 0 {
+                bitfields.unavailability() as f64 / partial as f64
+            } else {
+                0.0_f64
+            }
+        })
+        .collect();
+
+    let bur = burs.iter().sum::<f64>() / para_epochs as f64;
+
     if params.show_summary {
         return Ok(ValidatorGradeResult {
             address: stash.to_string(),
-            grade: grade(1.0 - mvr).to_string(),
+            grade: grade(1.0 - (mvr * 0.6 + bur * 0.4)).to_string(),
             authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
             para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
             explicit_votes_total: data
@@ -1204,6 +1222,20 @@ async fn calculate_validator_grade_by_stash(
                 .filter(|v| v.is_para)
                 .map(|v| v.para_summary.missed_votes)
                 .sum(),
+            bitfields_availability_total: data
+                .iter()
+                .filter(|v| v.is_para)
+                .filter_map(|v| v.para.get("bitfields"))
+                .filter_map(|value| serde_json::from_value::<BitfieldsRecord>(value.clone()).ok())
+                .map(|bitfields| bitfields.availability())
+                .sum(),
+            bitfields_unavailability_total: data
+                .iter()
+                .filter(|v| v.is_para)
+                .filter_map(|v| v.para.get("bitfields"))
+                .filter_map(|value| serde_json::from_value::<BitfieldsRecord>(value.clone()).ok())
+                .map(|bitfields| bitfields.unavailability())
+                .sum(),
             sessions_data: data.into(),
             ..Default::default()
         });
@@ -1211,7 +1243,7 @@ async fn calculate_validator_grade_by_stash(
 
     return Ok(ValidatorGradeResult {
         address: stash.to_string(),
-        grade: grade(1.0 - mvr).to_string(),
+        grade: grade(1.0 - (mvr * 0.6 + bur * 0.4)).to_string(),
         authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
         para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
         explicit_votes_total: data
@@ -1228,6 +1260,20 @@ async fn calculate_validator_grade_by_stash(
             .iter()
             .filter(|v| v.is_para)
             .map(|v| v.para_summary.missed_votes)
+            .sum(),
+        bitfields_availability_total: data
+            .iter()
+            .filter(|v| v.is_para)
+            .filter_map(|v| v.para.get("bitfields"))
+            .filter_map(|value| serde_json::from_value::<BitfieldsRecord>(value.clone()).ok())
+            .map(|bitfields| bitfields.availability())
+            .sum(),
+        bitfields_unavailability_total: data
+            .iter()
+            .filter(|v| v.is_para)
+            .filter_map(|v| v.para.get("bitfields"))
+            .filter_map(|value| serde_json::from_value::<BitfieldsRecord>(value.clone()).ok())
+            .map(|bitfields| bitfields.unavailability())
             .sum(),
         sessions: data.iter().map(|v| v.session).collect(),
         ..Default::default()
