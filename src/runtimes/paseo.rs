@@ -440,9 +440,11 @@ pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), O
                             session_stats.implicit_votes += para_record.total_implicit_votes();
                             session_stats.missed_votes += para_record.total_missed_votes();
                             session_stats.disputes += para_record.total_disputes();
-                            // data availability
-                            session_stats.data_availability += para_record.total_availability();
-                            session_stats.data_unavailability += para_record.total_unavailability();
+                            // bitfields availability
+                            session_stats.bitfields_availability +=
+                                para_record.total_availability();
+                            session_stats.bitfields_unavailability +=
+                                para_record.total_unavailability();
 
                             //
                             let serialized = serde_json::to_string(&para_record)?;

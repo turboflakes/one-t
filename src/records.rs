@@ -1850,10 +1850,10 @@ pub struct SessionStats {
     pub missed_votes: u32,
     #[serde(rename = "di")]
     pub disputes: u32,
-    #[serde(rename = "da")]
-    pub data_availability: u32,
-    #[serde(rename = "du")]
-    pub data_unavailability: u32,
+    #[serde(rename = "ba")]
+    pub bitfields_availability: u32,
+    #[serde(rename = "bu")]
+    pub bitfields_unavailability: u32,
 }
 
 impl Validity for SessionStats {
