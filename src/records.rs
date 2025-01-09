@@ -205,7 +205,8 @@ impl std::fmt::Display for Grade {
     }
 }
 
-pub fn grade(ratio: f64) -> Grade {
+pub fn grade(mvr: f64, bur: f64) -> Grade {
+    let ratio = 1.0_f64 - (mvr * 0.75 + bur * 0.25);
     let p = (ratio * 10000.0).round() as u32;
     match p {
         9901..=10000 => Grade::Ap,
@@ -426,8 +427,11 @@ impl Records {
                         let tv = para_record.total_votes();
                         let mv = para_record.total_missed_votes();
                         let mvr = mv as f64 / (tv + mv) as f64;
+                        let ta = para_record.total_availability();
+                        let tu = para_record.total_unavailability();
+                        let bur = tu as f64 / (ta + tu) as f64;
                         // Identify failed and exceptional epochs
-                        let grade = grade(1.0 - mvr);
+                        let grade = grade(mvr, bur);
                         if grade == Grade::F {
                             flagged_epochs += 1;
                         } else if grade == Grade::Ap {
@@ -1519,6 +1523,16 @@ impl ParaRecord {
             bitfields.unavailability()
         } else {
             0
+        }
+    }
+
+    pub fn bitfields_unavailability_ratio(&self) -> Option<Ratio> {
+        let total_votes = self.total_availability() + self.total_unavailability();
+        if total_votes == 0 {
+            return None;
+        } else {
+            let ratio = self.total_unavailability() as f64 / total_votes as f64;
+            return Some(ratio);
         }
     }
 

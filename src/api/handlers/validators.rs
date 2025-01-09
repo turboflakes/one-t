@@ -677,7 +677,7 @@ pub async fn get_validators(
 
             //
             // NOTE: the score is based on 5 key values, which will be aggregated in the following map tupple.
-            // NOTE: the tupple has a subset, 5 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_vote, score)
+            // NOTE: the tuple has a subset, 5 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_vote, score)
             //
             let mut aggregator: BTreeMap<String, (Subset, u32, u32, u32, u32, u32, u32)> =
                 BTreeMap::new();
@@ -1204,7 +1204,7 @@ async fn calculate_validator_grade_by_stash(
     if params.show_summary {
         return Ok(ValidatorGradeResult {
             address: stash.to_string(),
-            grade: grade(1.0 - (mvr * 0.6 + bur * 0.4)).to_string(),
+            grade: grade(mvr, bur).to_string(),
             authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
             para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
             explicit_votes_total: data
@@ -1243,7 +1243,7 @@ async fn calculate_validator_grade_by_stash(
 
     return Ok(ValidatorGradeResult {
         address: stash.to_string(),
-        grade: grade(1.0 - (mvr * 0.6 + bur * 0.4)).to_string(),
+        grade: grade(mvr, bur).to_string(),
         authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
         para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
         explicit_votes_total: data
