@@ -74,6 +74,8 @@ pub type ExplicitVotes = u32;
 pub type ImplicitVotes = u32;
 pub type MissedVotes = u32;
 pub type CoreAssignments = u32;
+pub type BitfieldsAvailability = u32;
+pub type BitfieldsUnavailability = u32;
 pub type Ratio = f64;
 pub type ParaEpochs = Vec<EpochIndex>;
 pub type Pattern = Vec<Glyph>;
@@ -467,6 +469,8 @@ impl Records {
             ImplicitVotes,
             MissedVotes,
             CoreAssignments,
+            BitfieldsAvailability,
+            BitfieldsUnavailability,
         )>,
     )> {
         if self.total_full_epochs() == 0 {
@@ -480,6 +484,8 @@ impl Records {
         let mut explicit_votes: Votes = 0;
         let mut implicit_votes: Votes = 0;
         let mut missed_votes: Votes = 0;
+        let mut bitfields_availability: BitfieldsAvailability = 0;
+        let mut bitfields_unavailability: BitfieldsUnavailability = 0;
         let mut core_assignments: CoreAssignments = 0;
 
         let mut epoch_index = self.current_epoch() - self.total_full_epochs();
@@ -506,6 +512,8 @@ impl Records {
                             explicit_votes += para_record.total_explicit_votes();
                             implicit_votes += para_record.total_implicit_votes();
                             missed_votes += para_record.total_missed_votes();
+                            bitfields_availability += para_record.total_availability();
+                            bitfields_unavailability += para_record.total_unavailability();
                             core_assignments += para_record.total_core_assignments();
 
                             if let Some(ratio) = para_record.missed_votes_ratio() {
@@ -534,6 +542,8 @@ impl Records {
                     implicit_votes,
                     missed_votes,
                     core_assignments,
+                    bitfields_availability,
+                    bitfields_unavailability,
                 )),
             ))
         } else {
@@ -1532,6 +1542,16 @@ impl ParaRecord {
             return None;
         } else {
             let ratio = self.total_unavailability() as f64 / total_votes as f64;
+            return Some(ratio);
+        }
+    }
+
+    pub fn bitfields_availability_ratio(&self) -> Option<Ratio> {
+        let total_votes = self.total_availability() + self.total_unavailability();
+        if total_votes == 0 {
+            return None;
+        } else {
+            let ratio = self.total_availability() as f64 / total_votes as f64;
             return Some(ratio);
         }
     }

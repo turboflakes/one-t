@@ -70,7 +70,7 @@ pub struct Validator {
     pub missed_ratio: Option<f64>,
     pub bitfields_availability: u32,
     pub bitfields_unavailability: u32,
-    pub bitfields_unavailability_ratio: Option<f64>,
+    pub bitfields_availability_ratio: Option<f64>,
     pub score: f64,
     pub commission_score: f64,
     pub warnings: Vec<String>,
@@ -104,7 +104,7 @@ impl Validator {
             missed_ratio: None,
             bitfields_availability: 0,
             bitfields_unavailability: 0,
-            bitfields_unavailability_ratio: None,
+            bitfields_availability_ratio: None,
             score: 0.0_f64,
             commission_score: 0.0_f64,
             warnings: Vec::new(),
@@ -366,13 +366,13 @@ impl From<RawDataRank> for Report {
             "❒",
             "↻",
             "✓i",
-            "✓e",
+            "e",
             "✗v",
             "✓ba",
             "✗bu",
             "Grade",
             "MVR",
-            "BUR",
+            "BAR",
             "Avg. PPTS",
             "Score",
             "Commission (%)",
@@ -382,7 +382,7 @@ impl From<RawDataRank> for Report {
 
         for (i, validator) in validators.iter().enumerate() {
             if let Some(mvr) = validator.missed_ratio {
-                if let Some(bur) = validator.bitfields_unavailability_ratio {
+                if let Some(bar) = validator.bitfields_availability_ratio {
                     report.add_raw_text(format!(
                         "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                         i + 1,
@@ -398,9 +398,9 @@ impl From<RawDataRank> for Report {
                         validator.missed_votes,
                         validator.bitfields_availability,
                         validator.bitfields_unavailability,
-                        grade(mvr, bur),
+                        grade(mvr, 1.0_f64-bar),
                         (mvr * 10000.0).round() / 10000.0,
-                        (bur * 10000.0).round() / 10000.0,
+                        (bar * 10000.0).round() / 10000.0,
                         validator.avg_para_points,
                         (validator.score * 10000.0).round() / 10000.0,
                         (validator.commission * 10000.0).round() / 100.0,
@@ -415,11 +415,10 @@ impl From<RawDataRank> for Report {
                 }
             }
             report.add_raw_text(format!(
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 i + 1,
                 validator.name,
                 validator.stash,
-                "-",
                 "-",
                 "-",
                 "-",
@@ -503,37 +502,35 @@ impl From<RawDataGroup> for Report {
 
         for (i, group) in data.groups.iter().enumerate() {
             clode_block.push_str(&format!(
-                "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
+                "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
                 format!("{}. VAL_GROUP_{}", i + 1, group.0),
                 "❒",
                 "↻",
                 "✓i",
                 "✓e",
                 "✗v",
-                "✓ba",
                 "✗bu",
                 "GRD",
                 "MVR",
-                "BUR",
+                "BAR",
                 "PPTS",
                 "TPTS",
             ));
             for (authority_record, para_record, val_name) in group.1.iter() {
                 if let Some(mvr) = para_record.missed_votes_ratio() {
-                    if let Some(bur) = para_record.bitfields_unavailability_ratio() {
+                    if let Some(bar) = para_record.bitfields_availability_ratio() {
                         clode_block.push_str(&format!(
-                            "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
+                            "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
                             slice(&replace_emoji(&val_name, "_"), 24),
                             authority_record.total_authored_blocks(),
                             para_record.total_core_assignments(),
                             para_record.total_implicit_votes(),
                             para_record.total_explicit_votes(),
                             para_record.total_missed_votes(),
-                            para_record.total_availability(),
                             para_record.total_unavailability(),
-                            grade(mvr, bur).leading_spaces(3),
+                            grade(mvr, 1.0f64 - bar).leading_spaces(3),
                             (mvr * 10000.0).round() / 10000.0,
-                            (bur * 10000.0).round() / 10000.0,
+                            (bar * 10000.0).round() / 10000.0,
                             authority_record.para_points(),
                             authority_record.points(),
                         ));
@@ -541,9 +538,8 @@ impl From<RawDataGroup> for Report {
                     }
                 }
                 clode_block.push_str(&format!(
-                    "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
+                    "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
                     slice(&replace_emoji(&val_name, "_"), 24),
-                    "-",
                     "-",
                     "-",
                     "-",
@@ -772,7 +768,7 @@ impl From<RawDataPara> for Report {
 
                     // val. group validator names
                     clode_block.push_str(&format!(
-                        "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
+                        "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
                         "#",
                         format!("VAL_GROUP_{}", para_record.group().unwrap_or_default()),
                         "❒",
@@ -780,19 +776,18 @@ impl From<RawDataPara> for Report {
                         "✓i",
                         "✓e",
                         "✗v",
-                        "✓ba",
                         "✗bu",
                         "GRD",
                         "MVR",
-                        "BUR",
+                        "BAR",
                         "PPTS",
                         "TPTS",
                     ));
 
                     if let Some(mvr) = para_record.missed_votes_ratio() {
-                        if let Some(bur) = para_record.bitfields_unavailability_ratio() {
+                        if let Some(bar) = para_record.bitfields_availability_ratio() {
                             clode_block.push_str(&format!(
-                                "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
+                                "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
                                 "*",
                                 slice(&replace_emoji(&data.validator.name, "_"), 24),
                                 authority_record.total_authored_blocks(),
@@ -800,11 +795,10 @@ impl From<RawDataPara> for Report {
                                 para_record.total_implicit_votes(),
                                 para_record.total_explicit_votes(),
                                 para_record.total_missed_votes(),
-                                para_record.total_availability(),
                                 para_record.total_unavailability(),
-                                grade(mvr, bur).leading_spaces(2),
+                                grade(mvr, 1.0_f64-bar).leading_spaces(2),
                                 (mvr * 10000.0).round() / 10000.0,
-                                (bur * 10000.0).round() / 10000.0,
+                                (bar * 10000.0).round() / 10000.0,
                                 authority_record.para_points(),
                                 authority_record.points(),
                             ));
@@ -812,13 +806,12 @@ impl From<RawDataPara> for Report {
                     }
 
                     if para_record.missed_votes_ratio().is_none()
-                        || para_record.bitfields_unavailability_ratio().is_none()
+                        || para_record.bitfields_availability_ratio().is_none()
                     {
                         clode_block.push_str(&format!(
-                            "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
+                            "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
                             "*",
                             slice(&replace_emoji(&data.validator.name, "_"), 24),
-                            "-",
                             "-",
                             "-",
                             "-",
@@ -837,9 +830,9 @@ impl From<RawDataPara> for Report {
                     let peers_letters = vec!["A", "B", "C", "D", "E", "F", "G", "H"];
                     for (i, peer) in data.peers.iter().enumerate() {
                         if let Some(mvr) = peer.2.missed_votes_ratio() {
-                            if let Some(bur) = peer.2.bitfields_unavailability_ratio() {
+                            if let Some(bar) = peer.2.bitfields_availability_ratio() {
                                 clode_block.push_str(&format!(
-                                "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
+                                "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
                                 peers_letters[i],
                                 slice(&replace_emoji(&peer.0.clone(), "_"), 24),
                                 peer.1.total_authored_blocks(),
@@ -847,11 +840,10 @@ impl From<RawDataPara> for Report {
                                 peer.2.total_implicit_votes(),
                                 peer.2.total_explicit_votes(),
                                 peer.2.total_missed_votes(),
-                                peer.2.total_availability(),
                                 peer.2.total_unavailability(),
-                                grade(mvr, bur).leading_spaces(2),
+                                grade(mvr, 1.0_f64-bar).leading_spaces(2),
                                 (mvr * 10000.0).round() / 10000.0,
-                                (bur * 10000.0).round() / 10000.0,
+                                (bar * 10000.0).round() / 10000.0,
                                 peer.1.para_points(),
                                 peer.1.points()
                             ));
@@ -859,22 +851,21 @@ impl From<RawDataPara> for Report {
                             }
                         }
                         clode_block.push_str(&format!(
-                                "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
-                                peers_letters[i],
-                                slice(&replace_emoji(&peer.0.clone(), "_"), 24),
-                                "-",
-                                "-",
-                                "-",
-                                "-",
-                                "-",
-                                "-",
-                                "-",
-                                "-",
-                                "-",
-                                "-",
-                                "-",
-                                "-"
-                            ));
+                            "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
+                            peers_letters[i],
+                            slice(&replace_emoji(&peer.0.clone(), "_"), 24),
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-"
+                        ));
                     }
 
                     // NOTE: By default print the full report
@@ -1464,7 +1455,7 @@ fn flagged_and_exceptional_validators_report<'a>(
             v.subset == Subset::TVP
                 && grade(
                     v.missed_ratio.unwrap(),
-                    v.bitfields_unavailability_ratio.unwrap(),
+                    1.0_f64 - v.bitfields_availability_ratio.unwrap(),
                 ) == Grade::Ap
         })
         .count();
@@ -1474,7 +1465,7 @@ fn flagged_and_exceptional_validators_report<'a>(
             v.subset == Subset::TVP
                 && grade(
                     v.missed_ratio.unwrap(),
-                    v.bitfields_unavailability_ratio.unwrap(),
+                    1.0_f64 - v.bitfields_availability_ratio.unwrap(),
                 ) == Grade::F
         })
         .count();
@@ -1489,7 +1480,7 @@ fn flagged_and_exceptional_validators_report<'a>(
             v.subset == Subset::NONTVP
                 && grade(
                     v.missed_ratio.unwrap(),
-                    v.bitfields_unavailability_ratio.unwrap(),
+                    1.0_f64 - v.bitfields_availability_ratio.unwrap(),
                 ) == Grade::Ap
         })
         .count();
@@ -1499,7 +1490,7 @@ fn flagged_and_exceptional_validators_report<'a>(
             v.subset == Subset::NONTVP
                 && grade(
                     v.missed_ratio.unwrap(),
-                    v.bitfields_unavailability_ratio.unwrap(),
+                    1.0_f64 - v.bitfields_availability_ratio.unwrap(),
                 ) == Grade::F
         })
         .count();
@@ -1514,7 +1505,7 @@ fn flagged_and_exceptional_validators_report<'a>(
             v.subset == Subset::C100
                 && grade(
                     v.missed_ratio.unwrap(),
-                    v.bitfields_unavailability_ratio.unwrap(),
+                    1.0_f64 - v.bitfields_availability_ratio.unwrap(),
                 ) == Grade::Ap
         })
         .count();
@@ -1524,7 +1515,7 @@ fn flagged_and_exceptional_validators_report<'a>(
             v.subset == Subset::C100
                 && grade(
                     v.missed_ratio.unwrap(),
-                    v.bitfields_unavailability_ratio.unwrap(),
+                    1.0_f64 - v.bitfields_availability_ratio.unwrap(),
                 ) == Grade::F
         })
         .count();
@@ -1787,7 +1778,7 @@ fn top_performers_report<'a>(
                     format!("<a href=\"https://apps.turboflakes.io/?chain={}&app=onet#/validator/{}?mode=history\">{}</a>", data.network.name.to_lowercase(), v.stash, v.name),
                     v.score * 100.0,
                     (v.missed_ratio.unwrap() * 10000.0).round() / 10000.0,
-                    (v.bitfields_unavailability_ratio.unwrap() * 10000.0).round() / 10000.0,
+                    (v.bitfields_availability_ratio.unwrap() * 10000.0).round() / 10000.0,
                     v.avg_para_points,
                     v.para_epochs,
                 ));
@@ -1795,8 +1786,8 @@ fn top_performers_report<'a>(
 
             if !is_short {
                 report.add_break();
-                report.add_raw_text(format!("<i>Legend: Val. identity (Score, Missed votes ratio, Bitfields Unavailability Ratio, Average p/v points, Number of sessions as p/v)</i>"));
-                report.add_raw_text(format!("<i>Score: Backing Votes Ratio (1-MVR) make up 50% of the score,  Bitfields Availability Ratio (1-BUR) make up 25%, average p/v points make up 18% and number of sessions as p/v the remaining 7%</i>"));
+                report.add_raw_text(format!("<i>Legend: Val. identity (Score, Missed votes ratio, Bitfields Availability Ratio, Average p/v points, Number of sessions as p/v)</i>"));
+                report.add_raw_text(format!("<i>Score: Backing Votes Ratio (1-MVR) make up 50% of the score,  Bitfields Availability Ratio make up 25%, average p/v points make up 18% and number of sessions as p/v the remaining 7%</i>"));
                 report.add_raw_text(format!(
                     "<i>Sorting: Validators are sorted by Score in descending order</i>"
                 ));

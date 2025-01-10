@@ -2044,6 +2044,8 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                     implicit_votes,
                     missed_votes,
                     core_assignments,
+                    bitfields_availability,
+                    bitfields_unavailability,
                 )) = para_data
                 {
                     // Note: If Para data exists than get node identity to be visible in the report
@@ -2058,6 +2060,11 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
                         let mvr = missed_votes as f64
                             / (explicit_votes + implicit_votes + missed_votes) as f64;
                         v.missed_ratio = Some(mvr);
+                    }
+                    if bitfields_availability + bitfields_unavailability > 0 {
+                        let bar = bitfields_availability as f64
+                            / (bitfields_availability + bitfields_unavailability) as f64;
+                        v.bitfields_availability_ratio = Some(bar);
                     }
                     if para_epochs >= 1 {
                         v.avg_para_points = para_points / para_epochs;
@@ -2097,7 +2104,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     }
 
     // Calculate a score based on the formula
-    // SCORE_1 = (1-MVR)*0.75 + ((AVG_PV_POINTS - MIN_AVG_POINTS)/(MAX_AVG_PV_POINTS-MIN_AVG_PV_POINTS))*0.18 + (PV_SESSIONS/TOTAL_SESSIONS)*0.07
+    // SCORE_1 = (1-MVR)*0.50 + BAR*0.25 + ((AVG_PV_POINTS - MIN_AVG_POINTS)/(MAX_AVG_PV_POINTS-MIN_AVG_PV_POINTS))*0.18 + (PV_SESSIONS/TOTAL_SESSIONS)*0.07
     // SCORE_2 = SCORE*0.25 + (1-COMMISSION)*0.75
 
     // Normalize avg_para_points
@@ -2122,7 +2129,8 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
         .for_each(|v| {
             let score = if max - min > 0 {
-                (1.0_f64 - v.missed_ratio.unwrap()) * 0.75_f64
+                (1.0_f64 - v.missed_ratio.unwrap_or_default()) * 0.75_f64
+                    + v.bitfields_availability_ratio.unwrap_or_default() * 0.25_f64
                     + ((v.avg_para_points as f64 - *min as f64) / (*max as f64 - *min as f64))
                         * 0.18_f64
                     + (v.para_epochs as f64 / records.total_full_epochs() as f64) * 0.07_f64

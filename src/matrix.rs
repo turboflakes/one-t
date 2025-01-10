@@ -1317,12 +1317,17 @@ impl Matrix {
         message.push_str("❒: Total number of authored blocks by the validator.<br>");
         message.push_str("✓i: Total number of implicit votes by the validator.<br>");
         message.push_str("✓e: Total number of explicit votes by the validator.<br>");
-        message.push_str("✗: Total number of missed votes by the validator.<br>");
-        message.push_str("MVR: Missed Votes Ratio (MVR = (✗) / (✓i + ✓e + ✗)).<br>");
+        message.push_str("✗v: Total number of missed votes by the validator.<br>");
         message.push_str(
-            "GRD: Grade reflects the Backing Votes Ratio (BVR = 1-MVR) by the validator:<br>",
+            "✓ba: Total number of blocks containing populated bitfields from the validator.<br>",
         );
-        message.push_str("‣ A+ = BVR > 99% <br>");
+        message.push_str("✗bu: Total number of blocks with bitfields unavailable or empty from the validator.<br>");
+        message.push_str("MVR: Missed Votes Ratio (MVR = (✗v) / (✓i + ✓e + ✗)).<br>");
+        message.push_str("BAR: Bitfields Availability Ratio (BAR = (✓ba) / (✓ba + ✗bu)).<br>");
+        message.push_str(
+            "GRD: Grade is calculated as 75% of the Backing Votes Ratio (BVR = 1-MVR) combined with 25% of the Bitfields Availability Ratio (BAR) by the validator (RATIO = BVR*0.75 + BAR*0.25):"
+        );
+        message.push_str("‣ A+ = RATIO > 99% <br>");
         message.push_str("‣ A  = BVR > 95% <br>");
         message.push_str("‣ B+ = BVR > 90% <br>");
         message.push_str("‣ B  = BVR > 80% <br>");
@@ -1344,9 +1349,14 @@ impl Matrix {
         message.push_str("❒: Total number of authored blocks.<br>");
         message.push_str("✓i: Total number of implicit votes.<br>");
         message.push_str("✓e: Total number of explicit votes.<br>");
-        message.push_str("✗: Total number of missed votes by the validator.<br>");
+        message.push_str("✗v: Total number of missed votes by the validator.<br>");
+        message.push_str(
+            "✓ba: Total number of blocks containing populated bitfields from the validator.<br>",
+        );
+        message.push_str("✗bu: Total number of blocks with bitfields unavailable or empty from the validator.<br>");
         message.push_str("GRD: Grade reflects the Backing Votes Ratio.<br>");
         message.push_str("MVR: Missed Votes Ratio.<br>");
+        message.push_str("BAR: Bitfields Availability Ratio.<br>");
         message.push_str("PPTS: Sum of para-validator points the validator earned.<br>");
         message.push_str(
             "TPTS: Sum of para-validator points + authored blocks points the validator earned.<br>",
@@ -1360,7 +1370,7 @@ impl Matrix {
         message.push_str("❒: Total number of authored blocks from all validators when assigned to the parachain.<br>");
         message.push_str("✓i: Total number of implicit votes from all validators when assigned to the parachain.<br>");
         message.push_str("✓e: Total number of explicit votes from all validators when assigned to the parachain.<br>");
-        message.push_str("✗: Total number of missed votes from all validators when assigned to the parachain.<br>");
+        message.push_str("✗v: Total number of missed votes from all validators when assigned to the parachain.<br>");
         message.push_str("PPTS: Sum of para-validator points from all validators.<br>");
         message.push_str(
             "TPTS: Sum of para-validator points + authored blocks points from all validators.<br>",
