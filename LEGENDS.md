@@ -13,10 +13,10 @@ By typing `!legends` in one of the main public channels the following message wi
 ✓i: Total number of implicit votes by the validator.
 ✓e: Total number of explicit votes by the validator.  
 ✗v: Total number of missed votes by the validator.
-✓ba: Total number of blocks containing populated bitfields from the validator.
-✗bu: Total number of blocks with bitfields unavailable or empty from the validator.
+✓b: Total number of blocks containing populated bitfields from the validator.
+✗b: Total number of blocks with bitfields unavailable or empty from the validator.
 MVR: Missed Votes Ratio (MVR) `MVR = (✗) / (✓i + ✓e + ✗)`.
-BAR: Bitfields Availability Ratio `(BAR = (✓ba) / (✓ba + ✗bu))`.
+BAR: Bitfields Availability Ratio `(BAR = (✓b) / (✓b + ✗b))`.
 
 GRD: Grade is calculated as 75% of the Backing Votes Ratio (BVR = 1-MVR) combined with 25% of the Bitfields Availability Ratio (BAR) by one or more validators `(RATIO = BVR*0.75 + BAR*0.25)`:
 ‣ A+ = RATIO > 99%
@@ -43,8 +43,8 @@ A, B, C, D: Represents each validator in the same val. group as the subscribed v
 ✓i: Total number of implicit votes.  
 ✓e: Total number of explicit votes.  
 ✗v: Total number of missed votes by the validator.
-✓ba: Total number of blocks containing populated bitfields from the validator.
-✗bu: Total number of blocks with bitfields unavailable or empty from the validator.
+✓b: Total number of blocks containing populated bitfields from the validator.
+✗b: Total number of blocks with bitfields unavailable or empty from the validator.
 GRD: Grade reflects the Backing Votes Ratio.  
 MVR: Missed Votes Ratio.
 BAR: Bitfields Availability Ratio.
