@@ -74,6 +74,8 @@ pub type ExplicitVotes = u32;
 pub type ImplicitVotes = u32;
 pub type MissedVotes = u32;
 pub type CoreAssignments = u32;
+pub type BitfieldsAvailability = u32;
+pub type BitfieldsUnavailability = u32;
 pub type Ratio = f64;
 pub type ParaEpochs = Vec<EpochIndex>;
 pub type Pattern = Vec<Glyph>;
@@ -205,7 +207,8 @@ impl std::fmt::Display for Grade {
     }
 }
 
-pub fn grade(ratio: f64) -> Grade {
+pub fn grade(mvr: f64, bur: f64) -> Grade {
+    let ratio = 1.0_f64 - (mvr * 0.75 + bur * 0.25);
     let p = (ratio * 10000.0).round() as u32;
     match p {
         9901..=10000 => Grade::Ap,
@@ -426,8 +429,11 @@ impl Records {
                         let tv = para_record.total_votes();
                         let mv = para_record.total_missed_votes();
                         let mvr = mv as f64 / (tv + mv) as f64;
+                        let ta = para_record.total_availability();
+                        let tu = para_record.total_unavailability();
+                        let bur = tu as f64 / (ta + tu) as f64;
                         // Identify failed and exceptional epochs
-                        let grade = grade(1.0 - mvr);
+                        let grade = grade(mvr, bur);
                         if grade == Grade::F {
                             flagged_epochs += 1;
                         } else if grade == Grade::Ap {
@@ -463,6 +469,8 @@ impl Records {
             ImplicitVotes,
             MissedVotes,
             CoreAssignments,
+            BitfieldsAvailability,
+            BitfieldsUnavailability,
         )>,
     )> {
         if self.total_full_epochs() == 0 {
@@ -476,6 +484,8 @@ impl Records {
         let mut explicit_votes: Votes = 0;
         let mut implicit_votes: Votes = 0;
         let mut missed_votes: Votes = 0;
+        let mut bitfields_availability: BitfieldsAvailability = 0;
+        let mut bitfields_unavailability: BitfieldsUnavailability = 0;
         let mut core_assignments: CoreAssignments = 0;
 
         let mut epoch_index = self.current_epoch() - self.total_full_epochs();
@@ -502,6 +512,8 @@ impl Records {
                             explicit_votes += para_record.total_explicit_votes();
                             implicit_votes += para_record.total_implicit_votes();
                             missed_votes += para_record.total_missed_votes();
+                            bitfields_availability += para_record.total_availability();
+                            bitfields_unavailability += para_record.total_unavailability();
                             core_assignments += para_record.total_core_assignments();
 
                             if let Some(ratio) = para_record.missed_votes_ratio() {
@@ -530,6 +542,8 @@ impl Records {
                     implicit_votes,
                     missed_votes,
                     core_assignments,
+                    bitfields_availability,
+                    bitfields_unavailability,
                 )),
             ))
         } else {
@@ -1221,6 +1235,54 @@ impl Validity for DiscoveryRecord {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct BitfieldsRecord {
+    #[serde(rename = "ba")]
+    availability: u32,
+    #[serde(rename = "bu")]
+    unavailability: u32,
+    #[serde(rename = "uat")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unavailable_at: Vec<BlockNumber>,
+}
+
+impl BitfieldsRecord {
+    pub fn new() -> Self {
+        Self {
+            availability: 0,
+            unavailability: 0,
+            unavailable_at: Vec::new(),
+        }
+    }
+
+    pub fn availability(&self) -> u32 {
+        self.availability
+    }
+
+    pub fn unavailability(&self) -> u32 {
+        self.unavailability
+    }
+
+    pub fn unavailable(&self) -> Vec<BlockNumber> {
+        self.unavailable_at.to_vec()
+    }
+
+    pub fn inc_availability(&mut self) {
+        self.availability += 1;
+    }
+
+    pub fn push_unavailable_at(&mut self, block_number: BlockNumber) {
+        self.unavailability += 1;
+        self.unavailable_at.push(block_number);
+    }
+}
+
+impl Validity for BitfieldsRecord {
+    fn is_empty(&self) -> bool {
+        self.availability() == 0 && self.unavailability() == 0 && self.unavailable_at.is_empty()
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ParaRecord {
     // index is the position of the authority in paras_shared().active_validator_indices(None)
     #[serde(rename = "pix")]
@@ -1234,6 +1296,7 @@ pub struct ParaRecord {
     disputes: Vec<(BlockNumber, DisputeKind)>,
     #[serde(skip)]
     para_stats: BTreeMap<ParaId, ParaStats>,
+    bitfields: Option<BitfieldsRecord>,
 }
 
 impl ParaRecord {
@@ -1249,6 +1312,7 @@ impl ParaRecord {
             para_id: None,
             peers,
             para_stats: BTreeMap::new(),
+            bitfields: Some(BitfieldsRecord::default()),
             ..Default::default()
         }
     }
@@ -1271,9 +1335,7 @@ impl ParaRecord {
 
     pub fn is_para_id_assigned(&self, id: ParaId) -> bool {
         if let Some(para_id) = self.para_id {
-            if para_id == id {
-                return true;
-            }
+            return para_id == id;
         }
         false
     }
@@ -1288,6 +1350,17 @@ impl ParaRecord {
 
     pub fn push_dispute(&mut self, block_number: BlockNumber, msg: String) {
         self.disputes.push((block_number, msg));
+    }
+
+    pub fn inc_availability(&mut self) {
+        self.bitfields.as_mut().unwrap().inc_availability();
+    }
+
+    pub fn push_unavailable_at(&mut self, block_number: BlockNumber) {
+        self.bitfields
+            .as_mut()
+            .unwrap()
+            .push_unavailable_at(block_number);
     }
 
     pub fn update_scheduled_core(&mut self, para_id: ParaId, core: CoreIndex) {
@@ -1447,6 +1520,42 @@ impl ParaRecord {
         self.disputes.len().try_into().unwrap()
     }
 
+    pub fn total_availability(&self) -> u32 {
+        if let Some(bitfields) = &self.bitfields {
+            bitfields.availability()
+        } else {
+            0
+        }
+    }
+
+    pub fn total_unavailability(&self) -> u32 {
+        if let Some(bitfields) = &self.bitfields {
+            bitfields.unavailability()
+        } else {
+            0
+        }
+    }
+
+    pub fn bitfields_unavailability_ratio(&self) -> Option<Ratio> {
+        let total_votes = self.total_availability() + self.total_unavailability();
+        if total_votes == 0 {
+            return None;
+        } else {
+            let ratio = self.total_unavailability() as f64 / total_votes as f64;
+            return Some(ratio);
+        }
+    }
+
+    pub fn bitfields_availability_ratio(&self) -> Option<Ratio> {
+        let total_votes = self.total_availability() + self.total_unavailability();
+        if total_votes == 0 {
+            return None;
+        } else {
+            let ratio = self.total_availability() as f64 / total_votes as f64;
+            return Some(ratio);
+        }
+    }
+
     pub fn get_para_id_stats(&self, para_id: ParaId) -> Option<&ParaStats> {
         self.para_stats.get(&para_id)
     }
@@ -1464,6 +1573,7 @@ impl ParaRecord {
             peers: self.peers.clone(),
             disputes: self.disputes.clone(),
             para_stats: BTreeMap::new(),
+            bitfields: self.bitfields.clone(),
         }
     }
 }
@@ -1774,6 +1884,10 @@ pub struct SessionStats {
     pub missed_votes: u32,
     #[serde(rename = "di")]
     pub disputes: u32,
+    #[serde(rename = "ba")]
+    pub bitfields_availability: u32,
+    #[serde(rename = "bu")]
+    pub bitfields_unavailability: u32,
 }
 
 impl Validity for SessionStats {
@@ -1990,10 +2104,15 @@ mod tests {
         }
 
         let dr: DiscoveryRecord = DiscoveryRecord::with_authority_discovery_key([0; 32]);
-        assert_eq!(dr.authority_discovery_key(), "0000000000000000000000000000000000000000000000000000000000000000");
+        assert_eq!(
+            dr.authority_discovery_key(),
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        );
 
         records.set_discovery_record(authority_idx, dr);
-        assert_eq!(records.get_authority_record(authority_idx, None).is_some(), true);
-
+        assert_eq!(
+            records.get_authority_record(authority_idx, None).is_some(),
+            true
+        );
     }
 }

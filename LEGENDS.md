@@ -12,19 +12,22 @@ By typing `!legends` in one of the main public channels the following message wi
 ❒: Total number of authored blocks by the validator.  
 ✓i: Total number of implicit votes by the validator.
 ✓e: Total number of explicit votes by the validator.  
-✗: Total number of missed votes by the validator.  
-MVR: Missed Votes Ratio (MVR) `MVR = (✗) / (✓i + ✓e + ✗)`.  
+✗v: Total number of missed votes by the validator.
+✓ba: Total number of blocks containing populated bitfields from the validator.
+✗bu: Total number of blocks with bitfields unavailable or empty from the validator.
+MVR: Missed Votes Ratio (MVR) `MVR = (✗) / (✓i + ✓e + ✗)`.
+BAR: Bitfields Availability Ratio `(BAR = (✓ba) / (✓ba + ✗bu))`.
 
-GRD: Grade reflects the Backing Votes Ratio (BVR) `BVR = 1 - MVR` by the validator:  
-‣ A+ = BVR > 99%  
-‣ A  = BVR > 95%  
-‣ B+ = BVR > 90%  
-‣ B  = BVR > 80%  
-‣ C+ = BVR > 70%  
-‣ C  = BVR > 60%  
-‣ D+ = BVR > 50%  
-‣ D  = BVR > 40%  
-‣ F  = BVR <= 40%  
+GRD: Grade is calculated as 75% of the Backing Votes Ratio (BVR = 1-MVR) combined with 25% of the Bitfields Availability Ratio (BAR) by one or more validators `(RATIO = BVR*0.75 + BAR*0.25)`:
+‣ A+ = RATIO > 99%
+‣ A  = RATIO > 95%
+‣ B+ = RATIO > 90%
+‣ B  = RATIO > 80%
+‣ C+ = RATIO > 70%
+‣ C  = RATIO > 60%
+‣ D+ = RATIO > 50%
+‣ D  = RATIO > 40%
+‣ F  = RATIO <= 40%
 
 PPTS: Sum of para-validator points the validator earned.  
 TPTS: Sum of para-validator points + authored blocks points the validator earned.  
@@ -39,9 +42,12 @@ A, B, C, D: Represents each validator in the same val. group as the subscribed v
 ❒: Total number of authored blocks.  
 ✓i: Total number of implicit votes.  
 ✓e: Total number of explicit votes.  
-✗: Total number of missed votes by the validator.  
+✗v: Total number of missed votes by the validator.
+✓ba: Total number of blocks containing populated bitfields from the validator.
+✗bu: Total number of blocks with bitfields unavailable or empty from the validator.
 GRD: Grade reflects the Backing Votes Ratio.  
-MVR: Missed Votes Ratio.  
+MVR: Missed Votes Ratio.
+BAR: Bitfields Availability Ratio.
 PPTS: Sum of para-validator points the validator earned.  
 TPTS: Sum of para-validator points + authored blocks points the validator earned.  
 _Note: Val. groups and validators are sorted by para-validator points in descending order._
@@ -54,7 +60,7 @@ _Note: Val. groups and validators are sorted by para-validator points in descend
 ❒: Total number of authored blocks from all validators when assigned to the parachain.  
 ✓i: Total number of implicit votes from all validators when assigned to the parachain.  
 ✓e: Total number of explicit votes from all validators when assigned to the parachain.  
-✗: Total number of missed votes from all validators when assigned to the parachain.  
+✗v: Total number of missed votes from all validators when assigned to the parachain.  
 PPTS: Sum of para-validator points from all validators.  
 TPTS: Sum of para-validator points + authored blocks points from all validators.  
 _Note: Parachains are sorted by para-validator points in descending order._
@@ -63,16 +69,16 @@ _Note: Parachains are sorted by para-validator points in descending order._
 
 `!subscribe insights`
 
-Score: `score = (1 - mvr) * 0.75 + ((avg_pts - min_avg_pts) / (max_avg_pts - min_avg_pts)) * 0.18 + (pv_sessions / total_sessions) * 0.07`  
+Score: `score = (1 - mvr) * 0.55 + bar * 0.25 + ((avg_pts - min_avg_pts) / (max_avg_pts - min_avg_pts)) * 0.18 + (pv_sessions / total_sessions) * 0.07`  
 Commission Score: `commission_score = score * 0.25 + (1 - commission) * 0.75`  
 
 Timeline: Graphic performance representation in the last X sessions:  
-‣ ❚ = BVR >= 90%  
-‣ ❙ = BVR >= 60%  
-‣ ❘ = BVR >= 40%  
-‣ ! = BVR >= 20%  
-‣ ¿ = BVR < 20%  
-‣ ? = No-votes  
+‣ ❚ = RATIO >= 90%  
+‣ ❙ = RATIO >= 60%  
+‣ ❘ = RATIO >= 40%  
+‣ ! = RATIO >= 20%  
+‣ ¿ = RATIO < 20%  
+‣ ? = No-show  
 ‣ • = Not P/V  
 ‣ _ = Waiting  
 

@@ -68,6 +68,9 @@ pub struct Validator {
     pub missed_votes: u32,
     pub core_assignments: u32,
     pub missed_ratio: Option<f64>,
+    pub bitfields_availability: u32,
+    pub bitfields_unavailability: u32,
+    pub bitfields_availability_ratio: Option<f64>,
     pub score: f64,
     pub commission_score: f64,
     pub warnings: Vec<String>,
@@ -99,6 +102,9 @@ impl Validator {
             missed_votes: 0,
             core_assignments: 0,
             missed_ratio: None,
+            bitfields_availability: 0,
+            bitfields_unavailability: 0,
+            bitfields_availability_ratio: None,
             score: 0.0_f64,
             commission_score: 0.0_f64,
             warnings: Vec::new(),
@@ -350,7 +356,7 @@ impl From<RawDataRank> for Report {
         report.add_break();
 
         report.add_raw_text(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             "#",
             "Validator",
             "Stash",
@@ -360,10 +366,13 @@ impl From<RawDataRank> for Report {
             "❒",
             "↻",
             "✓i",
-            "✓e",
-            "✗",
+            "e",
+            "✗v",
+            "✓ba",
+            "✗bu",
             "Grade",
             "MVR",
+            "BAR",
             "Avg. PPTS",
             "Score",
             "Commission (%)",
@@ -373,54 +382,61 @@ impl From<RawDataRank> for Report {
 
         for (i, validator) in validators.iter().enumerate() {
             if let Some(mvr) = validator.missed_ratio {
-                report.add_raw_text(format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                    i + 1,
-                    replace_crln(&validator.name, ""),
-                    validator.stash,
-                    validator.subset.to_string(),
-                    validator.active_epochs,
-                    validator.para_epochs,
-                    validator.authored_blocks,
-                    validator.core_assignments,
-                    validator.implicit_votes,
-                    validator.explicit_votes,
-                    validator.missed_votes,
-                    grade(1.0_f64 - mvr),
-                    (mvr * 10000.0).round() / 10000.0,
-                    validator.avg_para_points,
-                    (validator.score * 10000.0).round() / 10000.0,
-                    (validator.commission * 10000.0).round() / 100.0,
-                    (validator.commission_score * 10000.0).round() / 10000.0,
-                    validator
-                        .pattern
-                        .iter()
-                        .map(|g| g.to_string())
-                        .collect::<String>()
-                ));
-            } else {
-                report.add_raw_text(format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                    i + 1,
-                    validator.name,
-                    validator.stash,
-                    "-",
-                    "-",
-                    "-",
-                    "-",
-                    "-",
-                    "-",
-                    "-",
-                    "-",
-                    "-",
-                    "-",
-                    "-",
-                    "-",
-                    "-",
-                    "-",
-                    "-",
-                ));
+                if let Some(bar) = validator.bitfields_availability_ratio {
+                    report.add_raw_text(format!(
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                        i + 1,
+                        replace_crln(&validator.name, ""),
+                        validator.stash,
+                        validator.subset.to_string(),
+                        validator.active_epochs,
+                        validator.para_epochs,
+                        validator.authored_blocks,
+                        validator.core_assignments,
+                        validator.implicit_votes,
+                        validator.explicit_votes,
+                        validator.missed_votes,
+                        validator.bitfields_availability,
+                        validator.bitfields_unavailability,
+                        grade(mvr, 1.0_f64-bar),
+                        (mvr * 10000.0).round() / 10000.0,
+                        (bar * 10000.0).round() / 10000.0,
+                        validator.avg_para_points,
+                        (validator.score * 10000.0).round() / 10000.0,
+                        (validator.commission * 10000.0).round() / 100.0,
+                        (validator.commission_score * 10000.0).round() / 10000.0,
+                        validator
+                            .pattern
+                            .iter()
+                            .map(|g| g.to_string())
+                            .collect::<String>()
+                    ));
+                    continue;
+                }
             }
+            report.add_raw_text(format!(
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                i + 1,
+                validator.name,
+                validator.stash,
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+            ));
         }
 
         report.add_break();
@@ -486,48 +502,56 @@ impl From<RawDataGroup> for Report {
 
         for (i, group) in data.groups.iter().enumerate() {
             clode_block.push_str(&format!(
-                "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>6}{:>6}\n",
+                "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
                 format!("{}. VAL_GROUP_{}", i + 1, group.0),
                 "❒",
                 "↻",
                 "✓i",
                 "✓e",
-                "✗",
+                "✗v",
+                "✗bu",
                 "GRD",
                 "MVR",
+                "BAR",
                 "PPTS",
                 "TPTS",
             ));
             for (authority_record, para_record, val_name) in group.1.iter() {
                 if let Some(mvr) = para_record.missed_votes_ratio() {
-                    clode_block.push_str(&format!(
-                        "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>6}{:>6}\n",
-                        slice(&replace_emoji(&val_name, "_"), 24),
-                        authority_record.total_authored_blocks(),
-                        para_record.total_core_assignments(),
-                        para_record.total_implicit_votes(),
-                        para_record.total_explicit_votes(),
-                        para_record.total_missed_votes(),
-                        grade(1.0_f64 - mvr).leading_spaces(3),
-                        (mvr * 10000.0).round() / 10000.0,
-                        authority_record.para_points(),
-                        authority_record.points(),
-                    ));
-                } else {
-                    clode_block.push_str(&format!(
-                        "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>6}{:>6}\n",
-                        slice(&replace_emoji(&val_name, "_"), 24),
-                        "-",
-                        "-",
-                        "-",
-                        "-",
-                        "-",
-                        "-",
-                        "-",
-                        "-",
-                        "-"
-                    ));
+                    if let Some(bar) = para_record.bitfields_availability_ratio() {
+                        clode_block.push_str(&format!(
+                            "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
+                            slice(&replace_emoji(&val_name, "_"), 24),
+                            authority_record.total_authored_blocks(),
+                            para_record.total_core_assignments(),
+                            para_record.total_implicit_votes(),
+                            para_record.total_explicit_votes(),
+                            para_record.total_missed_votes(),
+                            para_record.total_unavailability(),
+                            grade(mvr, 1.0f64 - bar).leading_spaces(3),
+                            (mvr * 10000.0).round() / 10000.0,
+                            (bar * 10000.0).round() / 10000.0,
+                            authority_record.para_points(),
+                            authority_record.points(),
+                        ));
+                        continue;
+                    }
                 }
+                clode_block.push_str(&format!(
+                    "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
+                    slice(&replace_emoji(&val_name, "_"), 24),
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "-"
+                ));
             }
             clode_block.push_str("\n");
         }
@@ -694,11 +718,13 @@ impl From<RawDataPara> for Report {
 
                     // Print Grade
                     if let Some(mvr) = para_record.missed_votes_ratio() {
-                        report.add_raw_text(format!(
-                            "🎓 Session {} Grade: <b>{}</b>",
-                            data.meta.current_session_index,
-                            grade(1.0_f64 - mvr)
-                        ));
+                        if let Some(bur) = para_record.bitfields_unavailability_ratio() {
+                            report.add_raw_text(format!(
+                                "🎓 Session {} Grade: <b>{}</b>",
+                                data.meta.current_session_index,
+                                grade(mvr, bur)
+                            ));
+                        }
                     }
                     report.add_break();
                     // Print Rankings
@@ -742,40 +768,52 @@ impl From<RawDataPara> for Report {
 
                     // val. group validator names
                     clode_block.push_str(&format!(
-                        "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
+                        "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
                         "#",
                         format!("VAL_GROUP_{}", para_record.group().unwrap_or_default()),
                         "❒",
                         "↻",
                         "✓i",
                         "✓e",
-                        "✗",
+                        "✗v",
+                        "✗bu",
                         "GRD",
                         "MVR",
+                        "BAR",
                         "PPTS",
                         "TPTS",
                     ));
 
                     if let Some(mvr) = para_record.missed_votes_ratio() {
+                        if let Some(bar) = para_record.bitfields_availability_ratio() {
+                            clode_block.push_str(&format!(
+                                "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
+                                "*",
+                                slice(&replace_emoji(&data.validator.name, "_"), 24),
+                                authority_record.total_authored_blocks(),
+                                para_record.total_core_assignments(),
+                                para_record.total_implicit_votes(),
+                                para_record.total_explicit_votes(),
+                                para_record.total_missed_votes(),
+                                para_record.total_unavailability(),
+                                grade(mvr, 1.0_f64-bar).leading_spaces(2),
+                                (mvr * 10000.0).round() / 10000.0,
+                                (bar * 10000.0).round() / 10000.0,
+                                authority_record.para_points(),
+                                authority_record.points(),
+                            ));
+                        }
+                    }
+
+                    if para_record.missed_votes_ratio().is_none()
+                        || para_record.bitfields_availability_ratio().is_none()
+                    {
                         clode_block.push_str(&format!(
-                            "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
+                            "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
                             "*",
                             slice(&replace_emoji(&data.validator.name, "_"), 24),
-                            authority_record.total_authored_blocks(),
-                            para_record.total_core_assignments(),
-                            para_record.total_implicit_votes(),
-                            para_record.total_explicit_votes(),
-                            para_record.total_missed_votes(),
-                            grade(1.0_f64 - mvr).leading_spaces(2),
-                            (mvr * 10000.0).round() / 10000.0,
-                            authority_record.para_points(),
-                            authority_record.points(),
-                        ));
-                    } else {
-                        clode_block.push_str(&format!(
-                            "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
-                            "*",
-                            slice(&replace_emoji(&data.validator.name, "_"), 24),
+                            "-",
+                            "-",
                             "-",
                             "-",
                             "-",
@@ -787,12 +825,14 @@ impl From<RawDataPara> for Report {
                             "-"
                         ));
                     }
+
                     // Print out peers names
                     let peers_letters = vec!["A", "B", "C", "D", "E", "F", "G", "H"];
                     for (i, peer) in data.peers.iter().enumerate() {
                         if let Some(mvr) = peer.2.missed_votes_ratio() {
-                            clode_block.push_str(&format!(
-                                "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
+                            if let Some(bar) = peer.2.bitfields_availability_ratio() {
+                                clode_block.push_str(&format!(
+                                "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
                                 peers_letters[i],
                                 slice(&replace_emoji(&peer.0.clone(), "_"), 24),
                                 peer.1.total_authored_blocks(),
@@ -800,27 +840,32 @@ impl From<RawDataPara> for Report {
                                 peer.2.total_implicit_votes(),
                                 peer.2.total_explicit_votes(),
                                 peer.2.total_missed_votes(),
-                                grade(1.0_f64 - mvr).leading_spaces(2),
+                                peer.2.total_unavailability(),
+                                grade(mvr, 1.0_f64-bar).leading_spaces(2),
                                 (mvr * 10000.0).round() / 10000.0,
+                                (bar * 10000.0).round() / 10000.0,
                                 peer.1.para_points(),
                                 peer.1.points()
                             ));
-                        } else {
-                            clode_block.push_str(&format!(
-                                "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>6}{:>6}\n",
-                                peers_letters[i],
-                                slice(&replace_emoji(&peer.0.clone(), "_"), 24),
-                                "-",
-                                "-",
-                                "-",
-                                "-",
-                                "-",
-                                "-",
-                                "-",
-                                "-",
-                                "-"
-                            ));
+                                continue;
+                            }
                         }
+                        clode_block.push_str(&format!(
+                            "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
+                            peers_letters[i],
+                            slice(&replace_emoji(&peer.0.clone(), "_"), 24),
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-",
+                            "-"
+                        ));
                     }
 
                     // NOTE: By default print the full report
@@ -1406,11 +1451,23 @@ fn flagged_and_exceptional_validators_report<'a>(
         .count();
     let total_tvp_exceptional = para_validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP && grade(1.0 - v.missed_ratio.unwrap()) == Grade::Ap)
+        .filter(|v| {
+            v.subset == Subset::TVP
+                && grade(
+                    v.missed_ratio.unwrap(),
+                    1.0_f64 - v.bitfields_availability_ratio.unwrap(),
+                ) == Grade::Ap
+        })
         .count();
     let total_tvp_flagged = para_validators
         .iter()
-        .filter(|v| v.subset == Subset::TVP && grade(1.0 - v.missed_ratio.unwrap()) == Grade::F)
+        .filter(|v| {
+            v.subset == Subset::TVP
+                && grade(
+                    v.missed_ratio.unwrap(),
+                    1.0_f64 - v.bitfields_availability_ratio.unwrap(),
+                ) == Grade::F
+        })
         .count();
 
     let total_non_tvp = para_validators
@@ -1419,11 +1476,23 @@ fn flagged_and_exceptional_validators_report<'a>(
         .count();
     let total_non_tvp_exceptional = para_validators
         .iter()
-        .filter(|v| v.subset == Subset::NONTVP && grade(1.0 - v.missed_ratio.unwrap()) == Grade::Ap)
+        .filter(|v| {
+            v.subset == Subset::NONTVP
+                && grade(
+                    v.missed_ratio.unwrap(),
+                    1.0_f64 - v.bitfields_availability_ratio.unwrap(),
+                ) == Grade::Ap
+        })
         .count();
     let total_non_tvp_flagged = para_validators
         .iter()
-        .filter(|v| v.subset == Subset::NONTVP && grade(1.0 - v.missed_ratio.unwrap()) == Grade::F)
+        .filter(|v| {
+            v.subset == Subset::NONTVP
+                && grade(
+                    v.missed_ratio.unwrap(),
+                    1.0_f64 - v.bitfields_availability_ratio.unwrap(),
+                ) == Grade::F
+        })
         .count();
 
     let total_c100 = para_validators
@@ -1432,28 +1501,72 @@ fn flagged_and_exceptional_validators_report<'a>(
         .count();
     let total_c100_exceptional = para_validators
         .iter()
-        .filter(|v| v.subset == Subset::C100 && grade(1.0 - v.missed_ratio.unwrap()) == Grade::Ap)
+        .filter(|v| {
+            v.subset == Subset::C100
+                && grade(
+                    v.missed_ratio.unwrap(),
+                    1.0_f64 - v.bitfields_availability_ratio.unwrap(),
+                ) == Grade::Ap
+        })
         .count();
     let total_c100_flagged = para_validators
         .iter()
-        .filter(|v| v.subset == Subset::C100 && grade(1.0 - v.missed_ratio.unwrap()) == Grade::F)
+        .filter(|v| {
+            v.subset == Subset::C100
+                && grade(
+                    v.missed_ratio.unwrap(),
+                    1.0_f64 - v.bitfields_availability_ratio.unwrap(),
+                ) == Grade::F
+        })
         .count();
 
     let total_flagged = total_c100_flagged + total_non_tvp_flagged + total_tvp_flagged;
     let total_exceptional =
         total_c100_exceptional + total_non_tvp_exceptional + total_tvp_exceptional;
 
-    let mvr_exceptional: Vec<f64> = para_validators
-        .iter()
-        .filter(|v| grade(1.0 - v.missed_ratio.unwrap()) == Grade::Ap)
-        .map(|v| v.missed_ratio.unwrap())
-        .collect();
+    // let mvr_exceptional: Vec<f64> = para_validators
+    //     .iter()
+    //     .filter(|v| {
+    //         grade(
+    //             v.missed_ratio.unwrap(),
+    //             v.bitfields_unavailability_ratio.unwrap(),
+    //         ) == Grade::Ap
+    //     })
+    //     .map(|v| v.missed_ratio.unwrap())
+    //     .collect();
 
-    let mvr_flagged: Vec<f64> = para_validators
-        .iter()
-        .filter(|v| grade(1.0 - v.missed_ratio.unwrap()) == Grade::F)
-        .map(|v| v.missed_ratio.unwrap())
-        .collect();
+    // let mvr_flagged: Vec<f64> = para_validators
+    //     .iter()
+    //     .filter(|v| {
+    //         grade(
+    //             v.missed_ratio.unwrap(),
+    //             v.bitfields_unavailability_ratio.unwrap(),
+    //         ) == Grade::F
+    //     })
+    //     .map(|v| v.missed_ratio.unwrap())
+    //     .collect();
+
+    // let bur_exceptional: Vec<f64> = para_validators
+    //     .iter()
+    //     .filter(|v| {
+    //         grade(
+    //             v.missed_ratio.unwrap(),
+    //             v.bitfields_unavailability_ratio.unwrap(),
+    //         ) == Grade::Ap
+    //     })
+    //     .map(|v| v.bitfields_unavailability_ratio.unwrap())
+    //     .collect();
+
+    // let bur_flagged: Vec<f64> = para_validators
+    //     .iter()
+    //     .filter(|v| {
+    //         grade(
+    //             v.missed_ratio.unwrap(),
+    //             v.bitfields_unavailability_ratio.unwrap(),
+    //         ) == Grade::F
+    //     })
+    //     .map(|v| v.bitfields_unavailability_ratio.unwrap())
+    //     .collect();
 
     if para_validators.len() > 0 {
         // set a warning flag
@@ -1463,26 +1576,37 @@ fn flagged_and_exceptional_validators_report<'a>(
             ""
         };
 
-        let avg_mvr_exceptional: String = if mvr_exceptional.len() > 0 {
-            format!(
-                "{}",
-                ((mvr_exceptional.iter().sum::<f64>() / mvr_exceptional.len() as f64) * 10000.0)
-                    .round()
-                    / 10000.0
-            )
-        } else {
-            "-".to_string()
-        };
+        // let avg_mvr_exceptional: String = if mvr_exceptional.len() > 0 {
+        //     format!(
+        //         "{}",
+        //         ((mvr_exceptional.iter().sum::<f64>() / mvr_exceptional.len() as f64) * 10000.0)
+        //             .round()
+        //             / 10000.0
+        //     )
+        // } else {
+        //     "-".to_string()
+        // };
 
-        let avg_mvr_flagged: String = if mvr_flagged.len() > 0 {
-            format!(
-                "{}",
-                ((mvr_flagged.iter().sum::<f64>() / mvr_flagged.len() as f64) * 10000.0).round()
-                    / 10000.0
-            )
-        } else {
-            "-".to_string()
-        };
+        // let avg_bur_exceptional: String = if bur_exceptional.len() > 0 {
+        //     format!(
+        //         "{}",
+        //         ((bur_exceptional.iter().sum::<f64>() / bur_exceptional.len() as f64) * 10000.0)
+        //             .round()
+        //             / 10000.0
+        //     )
+        // } else {
+        //     "-".to_string()
+        // };
+
+        // let avg_mvr_flagged: String = if mvr_flagged.len() > 0 {
+        //     format!(
+        //         "{}",
+        //         ((mvr_flagged.iter().sum::<f64>() / mvr_flagged.len() as f64) * 10000.0).round()
+        //             / 10000.0
+        //     )
+        // } else {
+        //     "-".to_string()
+        // };
 
         report.add_raw_text(format!(
             "In the last {} sessions {} validators were selected to para-validate:",
@@ -1492,10 +1616,9 @@ fn flagged_and_exceptional_validators_report<'a>(
 
         if total_exceptional > 0 {
             report.add_raw_text(format!(
-                    "‣ {} consistently had an exceptional performance (A+) with an average missed vote ratio of {}.",
-                    descnd(total_exceptional, para_validators.len()),
-                    avg_mvr_exceptional
-                ));
+                "‣ {} consistently had an exceptional performance (A+).",
+                descnd(total_exceptional, para_validators.len()),
+            ));
             // Show subsets
             if !is_short {
                 report.add_raw_text(format!(
@@ -1509,11 +1632,10 @@ fn flagged_and_exceptional_validators_report<'a>(
 
         if total_flagged > 0 {
             report.add_raw_text(format!(
-                    "‣ {}{} consistently had a low performance (F) with an average missed vote ratio of {}.",
-                    warning,
-                    descnd(total_flagged, para_validators.len()),
-                    avg_mvr_flagged
-                ));
+                "‣ {}{} consistently had a low performance (F).",
+                warning,
+                descnd(total_flagged, para_validators.len()),
+            ));
             if !is_short {
                 report.add_raw_text(format!(
                     "‣‣ {} • {} • <b>{}</b>",
@@ -1652,10 +1774,11 @@ fn top_performers_report<'a>(
 
             for v in &validators[..max] {
                 report.add_raw_text(format!(
-                    "* {} ({:.2}%, {}, {}, {}x)",
+                    "* {} ({:.2}%, {}, {}, {}, {}x)",
                     format!("<a href=\"https://apps.turboflakes.io/?chain={}&app=onet#/validator/{}?mode=history\">{}</a>", data.network.name.to_lowercase(), v.stash, v.name),
                     v.score * 100.0,
                     (v.missed_ratio.unwrap() * 10000.0).round() / 10000.0,
+                    (v.bitfields_availability_ratio.unwrap() * 10000.0).round() / 10000.0,
                     v.avg_para_points,
                     v.para_epochs,
                 ));
@@ -1663,8 +1786,8 @@ fn top_performers_report<'a>(
 
             if !is_short {
                 report.add_break();
-                report.add_raw_text(format!("<i>Legend: Val. identity (Score, Missed votes ratio, Average p/v points, Number of sessions as p/v)</i>"));
-                report.add_raw_text(format!("<i>Score: Backing votes ratio (1-MVR) make up 75% of the score, average p/v points make up 18% and number of sessions as p/v the remaining 7%</i>"));
+                report.add_raw_text(format!("<i>Legend: Val. identity (Score, Missed votes ratio, Bitfields Availability Ratio, Average p/v points, Number of sessions as p/v)</i>"));
+                report.add_raw_text(format!("<i>Score: Backing Votes Ratio (1-MVR) make up 50% of the score,  Bitfields Availability Ratio make up 25%, average p/v points make up 18% and number of sessions as p/v the remaining 7%</i>"));
                 report.add_raw_text(format!(
                     "<i>Sorting: Validators are sorted by Score in descending order</i>"
                 ));

@@ -799,6 +799,8 @@ pub struct ValidatorGradeResult {
     pub explicit_votes_total: u32,
     pub implicit_votes_total: u32,
     pub missed_votes_total: u32,
+    pub bitfields_availability_total: u32,
+    pub bitfields_unavailability_total: u32,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sessions: Vec<u32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
