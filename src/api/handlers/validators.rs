@@ -676,10 +676,10 @@ pub async fn get_validators(
             // warn!("__serialized: {:?}", serialized);
 
             //
-            // NOTE: the score is based on 5 key values, which will be aggregated in the following map tupple.
-            // NOTE: the tuple has a subset, 5 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_vote, score)
+            // NOTE: the score is based on 7 key values, which will be aggregated in the following map tupple.
+            // NOTE: the tuple has a subset, 7 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_votes, bitfields_availability, bitfields_unavailability, score)
             //
-            let mut aggregator: BTreeMap<String, (Subset, u32, u32, u32, u32, u32, u32)> =
+            let mut aggregator: BTreeMap<String, (Subset, u32, u32, u32, u32, u32, u32, u32, u32)> =
                 BTreeMap::new();
             let mut validators: BTreeMap<String, ValidatorResult> = BTreeMap::new();
             let mut total_epochs: u32 = 0;
@@ -705,18 +705,29 @@ pub async fn get_validators(
                             cache.clone(),
                         )
                         .await?;
-                        // NOTE: the tupple has a subset, 5 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_vote, score)
+                        // NOTE: the tupple has a subset, 5 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_vote, bitfields_availability, bitfields_unavailability, score)
                         aggregator
                             .entry(val.address.clone())
-                            .and_modify(|(subset, para_epochs, para_points, ev, iv, mv, _)| {
-                                *subset = val.profile.subset.clone();
-                                *para_epochs += 1;
-                                *para_points += val.auth.para_points();
-                                *ev += val.para_summary.explicit_votes();
-                                *iv += val.para_summary.implicit_votes();
-                                *mv += val.para_summary.missed_votes();
-                            })
-                            .or_insert((Subset::NotDefined, 0, 0, 0, 0, 0, 0));
+                            .and_modify(
+                                |(subset, para_epochs, para_points, ev, iv, mv, ba, bu, _)| {
+                                    *subset = val.profile.subset.clone();
+                                    *para_epochs += 1;
+                                    *para_points += val.auth.para_points();
+                                    *ev += val.para_summary.explicit_votes();
+                                    *iv += val.para_summary.implicit_votes();
+                                    *mv += val.para_summary.missed_votes();
+
+                                    if let Some(value) = val.para.get("bitfields") {
+                                        if let Ok(bitfields) =
+                                            serde_json::from_value::<BitfieldsRecord>(value.clone())
+                                        {
+                                            *ba += bitfields.availability();
+                                            *bu += bitfields.unavailability();
+                                        }
+                                    }
+                                },
+                            )
+                            .or_insert((Subset::NotDefined, 0, 0, 0, 0, 0, 0, 0, 0));
                         validators.insert(val.address.clone(), val);
                     }
                     total_epochs += 1;
@@ -730,8 +741,10 @@ pub async fn get_validators(
             // Normalize avg_para_points
             let avg_para_points: Vec<u32> = aggregator_vec
                 .iter()
-                .filter(|(_, (_, para_epochs, _, _, _, _, _))| *para_epochs >= 1)
-                .map(|(_, (_, para_epochs, para_points, _, _, _, _))| para_points / para_epochs)
+                .filter(|(_, (_, para_epochs, _, _, _, _, _, _, _))| *para_epochs >= 1)
+                .map(|(_, (_, para_epochs, para_points, _, _, _, _, _, _))| {
+                    para_points / para_epochs
+                })
                 .collect();
             let max = avg_para_points.iter().max().unwrap_or_else(|| &0);
             let min = avg_para_points.iter().min().unwrap_or_else(|| &0);
@@ -741,24 +754,30 @@ pub async fn get_validators(
             //
             aggregator_vec
                 .iter_mut()
-                .filter(|(_, (_, para_epochs, _, _, _, _, _))| *para_epochs >= 1)
-                .for_each(|(stash, (_, para_epochs, para_points, ev, iv, mv, s))| {
-                    let mvr = *mv as f64 / (*ev + *iv + *mv) as f64;
-                    let avg_para_points = *para_points / *para_epochs;
-                    let score = if max - min > 0 {
-                        (((1.0_f64 - mvr) * 0.75_f64
-                            + ((avg_para_points - *min) as f64 / (*max - *min) as f64) * 0.18_f64
-                            + (*para_epochs as f64 / total_epochs as f64) * 0.07_f64)
-                            * 1000000.0_f64) as u32
-                    } else {
-                        0
-                    };
-                    *s = score;
-                    // Add ranking stats to the validator result
-                    validators.entry(stash.clone()).and_modify(|v| {
-                        v.ranking = RankingStats::with(score, mvr, avg_para_points, *para_epochs);
-                    });
-                });
+                .filter(|(_, (_, para_epochs, _, _, _, _, _, _, _))| *para_epochs >= 1)
+                .for_each(
+                    |(stash, (_, para_epochs, para_points, ev, iv, mv, ba, bu, s))| {
+                        let mvr = *mv as f64 / (*ev + *iv + *mv) as f64;
+                        let bar = *ba as f64 / (*ba + *bu) as f64;
+                        let avg_para_points = *para_points / *para_epochs;
+                        let score = if max - min > 0 {
+                            (((1.0_f64 - mvr) * 0.50_f64
+                                + bar * 0.25_f64
+                                + ((avg_para_points - *min) as f64 / (*max - *min) as f64)
+                                    * 0.18_f64
+                                + (*para_epochs as f64 / total_epochs as f64) * 0.07_f64)
+                                * 1000000.0_f64) as u32
+                        } else {
+                            0
+                        };
+                        *s = score;
+                        // Add ranking stats to the validator result
+                        validators.entry(stash.clone()).and_modify(|v| {
+                            v.ranking =
+                                RankingStats::with(score, mvr, avg_para_points, *para_epochs);
+                        });
+                    },
+                );
 
             // Filter by subset and min para epochs
             // min_para_epochs = 1 if total_full_epochs < 12;
@@ -770,7 +789,7 @@ pub async fn get_validators(
 
             let mut i = 0;
             while i < aggregator_vec.len() {
-                let (_, (subset, para_epochs, _, _, _, _, _)) = &mut aggregator_vec[i];
+                let (_, (subset, para_epochs, _, _, _, _, _, _, _)) = &mut aggregator_vec[i];
                 if (*subset != params.subset && params.subset != Subset::NotDefined)
                     || *para_epochs < min_para_epochs
                 {
@@ -781,8 +800,9 @@ pub async fn get_validators(
             }
 
             // Sort ranking validators by score
-            aggregator_vec
-                .sort_by(|(_, (_, _, _, _, _, _, a)), (_, (_, _, _, _, _, _, b))| b.cmp(&a));
+            aggregator_vec.sort_by(
+                |(_, (_, _, _, _, _, _, _, _, a)), (_, (_, _, _, _, _, _, _, _, b))| b.cmp(&a),
+            );
 
             // Truncate aggregator
             if params.size > 0 {
