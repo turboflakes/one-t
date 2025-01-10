@@ -2129,7 +2129,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
         .for_each(|v| {
             let score = if max - min > 0 {
-                (1.0_f64 - v.missed_ratio.unwrap_or_default()) * 0.75_f64
+                (1.0_f64 - v.missed_ratio.unwrap_or_default()) * 0.50_f64
                     + v.bitfields_availability_ratio.unwrap_or_default() * 0.25_f64
                     + ((v.avg_para_points as f64 - *min as f64) / (*max as f64 - *min as f64))
                         * 0.18_f64
