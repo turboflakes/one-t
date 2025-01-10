@@ -1325,17 +1325,17 @@ impl Matrix {
         message.push_str("MVR: Missed Votes Ratio (MVR = (✗v) / (✓i + ✓e + ✗)).<br>");
         message.push_str("BAR: Bitfields Availability Ratio (BAR = (✓ba) / (✓ba + ✗bu)).<br>");
         message.push_str(
-            "GRD: Grade is calculated as 75% of the Backing Votes Ratio (BVR = 1-MVR) combined with 25% of the Bitfields Availability Ratio (BAR) by the validator (RATIO = BVR*0.75 + BAR*0.25):"
+            "GRD: Grade is calculated as 75% of the Backing Votes Ratio (BVR = 1-MVR) combined with 25% of the Bitfields Availability Ratio (BAR) by the validator (RATIO = BVR*0.75 + BAR*0.25):<br>"
         );
         message.push_str("‣ A+ = RATIO > 99% <br>");
-        message.push_str("‣ A  = BVR > 95% <br>");
-        message.push_str("‣ B+ = BVR > 90% <br>");
-        message.push_str("‣ B  = BVR > 80% <br>");
-        message.push_str("‣ C+ = BVR > 70% <br>");
-        message.push_str("‣ C  = BVR > 60% <br>");
-        message.push_str("‣ D+ = BVR > 50% <br>");
-        message.push_str("‣ D  = BVR > 40% <br>");
-        message.push_str("‣ F  = BVR <= 40% <br>");
+        message.push_str("‣ A  = RATIO > 95% <br>");
+        message.push_str("‣ B+ = RATIO > 90% <br>");
+        message.push_str("‣ B  = RATIO > 80% <br>");
+        message.push_str("‣ C+ = RATIO > 70% <br>");
+        message.push_str("‣ C  = RATIO > 60% <br>");
+        message.push_str("‣ D+ = RATIO > 50% <br>");
+        message.push_str("‣ D  = RATIO > 40% <br>");
+        message.push_str("‣ F  = RATIO <= 40% <br>");
         message.push_str("PPTS: Sum of para-validator points the validator earned.<br>");
         message.push_str(
             "TPTS: Sum of para-validator points + authored blocks points the validator earned.<br>",
@@ -1382,16 +1382,15 @@ impl Matrix {
 
         message.push_str("<i>Validators performance insights report legend:</i><br>");
         message.push_str("→: !subscribe insights<br>");
-        message.push_str("Score: (1 - mvr) * 0.75 + ((avg_pts - min_avg_pts) / (max_avg_pts - min_avg_pts)) * 0.18 + (pv_sessions / total_sessions) * 0.07<br>");
-        message.push_str("Commission Score: score * 0.25 + (1 - commission) * 0.75");
+        message.push_str("Performance Score: `SCORE = (1 - MVR) * 0.50 + BAR * 0.25 + ((avg_pts - min_avg_pts) / (max_avg_pts - min_avg_pts)) * 0.18 + (pv_sessions / total_sessions) * 0.07`<br>");
         message
             .push_str("Timeline: Graphic performance representation in the last X sessions:<br>");
-        message.push_str("‣ ❚ = BVR >= 80% <br>");
-        message.push_str("‣ ❙ = BVR >= 60% <br>");
-        message.push_str("‣ ❘ = BVR >= 40% <br>");
-        message.push_str("‣ ! = BVR >= 20% <br>");
-        message.push_str("‣ ¿ = BVR < 20% <br>");
-        message.push_str("‣ ? = No-votes<br>");
+        message.push_str("‣ ❚ = RATIO >= 80% <br>");
+        message.push_str("‣ ❙ = RATIO >= 60% <br>");
+        message.push_str("‣ ❘ = RATIO >= 40% <br>");
+        message.push_str("‣ ! = RATIO >= 20% <br>");
+        message.push_str("‣ ¿ = RATIO < 20% <br>");
+        message.push_str("‣ ? = No-shows<br>");
         message.push_str("‣ • = Not P/V<br>");
         message.push_str("‣ _ = Waiting<br>");
         message.push_str(
