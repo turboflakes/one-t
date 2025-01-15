@@ -495,6 +495,7 @@ impl Channel {
                                                             )
                                                             .await
                                                         {
+                                                            // Extend with requested verbosity data
                                                             if let Ok(tmp) = redis::cmd("HGETALL")
                                                             .arg(CacheKey::AuthorityRecordVerbose(
                                                                 key.to_string(),
@@ -507,6 +508,23 @@ impl Channel {
                                                         {
                                                             auth.extend(tmp);
                                                         }
+                                                            // Additional extend with discovery data
+                                                            if let Ok(mut discovery) = redis::cmd(
+                                                                "HGETALL",
+                                                            )
+                                                            .arg(CacheKey::AuthorityRecordVerbose(
+                                                                key.to_string(),
+                                                                Verbosity::Discovery,
+                                                            ))
+                                                            .query_async::<Connection, CacheMap>(
+                                                                &mut conn,
+                                                            )
+                                                            .await
+                                                            {
+                                                                // NOTE: discovery.ips is not needed to be available, so let's skip it.
+                                                                discovery.remove("ips");
+                                                                auth.extend(discovery);
+                                                            }
                                                             data.push(auth.into());
                                                         }
                                                     }
