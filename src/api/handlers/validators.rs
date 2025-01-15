@@ -347,7 +347,7 @@ async fn get_discovery_from_cache(
     key: &str,
     conn: &mut Connection,
 ) -> Result<CacheMap, CacheError> {
-    let discovery = redis::cmd("HGETALL")
+    let mut discovery: CacheMap = redis::cmd("HGETALL")
         .arg(CacheKey::AuthorityRecordVerbose(
             key.to_string(),
             Verbosity::Discovery,
@@ -355,6 +355,9 @@ async fn get_discovery_from_cache(
         .query_async(conn)
         .await
         .map_err(CacheError::RedisCMDError)?;
+
+    // NOTE: discovery.ips is not needed to be available, so let's skip it.
+    discovery.remove("ips");
 
     return Ok(discovery);
 }
@@ -402,14 +405,8 @@ async fn get_validator_by_authority_key(
     }
 
     if show_discovery {
-        let discovery: CacheMap = redis::cmd("HGETALL")
-            .arg(CacheKey::AuthorityRecordVerbose(
-                auth_key.to_string(),
-                Verbosity::Discovery,
-            ))
-            .query_async(&mut conn as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?;
+        let discovery: CacheMap =
+            get_discovery_from_cache(&auth_key.to_string(), &mut conn).await?;
         data.extend(discovery);
     }
 
