@@ -38,7 +38,7 @@ use actix_web::{
     web::{Data, Json, Path, Query},
     HttpRequest,
 };
-use log::{info, warn};
+use log::warn;
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
@@ -653,7 +653,7 @@ pub async fn get_validators(
     // validators by performance ranking
     //
     // Calculate a score based on the formula
-    // SCORE_1 = (1-MVR)*0.75 + ((AVG_PV_POINTS - MIN_AVG_PV_POINTS)/(MAX_AVG_PV_POINTS-MIN_AVG_PV_POINTS))*0.18 + (PV_SESSIONS/TOTAL_SESSIONS)*0.07
+    // SCORE_1 = (1-MVR)*0.50 + BAR * 0.25 + ((AVG_PV_POINTS - MIN_AVG_PV_POINTS)/(MAX_AVG_PV_POINTS-MIN_AVG_PV_POINTS))*0.18 + (PV_SESSIONS/TOTAL_SESSIONS)*0.07
     //
     //
     if params.from != 0 && params.from < params.to && params.ranking == Ranking::Performance {
@@ -669,14 +669,11 @@ pub async fn get_validators(
                 ..Default::default()
             });
         } else {
-            // let serialized = serde_json::to_string(params)?;
-            // warn!("__serialized: {:?}", serialized);
-
             //
             // NOTE: the score is based on 7 key values, which will be aggregated in the following map tupple.
             // NOTE: the tuple has a subset, 7 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_votes, bitfields_availability, bitfields_unavailability, score)
             //
-            let mut aggregator: BTreeMap<String, (Subset, u32, u32, u32, u32, u32, u32, u32, u32)> =
+            let mut aggregator: BTreeMap<String, (Subset, u32, u32, u32, u32, u32, u64, u64, u32)> =
                 BTreeMap::new();
             let mut validators: BTreeMap<String, ValidatorResult> = BTreeMap::new();
             let mut total_epochs: u32 = 0;
@@ -702,7 +699,7 @@ pub async fn get_validators(
                             cache.clone(),
                         )
                         .await?;
-                        // NOTE: the tupple has a subset, 5 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_vote, bitfields_availability, bitfields_unavailability, score)
+                        // NOTE: the tupple has a subset, 7 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_vote, bitfields_availability, bitfields_unavailability, score)
                         aggregator
                             .entry(val.address.clone())
                             .and_modify(
@@ -715,11 +712,13 @@ pub async fn get_validators(
                                     *mv += val.para_summary.missed_votes();
 
                                     if let Some(value) = val.para.get("bitfields") {
-                                        if let Ok(bitfields) =
-                                            serde_json::from_value::<BitfieldsRecord>(value.clone())
-                                        {
-                                            *ba += bitfields.availability();
-                                            *bu += bitfields.unavailability();
+                                        if let Some(obj) = value.as_object() {
+                                            obj["ba"]
+                                                .as_number()
+                                                .map(|v| *ba += v.as_u64().unwrap_or(0));
+                                            obj["bu"]
+                                                .as_number()
+                                                .map(|v| *bu += v.as_u64().unwrap_or(0));
                                         }
                                     }
                                 },
