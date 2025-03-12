@@ -502,7 +502,7 @@ impl From<RawDataGroup> for Report {
 
         for (i, group) in data.groups.iter().enumerate() {
             clode_block.push_str(&format!(
-                "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
+                "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>6}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
                 format!("{}. VAL_GROUP_{}", i + 1, group.0),
                 "❒",
                 "↻",
@@ -538,7 +538,7 @@ impl From<RawDataGroup> for Report {
                     }
                 }
                 clode_block.push_str(&format!(
-                    "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
+                    "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>6}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
                     slice(&replace_emoji(&val_name, "_"), 24),
                     "-",
                     "-",
