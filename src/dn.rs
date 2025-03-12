@@ -15,6 +15,7 @@ const DN_VALIDATORS_FILENAME: &str = ".dn";
 pub enum Status {
     Active,
     Pending,
+    Selected,
     Graduated,
     Removed,
 }
@@ -39,13 +40,14 @@ pub struct Term {
 
 impl Validator {
     fn is_active(&self) -> bool {
-        matches!(self.status, Some(Status::Active))
+        matches!(self.status, Some(Status::Active)) || matches!(self.status, Some(Status::Selected))
     }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Response {
     selected: Vec<Validator>,
+    #[serde(skip_serializing)]
     backups: Vec<Validator>,
     nominators: Vec<String>,
     #[serde(skip_serializing)]
