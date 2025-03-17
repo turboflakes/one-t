@@ -520,7 +520,7 @@ impl From<RawDataGroup> for Report {
                 if let Some(mvr) = para_record.missed_votes_ratio() {
                     if let Some(bar) = para_record.bitfields_availability_ratio() {
                         clode_block.push_str(&format!(
-                            "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>5}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
+                            "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>6}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
                             slice(&replace_emoji(&val_name, "_"), 24),
                             authority_record.total_authored_blocks(),
                             para_record.total_core_assignments(),
