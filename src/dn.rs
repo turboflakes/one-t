@@ -47,8 +47,6 @@ impl Validator {
 #[derive(Serialize, Deserialize, Debug)]
 struct Response {
     selected: Vec<Validator>,
-    #[serde(skip_serializing)]
-    backups: Vec<Validator>,
     nominators: Vec<String>,
     #[serde(skip_serializing)]
     statuses: BTreeMap<Status, String>,
