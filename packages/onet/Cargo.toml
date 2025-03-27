@@ -1,0 +1,31 @@
+[package]
+name = "onet"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description.workspace = true
+edition.workspace = true
+
+[dependencies]
+onet-api = { path = "../api" }
+onet-cache = { path = "../cache" }
+onet-chains = { path = "../chains" }
+onet-config = { path = "../config" }
+onet-core = { path = "../core" }
+onet-dn = { path = "../dn" }
+onet-errors = { path = "../errors" }
+onet-kusama = { path = "../chains/kusama" }
+onet-matrix = { path = "../matrix" }
+onet-paseo = { path = "../chains/paseo" }
+onet-polkadot = { path = "../chains/polkadot" }
+
+actix = { workspace = true }
+actix-web = { workspace = true }
+actix-web-actors = { workspace = true }
+actix-cors = { workspace = true }
+ctrlc = { workspace = true }
+log = { workspace = true }
+subxt = { workspace = true }
+env_logger = { workspace = true }
+async-std = { workspace = true }

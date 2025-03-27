@@ -1,13 +1,38 @@
-[package]
+[workspace]
+members = [
+    "packages/onet",
+    "packages/core",
+    "packages/api",
+    "packages/discovery",
+    "packages/errors",
+    "packages/config",
+    "packages/records",
+    "packages/pools",
+    "packages/cache",
+    "packages/mcda",
+    "packages/dn",
+    "packages/report",
+    "packages/chains",
+    "packages/matrix",
+    "packages/chains/kusama",
+    "packages/chains/polkadot",
+    "packages/chains/paseo",
+]
+
+resolver = "2"
+
+[workspace.package]
 name = "onet"
 version = "0.33.2"
 authors = ["Paulo <paulo@turboflakes.io>"]
-description = "ONE-T is a performance report bot for the Polkadot and Kusama network with a special focus on the One Thousand validator programme" 
+license = "MIT or Apache-2.0"
+repository = "https://github.com/turboflakes/one-t"
+description = "ONE-T is a performance report bot for the Polkadot and Kusama network with a special focus on the One Thousand validator programme"
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies]
+[workspace.dependencies]
 dotenv = "0.15"
 envy = "0.4"
 log = "0.4"
@@ -32,21 +57,31 @@ actix-web-actors = "4.1"
 actix-cors = "0.6"
 redis = { version = "0.19.0", features = ["async-std-comp"] }
 mobc = { version = "0.7", default-features = false, features = ["async-std"] }
-mobc-redis = { version = "0.7", default-features = false, features = ["async-std-comp"] }
+mobc-redis = { version = "0.7", default-features = false, features = [
+    "async-std-comp",
+] }
 ctrlc = { version = "3.0", features = ["termination"] }
 
 # Subxt crates:
-subxt = { version = "0.38.0", features = ["substrate-compat", "native", "reconnecting-rpc-client"] }
+subxt = { version = "0.38.0", features = [
+    "substrate-compat",
+    "native",
+    "reconnecting-rpc-client",
+] }
 subxt-signer = { version = "0.38.0", features = ["subxt"] }
 sp-core-hashing = "16.0.0"
 #
 async-std = { version = "1.11.0", features = ["attributes", "tokio1"] }
 env_logger = "0.9.0"
 futures = "0.3.13"
-codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = ["derive", "full", "bit-vec"] }
+codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = [
+    "derive",
+    "full",
+    "bit-vec",
+] }
 hex = "0.4.3"
 # p2p-explorer
 multiaddr = "0.18.1"
 libp2p = "0.52.0"
-subp2p-explorer-cli = { git = "https://github.com/turboflakes/subp2p-explorer", branch="main"}
-subp2p-explorer = { git = "https://github.com/turboflakes/subp2p-explorer", branch="main"}
+subp2p-explorer-cli = { git = "https://github.com/turboflakes/subp2p-explorer", branch = "main" }
+resolver = "2"

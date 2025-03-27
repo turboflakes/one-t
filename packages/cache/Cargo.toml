@@ -1,0 +1,22 @@
+[package]
+name = "onet-cache"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description.workspace = true
+edition.workspace = true
+
+[dependencies]
+onet-config = { path = "../config" }
+onet-records = { path = "../records" }
+onet-pools = { path = "../pools" }
+onet-errors = { path = "../errors" }
+
+actix-web = { workspace = true }
+log = { workspace = true }
+mobc = { workspace = true }
+mobc-redis = { workspace = true }
+serde = { workspace = true }
+subxt = { workspace = true }
+redis = { workspace = true }

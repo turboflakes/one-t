@@ -1,0 +1,20 @@
+[package]
+name = "onet-report"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description.workspace = true
+edition.workspace = true
+
+[dependencies]
+onet-config = { path = "../config" }
+onet-errors = { path = "../errors" }
+onet-records = { path = "../records" }
+
+log = { workspace = true }
+rand = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+subxt = { workspace = true }
+flate2 = { workspace = true }

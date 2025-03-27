@@ -1,0 +1,25 @@
+[package]
+name = "onet-discovery"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description.workspace = true
+edition.workspace = true
+
+[dependencies]
+onet-cache = { path = "../cache" }
+onet-config = { path = "../config" }
+onet-core = { path = "../core" }
+onet-errors = { path = "../errors" }
+onet-records = { path = "../records" }
+
+hex = { workspace = true }
+log = { workspace = true }
+multiaddr = { workspace = true }
+redis = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+subxt = { workspace = true }
+subp2p-explorer-cli = { workspace = true }

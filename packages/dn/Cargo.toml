@@ -1,0 +1,19 @@
+[package]
+name = "onet-dn"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description.workspace = true
+edition.workspace = true
+
+[dependencies]
+onet-config = { path = "../config" }
+onet-errors = { path = "../errors" }
+
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+subxt = { workspace = true }
+reqwest = { workspace = true }
+url = { workspace = true }
