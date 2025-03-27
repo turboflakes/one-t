@@ -248,67 +248,6 @@ impl Onet {
         &self.runtime
     }
 
-    // pub fn start() {
-    //     let config = CONFIG.clone();
-    //     info!("Starting ONET");
-    //     let (ctrlc_tx, ctrlc_rx) = mpsc::channel();
-
-    //     ctrlc::set_handler(move || {
-    //         ctrlc_tx
-    //             .send(())
-    //             .expect("Could not send signal on channel.")
-    //     })
-    //     .expect("Error setting Ctrl-C handler");
-
-    //     if config.api_enabled {
-    //         let (server_tx, server_rx) = mpsc::channel();
-    //         // start one-t API as a standalone service without depending on other services
-    //         spawn_api(server_tx);
-    //         let server_handle = server_rx
-    //             .recv()
-    //             .expect("could not receive server handle from channel.");
-
-    //         // wait for SIGINT, SIGTERM, SIGHUP
-    //         ctrlc_rx
-    //             .recv()
-    //             .expect("could not receive signal from channel.");
-
-    //         // close gracefully http server api
-    //         rt::System::new().block_on(server_handle.stop(true));
-    //     } else {
-    //         // Authenticate matrix and spawn lazy load commands
-    //         spawn_and_restart_matrix_lazy_load_on_error();
-
-    //         // Subscribe on-chain events
-    //         spawn_and_restart_on_chain_events_on_error();
-
-    //         // wait for SIGINT, SIGTERM, SIGHUP
-    //         ctrlc_rx
-    //             .recv()
-    //             .expect("could not receive signal from channel.");
-    //     }
-    // }
-
-    // pub async fn subscribe_on_chain_events(&self) -> Result<(), OnetError> {
-    //     // initialize and load TVP stashes
-    //     match self.runtime {
-    //         SupportedRuntime::Polkadot | SupportedRuntime::Kusama => {
-    //             try_fetch_stashes_from_remote_url(false).await?;
-    //         }
-    //         _ => {}
-    //     };
-
-    //     // initialize cache
-    //     self.cache_network().await?;
-
-    //     match self.runtime {
-    //         SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(self).await,
-    //         SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(self).await,
-    //         SupportedRuntime::Paseo => paseo::init_and_subscribe_on_chain_events(self).await,
-    //         // _ => todo!(),
-    //     }
-    // }
-
     // cache methods
     async fn cache_network(&self) -> Result<(), OnetError> {
         let config = CONFIG.clone();
