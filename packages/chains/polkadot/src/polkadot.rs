@@ -81,8 +81,8 @@ use node_runtime::{
     runtime_types::{
         bounded_collections::bounded_vec::BoundedVec, pallet_nomination_pools::PoolState,
         polkadot_parachain_primitives::primitives::Id,
-        polkadot_primitives::v7::AvailabilityBitfield, polkadot_primitives::v7::DisputeStatement,
-        polkadot_primitives::v7::ValidatorIndex, polkadot_primitives::v7::ValidityAttestation,
+        polkadot_primitives::v8::AvailabilityBitfield, polkadot_primitives::v8::DisputeStatement,
+        polkadot_primitives::v8::ValidatorIndex, polkadot_primitives::v8::ValidityAttestation,
         polkadot_runtime_parachains::scheduler::common::Assignment,
         polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
         sp_arithmetic::per_things::Perbill, sp_authority_discovery::app::Public,
