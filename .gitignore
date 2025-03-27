@@ -1,5 +1,6 @@
 /target
 Cargo.lock
+.DS_Store
 .env
 .env.dev*
 .next_batch
