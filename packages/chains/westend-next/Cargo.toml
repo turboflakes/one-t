@@ -1,0 +1,33 @@
+[package]
+name = "onet-westend-next"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description.workspace = true
+edition.workspace = true
+
+[dependencies]
+onet-api = { path = "../../api" }
+onet-cache = { path = "../../cache" }
+onet-config = { path = "../../config" }
+onet-discovery = { path = "../../discovery" }
+onet-dn = { path = "../../dn" }
+onet-errors = { path = "../../errors" }
+onet-matrix = { path = "../../matrix" }
+onet-core = { path = "../../core" }
+onet-mcda = { path = "../../mcda" }
+onet-pools = { path = "../../pools" }
+onet-records = { path = "../../records" }
+onet-report = { path = "../../report" }
+
+async-recursion = { workspace = true }
+async-std = { workspace = true }
+hex = { workspace = true }
+log = { workspace = true }
+redis = { workspace = true }
+codec = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+subxt = { workspace = true }
+subxt-signer = { workspace = true }
