@@ -56,60 +56,99 @@ struct Response {
 /// Fetch stashes from 1kv endpoint https://nodes.web3.foundation/api/cohort/1/polkadot/
 pub async fn try_fetch_stashes_from_remote_url(
     is_loading: bool,
+    cohort: Option<u32>,
 ) -> Result<Vec<AccountId32>, OnetError> {
     let config = CONFIG.clone();
-    let url = format!(
-        "{}/{}/",
-        config.dn_url.to_lowercase(),
-        config.chain_name.to_lowercase()
-    );
 
-    let url = Url::parse(&*url)?;
+    // Extract cohort number
+    let cohort = cohort.unwrap_or_else(|| {
+        config
+            .dn_url
+            .to_lowercase()
+            .split('/')
+            .last()
+            .and_then(|s| s.parse().ok())
+            .expect("Failed to parse cohort number")
+    });
 
-    let filename = format!(
-        "{}{}_{}",
-        config.data_path,
-        DN_VALIDATORS_FILENAME,
-        config.chain_name.to_lowercase()
-    );
+    // Construct filename for caching
+    let filename = construct_cache_filename(cohort);
 
-    let validators: Vec<Validator> = if is_loading {
-        // Try to read from cached file
+    // Construct URL
+    let url = construct_url(cohort)?;
+
+    // Fetch or load validators
+    let validators = if is_loading {
         read_cached_filename(&filename)?
     } else {
-        match reqwest::get(url.to_string()).await {
-            Ok(request) => {
-                match request.json::<Response>().await {
-                    Ok(response) => {
-                        info!("response {:?}", response);
-                        // Serialize and cache
-                        let serialized = serde_json::to_string(&response.selected)?;
-                        fs::write(&filename, serialized)?;
-                        response.selected
-                    }
-                    Err(e) => {
-                        warn!("Parsing json from url {} failed with error: {:?}", url, e);
-                        // Try to read from cached file
-                        read_cached_filename(&filename)?
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("Fetching url {} failed with error: {:?}", url, e);
-                // Try to read from cached file
-                read_cached_filename(&filename)?
-            }
-        }
+        fetch_or_fallback_to_cache(&url, &filename).await?
     };
 
-    // Parse stashes
-    let v: Vec<AccountId32> = validators
+    // Parse and filter stashes
+    Ok(parse_stashes(validators))
+}
+
+fn construct_cache_filename(cohort: u32) -> String {
+    let config = CONFIG.clone();
+    format!(
+        "{}{}_{}_cohort_{}",
+        config.data_path,
+        DN_VALIDATORS_FILENAME,
+        config.chain_name.to_lowercase(),
+        cohort
+    )
+}
+
+fn construct_url(cohort: u32) -> Result<Url, OnetError> {
+    let config = CONFIG.clone();
+    let dn_url = config.dn_url.to_lowercase();
+    let base_url = dn_url
+        .trim_end_matches(|c: char| c.is_digit(10))
+        .trim_end_matches('/');
+
+    let url = format!(
+        "{}/{}/{}/",
+        base_url,
+        cohort,
+        config.chain_name.to_lowercase()
+    );
+
+    Url::parse(&url).map_err(Into::into)
+}
+
+async fn fetch_or_fallback_to_cache(
+    url: &Url,
+    filename: &str,
+) -> Result<Vec<Validator>, OnetError> {
+    match fetch_validators(url).await {
+        Ok(validators) => {
+            // Cache the results
+            let serialized = serde_json::to_string(&validators)?;
+            fs::write(filename, serialized)?;
+            Ok(validators)
+        }
+        Err(e) => {
+            warn!("Remote fetch failed: {}. Falling back to cache.", e);
+            read_cached_filename(filename)
+        }
+    }
+}
+
+async fn fetch_validators(url: &Url) -> Result<Vec<Validator>, OnetError> {
+    let response = reqwest::get(url.to_string()).await?;
+
+    let data = response.json::<Response>().await?;
+
+    info!("Fetched response: {:?}", data);
+    Ok(data.selected)
+}
+
+fn parse_stashes(validators: Vec<Validator>) -> Vec<AccountId32> {
+    validators
         .iter()
         .filter(|v| v.is_active())
-        .map(|x| AccountId32::from_str(&x.stash).unwrap())
-        .collect();
-
-    Ok(v)
+        .filter_map(|x| AccountId32::from_str(&x.stash).ok())
+        .collect()
 }
 
 pub fn read_cached_filename(filename: &str) -> Result<Vec<Validator>, OnetError> {

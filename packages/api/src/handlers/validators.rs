@@ -1319,8 +1319,10 @@ pub async fn get_cohort_validators_grades(
     params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<CohortValidatorsGradesResult>, ApiError> {
-    // TODO: implement cohort as a parameter in try_fetch_stashes_from_remote_url
-    let stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url(false).await?;
+    let cohort_number = cohort.into_inner();
+
+    let stashes: Vec<AccountId32> =
+        try_fetch_stashes_from_remote_url(false, Some(cohort_number)).await?;
 
     let mut data: Vec<ValidatorGradeResult> = Vec::new();
     for stash in stashes.iter() {
@@ -1335,7 +1337,7 @@ pub async fn get_cohort_validators_grades(
     }
 
     return respond_json(CohortValidatorsGradesResult {
-        cohort: 1_u32,
+        cohort: cohort_number,
         data,
     });
 }
