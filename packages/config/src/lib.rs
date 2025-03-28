@@ -249,6 +249,8 @@ pub struct Config {
     pub substrate_ws_url: String,
     #[serde(default)]
     pub substrate_people_ws_url: String,
+    #[serde(default)]
+    pub substrate_asset_hub_ws_url: String,
     #[serde(default = "default_data_path")]
     pub data_path: String,
     #[serde(default = "default_data_path_read_only")]
@@ -531,12 +533,6 @@ fn get_config() -> Config {
             if env::var("ONET_SUBSTRATE_WS_URL").is_err() {
                 env::set_var("ONET_SUBSTRATE_WS_URL", "wss://rpc.ibp.network:443/kusama");
             }
-            if env::var("ONET_SUBSTRATE_PEOPLE_WS_URL").is_err() {
-                env::set_var(
-                    "ONET_SUBSTRATE_PEOPLE_WS_URL",
-                    "wss://sys.ibp.network:443/people-kusama",
-                );
-            }
             env::set_var("ONET_CHAIN_NAME", "kusama");
         }
         Some("polkadot") => {
@@ -565,6 +561,13 @@ fn get_config() -> Config {
 
     if let Some(substrate_people_ws_url) = matches.value_of("substrate-people-ws-url") {
         env::set_var("ONET_SUBSTRATE_PEOPLE_WS_URL", substrate_people_ws_url);
+    }
+
+    if let Some(substrate_asset_hub_ws_url) = matches.value_of("substrate-asset-hub-ws-url") {
+        env::set_var(
+            "ONET_SUBSTRATE_ASSET_HUB_WS_URL",
+            substrate_asset_hub_ws_url,
+        );
     }
 
     if let Some(maximum_subscribers) = matches.value_of("maximum-subscribers") {

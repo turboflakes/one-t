@@ -28,6 +28,7 @@ pub enum SupportedRuntime {
     Polkadot,
     Kusama,
     Paseo,
+    WestendNext,
 }
 
 impl SupportedRuntime {
@@ -36,6 +37,7 @@ impl SupportedRuntime {
             Self::Polkadot => 0,
             Self::Kusama => 2,
             Self::Paseo => 42,
+            Self::WestendNext => 42,
         }
     }
 
@@ -44,6 +46,7 @@ impl SupportedRuntime {
             Self::Polkadot => true,
             Self::Kusama => true,
             Self::Paseo => true,
+            Self::WestendNext => false,
         }
     }
 
@@ -52,6 +55,23 @@ impl SupportedRuntime {
             Self::Polkadot => SupportedParasRuntime::PeoplePolkadot,
             Self::Kusama => SupportedParasRuntime::PeopleKusama,
             Self::Paseo => SupportedParasRuntime::PeoplePaseo,
+            _ => unimplemented!("PeopleChain not supported"),
+        }
+    }
+
+    pub fn is_asset_hub_runtime_available(&self) -> bool {
+        match &self {
+            Self::Polkadot => false,
+            Self::Kusama => false,
+            Self::Paseo => false,
+            Self::WestendNext => true,
+        }
+    }
+
+    pub fn asset_hub_runtime(&self) -> SupportedParasRuntime {
+        match &self {
+            Self::WestendNext => SupportedParasRuntime::AssetHubWestendNext,
+            _ => unimplemented!("AssetHubChain not supported"),
         }
     }
 
@@ -77,6 +97,8 @@ impl From<String> for SupportedRuntime {
             "KSM" => Self::Kusama,
             "paseo" => Self::Paseo,
             "PAS" => Self::Paseo,
+            "westend" => Self::WestendNext,
+            "WND" => Self::WestendNext,
             _ => unimplemented!("Chain prefix not supported"),
         }
     }
@@ -99,6 +121,7 @@ impl std::fmt::Display for SupportedRuntime {
             Self::Polkadot => write!(f, "Polkadot"),
             Self::Kusama => write!(f, "Kusama"),
             Self::Paseo => write!(f, "Paseo"),
+            Self::WestendNext => write!(f, "Westend Next"),
         }
     }
 }
@@ -108,13 +131,17 @@ pub enum SupportedParasRuntime {
     PeoplePolkadot,
     PeopleKusama,
     PeoplePaseo,
+    AssetHubWestendNext,
 }
 
 impl SupportedParasRuntime {
     pub fn default_rpc_url(&self) -> String {
         let config = CONFIG.clone();
         match &self {
-            _ => config.substrate_people_ws_url,
+            Self::PeoplePolkadot | Self::PeopleKusama | Self::PeoplePaseo => {
+                config.substrate_people_ws_url
+            }
+            Self::AssetHubWestendNext => config.substrate_asset_hub_ws_url,
         }
     }
 }
@@ -125,6 +152,13 @@ impl std::fmt::Display for SupportedParasRuntime {
             Self::PeoplePolkadot => write!(f, "People Polkadot"),
             Self::PeopleKusama => write!(f, "People Kusama"),
             Self::PeoplePaseo => write!(f, "People Paseo"),
+            Self::AssetHubWestendNext => write!(f, "Asset Hub Westend Next"),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SupportedParasRuntimeType {
+    People,
+    AssetHub,
 }

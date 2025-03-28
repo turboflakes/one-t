@@ -17,6 +17,7 @@ members = [
     "packages/chains/kusama",
     "packages/chains/polkadot",
     "packages/chains/paseo",
+    # "packages/chains/westend-next",
 ]
 
 resolver = "2"

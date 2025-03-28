@@ -59,8 +59,8 @@ pub enum OnetError {
     IOError(#[from] std::io::Error),
     #[error("Nomination pool error: {0}")]
     PoolError(String),
-    #[error("P2PError error: {0}")]
-    P2PError(#[from] Box<dyn std::error::Error + Send + 'static>),
+    #[error("Box error: {0}")]
+    BoxError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
     #[error("Other error: {0}")]
     Other(String),
 }
@@ -85,6 +85,10 @@ impl From<OnetError> for String {
         format!("{}", error).to_string()
     }
 }
+
+// Implement Send and Sync for OnetError
+// unsafe impl Send for OnetError {}
+// unsafe impl Sync for OnetError {}
 
 /// Onet specific error messages
 #[derive(Error, Debug)]
