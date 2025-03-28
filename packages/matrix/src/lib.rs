@@ -44,6 +44,7 @@ const MATRIX_MEDIA_URL: &str = "https://matrix.org/_matrix/media/r0";
 const MATRIX_BOT_NAME: &str = "ONE-T";
 const MATRIX_NEXT_TOKEN_FILENAME: &str = ".next_token";
 pub const MATRIX_SUBSCRIBERS_FILENAME: &str = ".subscribers";
+const PRIVATE_ROOM_PREFIX: &'static str = "onet";
 
 type AccessToken = String;
 type SyncToken = String;
@@ -77,8 +78,12 @@ struct Room {
 impl Room {
     fn new_private(chain: SupportedRuntime, user_id: &str) -> Room {
         let config = CONFIG.clone();
+        // NOTE: the change to workspace packages means that each crate has its own name.
+        // To stay backward compatible with older versions of the bot and to ensure
+        // private rooms remain the same, env!("CARGO_PKG_NAME") is replaced with the static
+        // const PRIVATE_ROOM_PREFIX;
         let room_alias_name = define_private_room_alias_name(
-            env!("CARGO_PKG_NAME"),
+            PRIVATE_ROOM_PREFIX,
             &chain.to_string(),
             &user_id,
             &config.matrix_bot_user,
