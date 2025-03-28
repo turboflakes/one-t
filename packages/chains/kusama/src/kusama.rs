@@ -1987,7 +1987,7 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     let mut validators: Validators = Vec::new();
 
     // Load TVP stashes
-    let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url(false).await?;
+    let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url(false, None).await?;
 
     // Fetch active validators
     let authorities_addr = node_runtime::storage().session().validators();
@@ -3315,7 +3315,8 @@ pub async fn cache_session_stats_records(
         let nominators_map = collect_nominators_data(&onet, block.parent_hash).await?;
 
         // Load TVP stashes
-        let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url(is_loading).await?;
+        let tvp_stashes: Vec<AccountId32> =
+            try_fetch_stashes_from_remote_url(is_loading, None).await?;
 
         // Fetch active validators
         let authorities_addr = node_runtime::storage().session().validators();

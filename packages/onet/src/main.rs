@@ -197,7 +197,7 @@ async fn subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
     // initialize and load TVP stashes
     match onet.runtime() {
         SupportedRuntime::Polkadot | SupportedRuntime::Kusama => {
-            try_fetch_stashes_from_remote_url(false).await?;
+            try_fetch_stashes_from_remote_url(false, None).await?;
         }
         _ => {}
     };
