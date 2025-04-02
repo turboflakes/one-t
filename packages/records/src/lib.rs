@@ -934,6 +934,28 @@ impl Records {
         }
     }
 
+    pub fn get_mut_authority_record_with_address(
+        &mut self,
+        address: &AccountId32,
+        key: Option<EpochKey>,
+    ) -> Option<&mut AuthorityRecord> {
+        let epoch_key = if let Some(key) = key {
+            key
+        } else {
+            EpochKey(self.current_era, self.current_epoch)
+        };
+
+        if let Some(authority_index) = self
+            .addresses
+            .get(&AddressKey(epoch_key.clone(), address.to_string()))
+        {
+            self.authority_records
+                .get_mut(&RecordKey(epoch_key, *authority_index))
+        } else {
+            None
+        }
+    }
+
     pub fn get_discovery_record(
         &self,
         index: AuthorityIndex,

@@ -66,6 +66,7 @@ use subxt::{
     },
     tx::TxStatus,
     utils::{AccountId32, H256},
+    OnlineClient, PolkadotConfig,
 };
 use subxt_signer::sr25519::Keypair;
 
@@ -76,10 +77,15 @@ use subxt_signer::sr25519::Keypair;
 mod relay_runtime {}
 
 use relay_runtime::{
-    // Event,
+    para_inclusion::events::CandidateIncluded,
     para_inherent::calls::types::Enter,
+    para_inherent::storage::types::on_chain_votes::OnChainVotes,
+    para_scheduler::storage::types::session_start_block::SessionStartBlock,
+    para_scheduler::storage::types::validator_groups::ValidatorGroups,
+    paras_shared::storage::types::active_validator_indices::ActiveValidatorIndices,
     runtime_types::{
         bounded_collections::bounded_vec::BoundedVec,
+        frame_system::LastRuntimeUpgradeInfo,
         polkadot_parachain_primitives::primitives::Id,
         polkadot_primitives::v8::AvailabilityBitfield,
         polkadot_primitives::v8::DisputeStatement,
@@ -91,7 +97,10 @@ use relay_runtime::{
         sp_authority_discovery::app::Public,
         sp_consensus_babe::digests::PreDigest,
     },
+    session::events::new_session::SessionIndex,
     session::events::NewSession,
+    session::storage::types::queued_keys::QueuedKeys,
+    session::storage::types::validators::Validators as ValidatorSet,
     system::events::ExtrinsicFailed,
 };
 
@@ -107,19 +116,285 @@ use people_runtime::runtime_types::pallet_identity::types::Data;
     runtime_metadata_path = "artifacts/metadata/asset_hub_westend_next_metadata.scale",
     derive_for_all_types = "PartialEq, Clone"
 )]
-mod ah_runtime {}
+mod asset_hub_runtime {}
 
-use ah_runtime::runtime_types::{
-    pallet_nomination_pools::PoolState,
-    // polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
+use asset_hub_runtime::{
+    runtime_types::{
+        pallet_nomination_pools::PoolState,
+        pallet_staking_next::{ActiveEraInfo, EraRewardPoints},
+        // polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
+    },
+    staking::storage::types::eras_start_session_index::ErasStartSessionIndex,
 };
 
-type Call = ah_runtime::runtime_types::pallet_staking_next_parachain_runtime::RuntimeCall;
-type NominationPoolsCall = ah_runtime::runtime_types::pallet_nomination_pools::pallet::Call;
+type Call = asset_hub_runtime::runtime_types::pallet_staking_next_parachain_runtime::RuntimeCall;
+type NominationPoolsCall = asset_hub_runtime::runtime_types::pallet_nomination_pools::pallet::Call;
+
+/// Fetch active era at the specified block hash (AH)
+async fn fetch_active_era_info(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<ActiveEraInfo, OnetError> {
+    let addr = asset_hub_runtime::storage().staking().active_era();
+
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| OnetError::from("Active era not defined at block hash {block_hash}"))
+}
+
+/// Fetch session start block at the specified block hash
+async fn fetch_session_start_block(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<SessionStartBlock, OnetError> {
+    let addr = relay_runtime::storage()
+        .para_scheduler()
+        .session_start_block();
+
+    api.storage().at(hash).fetch(&addr).await?.ok_or_else(|| {
+        OnetError::from("Session start block not defined at block hash {block_hash}")
+    })
+}
+
+/// Fetch asset hub included block_hash at the specified relay chain block hash
+async fn fetch_asset_hub_block_hash(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<Option<H256>, OnetError> {
+    let config = CONFIG.clone();
+
+    // Fetch events
+    let events = api.events().at(hash).await?;
+    for event in events.iter() {
+        let event = event?;
+        if let Some(ev) = event.as_event::<CandidateIncluded>()? {
+            if ev.0.descriptor.para_id == Id(config.asset_hub_para_id) {
+                return Ok(Some(ev.0.descriptor.para_head));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Fetch relay chain block hash from a specified block number
+async fn fetch_relay_chain_block_hash(
+    onet: &Onet,
+    block_number: BlockNumber,
+) -> Result<H256, OnetError> {
+    onet.rpc()
+        .chain_get_block_hash(Some(block_number.into()))
+        .await?
+        .ok_or_else(|| {
+            OnetError::from("Relay block hash not available at block number {rc_block_number}")
+        })
+}
+
+/// Fetch the latest included asset hub block hash from a specified relay chain block number
+#[async_recursion]
+async fn fetch_asset_hub_block_hash_from_relay_chain(
+    onet: &Onet,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+) -> Result<H256, OnetError> {
+    let rc_api = onet.client().clone();
+    if let Some(hash) = fetch_asset_hub_block_hash(&rc_api, rc_block_hash).await? {
+        return Ok(hash);
+    }
+
+    let rc_previous_block_number = rc_block_number - 1;
+    let rc_previous_block_hash =
+        fetch_relay_chain_block_hash(onet, rc_previous_block_number).await?;
+
+    fetch_asset_hub_block_hash_from_relay_chain(
+        onet,
+        rc_previous_block_number,
+        rc_previous_block_hash,
+    )
+}
+
+/// Fetch the set of validators at the specified block hash
+async fn fetch_validators(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<ValidatorSet, OnetError> {
+    let addr = relay_runtime::storage().session().validators();
+
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| OnetError::from("Current validators not defined at block hash {hash}"))
+}
+
+/// Fetch queued_keys at the specified block hash
+async fn fetch_queued_keys(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<QueuedKeys, OnetError> {
+    let addr = relay_runtime::storage().session().queued_keys();
+
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| OnetError::from("Queued keys not defined at block hash {hash}"))
+}
+
+/// Fetch validator points at the specified block hash
+async fn fetch_validator_points_by_stash(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+    stash: &AccountId32,
+) -> Result<Points, OnetError> {
+    let addr = relay_runtime::storage()
+        .staking_next_ah_client()
+        .validator_points(stash);
+
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| OnetError::from("Validator points not defined at block hash {hash}"))
+}
+
+/// Fetch para validator groups at the specified block hash
+async fn fetch_para_validator_groups(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<ValidatorGroups, OnetError> {
+    let addr = relay_runtime::storage().para_scheduler().validator_groups();
+
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| OnetError::from("Validator groups not defined at block hash {hash}"))
+}
+
+/// Fetch session index at the specified block hash
+async fn fetch_session_index(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<SessionIndex, OnetError> {
+    let addr = relay_runtime::storage().session().current_index();
+
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| OnetError::from("Current session index not defined at block hash {hash}"))
+}
+
+/// Fetch era reward points at the specified block hash
+async fn fetch_era_reward_points_from_asset_hub(
+    api: &OnlineClient<PolkadotConfig>,
+    records: &Records,
+    hash: H256,
+) -> Result<EraRewardPoints<AccountId32>, OnetError> {
+    let addr = asset_hub_runtime::storage()
+        .staking()
+        .eras_reward_points(&records.current_era());
+
+    api.storage().at(hash).fetch(&addr).await?.ok_or_else(|| {
+        OnetError::from(
+            "Era reward points not found at block hash {hash} and era {records.current_era()}",
+        )
+    })
+}
+
+/// Fetch era start session index at the specified block hash (AH)
+async fn fetch_eras_start_session_index_from_asset_hub(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+    era: u32,
+) -> Result<ErasStartSessionIndex, OnetError> {
+    let addr = asset_hub_runtime::storage()
+        .staking()
+        .eras_start_session_index(&era);
+
+    api.storage().at(hash).fetch(&addr).await?.ok_or_else(|| OnetError::from("Eras start session index not found at block hash {hash} and era {records.current_era()}"))
+}
+
+/// Fetch validator groups at the specified block hash
+async fn fetch_validator_groups(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<ValidatorGroups, OnetError> {
+    let addr = relay_runtime::storage().para_scheduler().validator_groups();
+
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| OnetError::from("Validator groups not found for block hash {hash}"))
+}
+
+/// Fetch validator indices at the specified block hash
+async fn fetch_validator_indices(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<ActiveValidatorIndices, OnetError> {
+    let addr = relay_runtime::storage()
+        .paras_shared()
+        .active_validator_indices();
+
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| OnetError::from("Validator indices not found at block hash {hash}"))
+}
+
+/// Fetch on chain votes at the specified block hash
+async fn fetch_on_chain_votes(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<OnChainVotes, OnetError> {
+    let addr = relay_runtime::storage().para_inherent().on_chain_votes();
+
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| OnetError::from("On chain votes not found at block hash {hash}"))
+}
+
+/// Fetch last runtime upgrade on chain votes at the specified block hash
+async fn fetch_last_runtime_upgrade(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<LastRuntimeUpgradeInfo, OnetError> {
+    let addr = relay_runtime::storage().system().last_runtime_upgrade();
+
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| OnetError::from("Last runtime upgrade not found at block hash {hash}"))
+}
+
+/// TODO: Fetch availability cores at the specified block hash
+// async fn fetch_availability_cores(
+//     api: &OnlineClient<PolkadotConfig>,
+//     hash: H256,
+// ) -> Result<Vec<CoreOccupied<u32>>, OnetError> {
+//     let addr = node_runtime::storage()
+//         .para_scheduler()
+//         .availability_cores();
+
+//     api.storage()
+//         .at(hash)
+//         .fetch(&addr)
+//         .await?
+//         .ok_or_else(|| OnetError::from("Availability cores not found at block hash {hash}"))
+// }
 
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    let api = onet.client().clone();
+    let rc_api = onet.client().clone();
+    let ah_api = onet.asset_hub_client().clone();
 
     let stashes: Vec<String> = config.pools_featured_nominees;
     info!(
@@ -129,22 +404,10 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
     // Initialize from the first block of the session of last block processed
     let latest_block_number = get_latest_block_number_processed()?;
-    let latest_block_hash = onet
-        .rpc()
-        .chain_get_block_hash(Some(latest_block_number.into()))
-        .await?
-        .unwrap();
+    let latest_block_hash = fetch_relay_chain_block_hash(onet, latest_block_number).await?;
 
     // Fetch ParaSession start block for the latest block processed
-    let session_start_block_addr = relay_runtime::storage()
-        .para_scheduler()
-        .session_start_block();
-    let mut start_block_number = api
-        .storage()
-        .at(latest_block_hash)
-        .fetch(&session_start_block_addr)
-        .await?
-        .unwrap();
+    let mut start_block_number = fetch_session_start_block(&rc_api, latest_block_hash).await?;
 
     // Note: We want to start sync in the first block of a session.
     // For that we get the first block of a ParaSession and remove 1 block,
@@ -160,39 +423,27 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     );
 
     // get block hash from the start block
-    let block_hash = onet
-        .rpc()
-        .chain_get_block_hash(Some(start_block_number.into()))
-        .await?
-        .unwrap();
+    let rc_block_hash = fetch_relay_chain_block_hash(onet, start_block_number.into()).await?;
+
+    let ah_block_hash =
+        fetch_asset_hub_block_hash_from_relay_chain(onet, start_block_number.into(), rc_block_hash)
+            .await?;
 
     // Fetch active era index
-    let active_era_addr = relay_runtime::storage().staking().active_era();
-    let era_index = match api.storage().at(block_hash).fetch(&active_era_addr).await? {
-        Some(info) => info.index,
-        None => return Err(format!("Active Era not found for block_hash: {block_hash}").into()),
-    };
+    let active_era_info = fetch_active_era_info(&ah_api, ah_block_hash).await?;
+    let era_index = active_era_info.index;
 
     // Cache Nomination pools
     // try_run_cache_pools_era(era_index, false).await?;
 
-    // Fetch current session index
-    let session_index_addr = relay_runtime::storage().session().current_index();
-    let session_index = match api
-        .storage()
-        .at(block_hash)
-        .fetch(&session_index_addr)
-        .await?
-    {
-        Some(session_index) => session_index,
-        None => return Err(format!("Session Index not found for block_hash: {block_hash}").into()),
-    };
+    // Fetch session index
+    let session_index = fetch_session_index(&rc_api, rc_block_hash).await?;
 
     // Cache current epoch
     let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
     fs::write(&epoch_filename, session_index.to_string())?;
 
-    // Subscribers
+    // Matrix users subscribers
     let mut subscribers = Subscribers::with_era_and_epoch(era_index, session_index);
     // Initialized subscribers
     if let Ok(subs) = get_subscribers() {
@@ -206,14 +457,14 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
         Records::with_era_epoch_and_block(era_index, session_index, start_block_number.into());
 
     // Initialize subscribers records
-    initialize_records(&onet, &mut records, block_hash).await?;
+    initialize_records(&onet, &mut records, rc_block_hash).await?;
 
     // Initialize cache
-    cache_session_records(&records, block_hash).await?;
+    cache_session_records(&records, rc_block_hash, ah_block_hash).await?;
     cache_track_records(&onet, &records).await?;
 
     // Initialize p2p discovery
-    try_run_cache_discovery_records(&records, block_hash).await?;
+    try_run_cache_discovery_records(&records, rc_block_hash).await?;
 
     // Start indexing from the start_block_number
     let mut latest_block_number_processed: Option<u64> = Some(start_block_number.into());
@@ -223,7 +474,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     // NOTE: the reason why we subscribe head and not finalized_head,
     // is just because head is in sync more frequently.
     // finalized_head can always be queried so as soon as it changes we process th repective block_hash
-    let mut blocks_sub = api.blocks().subscribe_best().await?;
+    let mut blocks_sub = rc_api.blocks().subscribe_best().await?;
     while let Some(Ok(best_block)) = blocks_sub.next().await {
         info!("Block #{:?} received", best_block.number());
         // update records best_block number
@@ -316,12 +567,13 @@ pub async fn process_finalized_block(
     onet: &Onet,
     subscribers: &mut Subscribers,
     records: &mut Records,
-    block_number: BlockNumber,
-    block_hash: H256,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
-    debug!("Block #{} to be processed now", block_number);
+    debug!("Block #{} to be processed now", rc_block_number);
+    let config = CONFIG.clone();
     let api = onet.client().clone();
 
     // DEPRECATE exceptional_blocks, see note below
@@ -338,15 +590,15 @@ pub async fn process_finalized_block(
     //     Some(block_hash)
     // };
 
-    //NOTE: Clone static metadata has it might be useful later to be restored again!
+    // NOTE: Clone static metadata has it might be useful later to be restored again!
     let static_metadata = api.metadata().clone();
 
     // NOTE: To better handle runtime upgrades where the event system.code_updated can only be decoded by the parent metadata,
     // (an example is the block_number 15426015 in Kusama) we retrieve first the metadata from parent block
-    // and use it to iterate the events, after if no specific breaking changes aredecode the current block
+    // and use it to iterate the events, after if no specific breaking changes are decoded the current block
     let block_hash_metadata = onet
         .rpc()
-        .chain_get_block_hash(Some((block_number - 1).into()))
+        .chain_get_block_hash(Some((rc_block_number - 1).into()))
         .await?;
 
     let block_metadata = onet.rpc().state_get_metadata(block_hash_metadata).await?;
@@ -354,38 +606,47 @@ pub async fn process_finalized_block(
     // Assign block_metadata to the api
     api.set_metadata(block_metadata);
 
+    let mut ah_block_hash: Option<H256> = None;
+
     // Fetch events
-    let events = api.events().at(block_hash).await?;
+    let events = api.events().at(rc_block_hash).await?;
+    for event in events.iter() {
+        let event = event?;
+        if let Some(ev) = event.as_event::<CandidateIncluded>()? {
+            if ev.0.descriptor.para_id == Id(config.asset_hub_para_id) {
+                ah_block_hash = Some(ev.0.descriptor.para_head);
+            }
+        } else if let Some(ev) = event.as_event::<NewSession>()? {
+            info!("{:?}", ev);
 
-    if let Some(new_session_event) = events.find_first::<NewSession>()? {
-        info!("{:?}", new_session_event);
+            // switch_new_session(
+            //     &onet,
+            //     rc_block_number,
+            //     ev.session_index,
+            //     subscribers,
+            //     records,
+            //     rc_block_hash,
+            //     ah_block_hash,
+            //     is_loading,
+            // )
+            // .await?;
 
-        switch_new_session(
-            &onet,
-            block_number,
-            new_session_event.session_index,
-            subscribers,
-            records,
-            block_hash,
-            is_loading,
-        )
-        .await?;
+            // // Network public report
+            // try_run_network_report(ev.session_index, &records, is_loading).await?;
 
-        // Network public report
-        try_run_network_report(new_session_event.session_index, &records, is_loading).await?;
+            // // Cache session records every new session
+            // try_run_cache_session_records(&records, rc_block_hash, ah_block_hash).await?;
 
-        // Cache session records every new session
-        try_run_cache_session_records(&records, block_hash).await?;
+            // // Cache session stats records every new session
+            // try_run_cache_session_stats_records(rc_block_hash, is_loading).await?;
 
-        // Cache session stats records every new session
-        try_run_cache_session_stats_records(block_hash, is_loading).await?;
+            // // Cache nomination pools every new session
+            // try_run_cache_nomination_pools(rc_block_number, rc_block_hash).await?;
 
-        // Cache nomination pools every new session
-        try_run_cache_nomination_pools(block_number, block_hash).await?;
-
-        if !is_loading {
-            // Cache p2p discovery
-            try_run_cache_discovery_records(&records, block_hash).await?;
+            // if !is_loading {
+            //     // Cache p2p discovery
+            //     try_run_cache_discovery_records(&records, rc_block_hash).await?;
+            // }
         }
     }
 
@@ -399,17 +660,21 @@ pub async fn process_finalized_block(
     api.set_metadata(static_metadata);
 
     // Update records
-    // Note: this records should be updated after the switch of session
-    track_records(&onet, records, block_number, block_hash).await?;
+    // Note: these records should be updated after the switch of session
+    track_records(&onet, records, rc_block_number, rc_block_hash).await?;
 
     // Cache pool stats every 10 minutes
-    try_run_cache_nomination_pools_stats(block_number, block_hash).await?;
+    try_run_cache_nomination_pools_stats(rc_block_number, rc_block_hash).await?;
 
     // Cache records at every block
     cache_track_records(&onet, &records).await?;
 
     // Log block processed duration time
-    info!("Block #{} processed ({:?})", block_number, start.elapsed());
+    info!(
+        "Block #{} processed ({:?})",
+        rc_block_number,
+        start.elapsed()
+    );
 
     Ok(())
 }
@@ -649,13 +914,16 @@ pub async fn try_run_cache_discovery_records(
 
 pub async fn try_run_cache_session_records(
     records: &Records,
-    block_hash: H256,
+    rc_block_hash: H256,
+    ah_block_hash: Option<H256>,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if config.cache_writer_enabled {
         let records_cloned = records.clone();
         async_std::task::spawn(async move {
-            if let Err(e) = cache_session_records(&records_cloned, block_hash).await {
+            if let Err(e) =
+                cache_session_records(&records_cloned, rc_block_hash, ah_block_hash).await
+            {
                 error!("try_run_cache_session_records error: {:?}", e);
             }
         });
@@ -665,7 +933,11 @@ pub async fn try_run_cache_session_records(
 }
 
 // cache_session_records is called once at every new session
-pub async fn cache_session_records(records: &Records, block_hash: H256) -> Result<(), OnetError> {
+pub async fn cache_session_records(
+    records: &Records,
+    rc_block_hash: H256,
+    ah_block_hash: H256,
+) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if config.cache_writer_enabled {
         let start = Instant::now();
@@ -680,19 +952,10 @@ pub async fn cache_session_records(records: &Records, block_hash: H256) -> Resul
         // --- Cache SessionByIndex -> `current` or `epoch_index` (to be able to search history)
         if let Some(start_block) = records.start_block(None) {
             if let Some(current_block) = records.current_block() {
-                // get start session index
-                let eras_start_session_index_addr = relay_runtime::storage()
-                    .staking()
-                    .eras_start_session_index(&current_era);
-                let start_session_index = match api
-                    .storage()
-                    .at(block_hash)
-                    .fetch(&eras_start_session_index_addr)
-                    .await?
-                {
-                    Some(index) => index,
-                    None => return Err(OnetError::Other("Start session index not defined".into())),
-                };
+                // fetch start session index
+                let start_session_index =
+                    fetch_eras_start_session_index_from_asset_hub(&api, ah_block_hash, current_era)
+                        .await?;
 
                 // era session index
                 let era_session_index = 1 + current_epoch - start_session_index;
@@ -855,81 +1118,18 @@ pub async fn initialize_records(
 ) -> Result<(), OnetError> {
     let api = onet.client().clone();
 
-    // Fetch Era reward points
-    let era_reward_points_addr = relay_runtime::storage()
-        .staking()
-        .eras_reward_points(&records.current_era());
-    let era_reward_points = api
-        .storage()
-        .at(block_hash)
-        .fetch(&era_reward_points_addr)
-        .await?;
-
-    if era_reward_points.is_none() {
-        warn!(
-            "At block hash: {:?} - None reward points were found for era {}.",
-            block_hash,
-            &records.current_era()
-        );
-    }
-
     // Fetch active validators
-    let authorities_addr = relay_runtime::storage().session().validators();
-    let Some(authorities) = api
-        .storage()
-        .at(block_hash)
-        .fetch(&authorities_addr)
-        .await?
-    else {
-        return Err(OnetError::Other(format!(
-            "At block hash: {:?} - None active validator indices defined.",
-            block_hash
-        )));
-    };
+    let authorities = fetch_validators(&api, block_hash).await?;
 
-    // Fetch queued_keys
-    let queued_keys_addr = relay_runtime::storage().session().queued_keys();
-    let Some(queued_keys) = api
-        .storage()
-        .at(block_hash)
-        .fetch(&queued_keys_addr)
-        .await?
-    else {
-        return Err(OnetError::Other(format!(
-            "At block hash: {:?} - None queued keys defined.",
-            block_hash
-        )));
-    };
+    // Fetch queued keys
+    let queued_keys = fetch_queued_keys(&api, block_hash).await?;
 
     // Fetch para validator groups
-    let validator_groups_addr = relay_runtime::storage().para_scheduler().validator_groups();
-    let Some(validator_groups) = api
-        .storage()
-        .at(block_hash)
-        .fetch(&validator_groups_addr)
-        .await?
-    else {
-        return Err(OnetError::Other(format!(
-            "At block hash: {:?} - None validator groups defined.",
-            block_hash
-        )));
-    };
+    let validator_groups = fetch_validator_groups(&api, block_hash).await?;
 
     // Fetch para validator indices
-    let active_validator_indices_addr = relay_runtime::storage()
-        .paras_shared()
-        .active_validator_indices();
-    let Some(active_validator_indices) = api
-        .storage()
-        .at(block_hash)
-        .fetch(&active_validator_indices_addr)
-        .await?
-    else {
-        return Err(OnetError::Other(format!(
-            "At block hash: {:?} - None active validator indices defined.",
-            block_hash
-        )));
-    };
+    let active_validator_indices = fetch_validator_indices(&api, block_hash).await?;
+
     // Update records groups with respective authorities
     for (group_idx, group) in validator_groups.iter().enumerate() {
         let auths: Vec<AuthorityIndex> = group
@@ -947,7 +1147,7 @@ pub async fn initialize_records(
     for (auth_idx, stash) in authorities.iter().enumerate() {
         let auth_idx: AuthorityIndex = auth_idx.try_into().unwrap();
 
-        // Verify if is a para validator
+        // Verify if is a para_validator
         if let Some(auth_para_idx) = active_validator_indices
             .iter()
             .position(|i| *i == ValidatorIndex(auth_idx))
@@ -962,18 +1162,10 @@ pub async fn initialize_records(
                             active_validator_indices.get(*para_idx as usize)
                         {
                             if let Some(address) = authorities.get(*auth_idx as usize) {
-                                // Collect peer points
-                                let points = if let Some(ref erp) = era_reward_points {
-                                    if let Some((_s, points)) =
-                                        erp.individual.iter().find(|(s, _p)| s == address)
-                                    {
-                                        *points
-                                    } else {
-                                        0
-                                    }
-                                } else {
-                                    0
-                                };
+                                // Fetch peer points
+                                let points =
+                                    fetch_validator_points_by_stash(&api, block_hash, address)
+                                        .await?;
 
                                 // Define AuthorityRecord
                                 let authority_record =
@@ -1027,16 +1219,7 @@ pub async fn initialize_records(
                 }
             }
         } else {
-            // Fetch current points
-            let points = if let Some(ref erp) = era_reward_points {
-                if let Some((_s, points)) = erp.individual.iter().find(|(s, _p)| s == stash) {
-                    *points
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
+            let points = fetch_validator_points_by_stash(&api, block_hash, stash).await?;
 
             let authority_record =
                 AuthorityRecord::with_index_address_and_points(auth_idx, stash.clone(), points);
@@ -1060,30 +1243,29 @@ pub async fn initialize_records(
 
 pub async fn switch_new_session(
     onet: &Onet,
-    block_number: u64,
+    rc_block_number: u64,
     new_session_index: EpochIndex,
     subscribers: &mut Subscribers,
     records: &mut Records,
-    block_hash: H256,
+    rc_block_hash: H256,
+    ah_block_hash: H256,
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    let api = onet.client().clone();
+    let rc_api = onet.client().clone();
+    let ah_api = onet.asset_hub_client().clone();
 
     // keep previous era in context
     let previous_era_index = records.current_era().clone();
 
-    // Fetch active era index
-    let active_era_addr = relay_runtime::storage().staking().active_era();
-    let current_era_index = match api.storage().at(block_hash).fetch(&active_era_addr).await? {
-        Some(info) => info.index,
-        None => return Err("Active era not defined".into()),
-    };
+    // Fetch active era info
+    let active_era_info = fetch_active_era_info(&ah_api, ah_block_hash).await?;
+    let current_era_index = active_era_info.index;
 
     // Update records current Era and Epoch
     records.start_new_epoch(current_era_index, new_session_index);
     // Update records current block number
-    records.set_current_block_number(block_number.into());
+    records.set_current_block_number(rc_block_number.into());
 
     // Update subscribers current Era and Epoch
     subscribers.start_new_epoch(current_era_index, new_session_index);
@@ -1095,7 +1277,7 @@ pub async fn switch_new_session(
     }
 
     // Initialize records for new epoch
-    initialize_records(&onet, records, block_hash).await?;
+    initialize_records(&onet, records, rc_block_hash).await?;
 
     // Remove older keys, default is maximum_history_eras + 1
     records.remove(EpochKey(
@@ -1151,433 +1333,344 @@ pub async fn switch_new_session(
     Ok(())
 }
 
-pub async fn track_records(
-    onet: &Onet,
+/// Fetch validator points and track points collected per authority
+async fn fetch_and_track_authority_points(
+    api: &OnlineClient<PolkadotConfig>,
     records: &mut Records,
-    block_number: BlockNumber,
+    block_authority_index: AuthorityIndex,
+    session_index: SessionIndex,
     block_hash: H256,
 ) -> Result<(), OnetError> {
-    let api = onet.client().clone();
-
-    // Update records current block number
-    records.set_current_block_number(block_number.into());
-
-    // Extract authority from the block header
-    if let Some(authority_index) = get_authority_index(&onet, Some(block_hash)).await? {
-        // Fetch session index for the specified
-        let current_index_addr = relay_runtime::storage().session().current_index();
-        let session_index = match api
+    if let Some(&era_idx) = records.get_era_index(Some(session_index)) {
+        let validator_points_addr = relay_runtime::storage()
+            .staking_next_ah_client()
+            .validator_points_iter();
+        let mut iter = api
             .storage()
             .at(block_hash)
-            .fetch(&current_index_addr)
-            .await?
-        {
-            Some(index) => index,
-            None => return Err("Current session index not defined".into()),
-        };
+            .iter(validator_points_addr)
+            .await?;
+        while let Some(Ok(storage_resp)) = iter.next().await {
+            let stash = get_account_id_from_storage_key(storage_resp.key_bytes);
+            let mut latest_points_collected: u32 = 0;
+            if let Some(authority_record) = records.get_mut_authority_record_with_address(
+                &stash,
+                Some(EpochKey(era_idx, session_index)),
+            ) {
+                if authority_record.address().is_some() {
+                    // Update authority current points and get the difference
+                    latest_points_collected =
+                        authority_record.update_current_points(storage_resp.value);
+                }
 
-        // Track block authored
-        if let Some(authority_record) =
-            records.get_mut_authority_record(authority_index, Some(session_index))
-        {
-            authority_record.push_authored_block(block_number);
-        }
-
-        //
-        // NOTE: Fetch currently scheduled cores as been DEPRECATED
-        //
-        // let scheduled_cores_addr = relay_runtime::storage().para_scheduler().scheduled();
-        // if let Some(scheduled_cores) = api
-        //     .storage()
-        //     .at(block_hash)
-        //     .fetch(&scheduled_cores_addr)
-        //     .await?
-        // {
-        //     // Update records para_group
-        //     for core_assignment in scheduled_cores.iter() {
-        //         debug!("core_assignment: {:?}", core_assignment);
-        //         // CoreAssignment { core: CoreIndex(16), para_id: Id(2087), kind: Parachain, group_idx: GroupIndex(31) }
-
-        //         // Destructure GroupIndex
-        //         let GroupIndex(group_idx) = core_assignment.group_idx;
-        //         // Destructure CoreIndex
-        //         let CoreIndex(core) = core_assignment.core;
-        //         // Destructure Id
-        //         let Id(para_id) = core_assignment.para_id;
-
-        //         records.update_para_group(para_id, core, group_idx, Some(session_index));
-        //     }
-        // }
-
-        // Fetch Era reward points
-        let era_reward_points_addr = relay_runtime::storage()
-            .staking()
-            .eras_reward_points(&records.current_era());
-        if let Some(era_reward_points) = api
-            .storage()
-            .at(block_hash)
-            .fetch(&era_reward_points_addr)
-            .await?
-        {
-            // Fetch para validator groups
-            let validator_groups_addr =
-                relay_runtime::storage().para_scheduler().validator_groups();
-            if let Some(validator_groups) = api
-                .storage()
-                .at(block_hash)
-                .fetch(&validator_groups_addr)
-                .await?
-            {
-                // Fetch para validator indices
-                let active_validator_indices_addr = relay_runtime::storage()
-                    .paras_shared()
-                    .active_validator_indices();
-                if let Some(active_validator_indices) = api
-                    .storage()
-                    .at(block_hash)
-                    .fetch(&active_validator_indices_addr)
-                    .await?
-                {
-                    // Fetch on chain votes
-                    let on_chain_votes_addr =
-                        relay_runtime::storage().para_inherent().on_chain_votes();
-
-                    if let Some(backing_votes) = api
-                        .storage()
-                        .at(block_hash)
-                        .fetch(&on_chain_votes_addr)
-                        .await?
+                if let Some(authority_idx) = authority_record.authority_index() {
+                    // Get para_record for the same session
+                    if let Some(para_record) =
+                        records.get_mut_para_record(authority_idx, Some(session_index))
                     {
-                        // *******************************************
-                        // Track latest points collected per authority
-                        // *******************************************
-                        if let Some(&era_idx) = records.get_era_index(Some(backing_votes.session)) {
-                            if let Some(authorities) = records
-                                .get_authorities(Some(EpochKey(era_idx, backing_votes.session)))
-                            {
-                                // Find groupIdx and peers for each authority
-                                for authority_idx in authorities.iter() {
-                                    let mut latest_points_collected: u32 = 0;
+                        para_record.update_points(
+                            latest_points_collected,
+                            block_authority_index == authority_idx,
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
-                                    if let Some(authority_record) = records
-                                        .get_mut_authority_record(
-                                            *authority_idx,
-                                            Some(backing_votes.session),
-                                        )
-                                    {
-                                        if authority_record.address().is_some() {
-                                            // Collect current points
-                                            let current_points = if let Some((_s, points)) =
-                                                era_reward_points.individual.iter().find(
-                                                    |(s, _p)| {
-                                                        s == authority_record.address().unwrap()
-                                                    },
-                                                ) {
-                                                *points
-                                            } else {
-                                                0
-                                            };
+/// Track authority votes per authority
+fn track_authority_votes(
+    records: &mut Records,
+    backing_votes: &OnChainVotes,
+    validator_groups: &ValidatorGroups,
+    active_validator_indices: &ActiveValidatorIndices,
+) -> Result<(), OnetError> {
+    // ***********************************************************************
+    // Track explicit/implicit/missed votes new approach since runtime 1000000
+    // ***********************************************************************
+    //
+    // Iterate over each validator_groups and find if one of the members show up at backing.group_authorities
+    // If yes, iterate again and increase implicit/explicit vote or increase missed vote if member is not present in backing.group_authorities
+    // TODO: Edge case of all members missing from backing.group_authorities
 
-                                            // Update authority current points and get the difference
-                                            latest_points_collected = authority_record
-                                                .update_current_points(current_points);
-                                        }
-                                    }
+    for (group_idx, group) in validator_groups.iter().enumerate() {
+        // NOTE: authorities_present vec will contain the authorities present in a group where someone is missing
+        let mut authorities_present = Vec::new();
+        let mut para_id_flagged: Option<ParaId> = None;
 
-                                    // Get para_record for the same on chain votes session
-                                    if let Some(para_record) = records.get_mut_para_record(
-                                        *authority_idx,
-                                        Some(backing_votes.session),
-                                    ) {
-                                        // Increment current para_id latest_points_collected
-                                        // and authored blocks if is the author of the finalized block
-                                        // and the backing_votes session is the same as the current session
-                                        // NOTE: At the first block of a session the backing_votes.session still references session().current_index - 1
-                                        para_record.update_points(
-                                            latest_points_collected,
-                                            authority_index == *authority_idx
-                                                && backing_votes.session == session_index,
-                                        );
-                                    }
+        'outer: for ValidatorIndex(group_para_val_idx) in group {
+            for (candidate_receipt, group_authorities) in
+                backing_votes.backing_validators_per_candidate.iter()
+            {
+                // destructure para_id
+                let Id(para_id) = candidate_receipt.descriptor.para_id;
+
+                if let Some((_, vote)) = group_authorities
+                    .iter()
+                    .find(|(ValidatorIndex(para_idx), _)| *para_idx == *group_para_val_idx)
+                {
+                    // get authority index from active_validator_indices
+                    if let Some(ValidatorIndex(auth_idx)) =
+                        active_validator_indices.get(*group_para_val_idx as usize)
+                    {
+                        // NOTE: in case there are less backing authorities than the original group len it means that someone is missing.
+                        // keep track of the ones present so that the ones missing could be identified later
+                        if group_authorities.len() < group.len() {
+                            authorities_present.push(*auth_idx);
+                            para_id_flagged = Some(para_id);
+                        }
+
+                        // get para_record for the same on chain votes session
+                        if let Some(para_record) =
+                            records.get_mut_para_record(*auth_idx, Some(backing_votes.session))
+                        {
+                            match vote {
+                                ValidityAttestation::Explicit(_) => {
+                                    para_record.inc_explicit_votes(para_id);
+                                }
+                                ValidityAttestation::Implicit(_) => {
+                                    para_record.inc_implicit_votes(para_id);
                                 }
                             }
                         }
+                    }
+                    // assign current para_id to the group
+                    records.update_para_id_by_group(
+                        para_id,
+                        u32::try_from(group_idx).unwrap(),
+                        Some(backing_votes.session),
+                    );
+                    continue 'outer;
+                }
+            }
+        }
+        if authorities_present.len() > 0 && para_id_flagged.is_some() {
+            records.inc_missing_vote_for_the_missing_authorities(
+                authorities_present,
+                para_id_flagged.unwrap(),
+                u32::try_from(group_idx).unwrap(),
+                Some(backing_votes.session),
+            );
+        }
+    }
+    Ok(())
+}
 
-                        // ***********************************************************************
-                        // Track explicit/implicit/missed votes new approach since runtime 1000000
-                        // ***********************************************************************
-                        //
-                        // Iterate over each validator_groups and find if one of the members show up at backing.group_authorities
-                        // If yes, iterate again and increase implicit/explicit vote or increase missed vote if member is not present in backing.group_authorities
-                        // TODO: Edge case of all members missing from backing.group_authorities
+/// TODO: Track authority core assignments per authority
+// fn track_core_assignments(
+//     records: &mut Records,
+//     backing_votes: &OnChainVotes,
+//     availability_cores: Vec<CoreOccupied<u32>>,
+// ) -> Result<(), OnetError> {
+//     for (i, core_occupied) in availability_cores.iter().enumerate() {
+//         let core_idx = u32::try_from(i).unwrap();
+//         match &core_occupied {
+//             CoreOccupied::Free => records.update_core_free(core_idx, Some(backing_votes.session)),
+//             CoreOccupied::Paras(paras_entry) => {
+//                 match &paras_entry.assignment {
+//                     //     ParasEntry::<u32>
+//                     Assignment::Pool {
+//                         para_id: Id(para_id),
+//                         core_index: _,
+//                     } => {
+//                         records.update_core_by_para_id(
+//                             para_id.clone(),
+//                             core_idx,
+//                             Some(backing_votes.session),
+//                         );
+//                     }
+//                     Assignment::Bulk(Id(para_id)) => {
+//                         records.update_core_by_para_id(
+//                             para_id.clone(),
+//                             core_idx,
+//                             Some(backing_votes.session),
+//                         );
+//                     }
+//                 }
+//             }
+//         }
+//     }
+//     Ok(())
+// }
 
-                        for (group_idx, group) in validator_groups.iter().enumerate() {
-                            // NOTE: authorities_present vec will contain the authorities present in a group where someone is missing
-                            let mut authorities_present = Vec::new();
-                            let mut para_id_flagged: Option<ParaId> = None;
-
-                            'outer: for ValidatorIndex(group_para_val_idx) in group {
-                                for (candidate_receipt, group_authorities) in
-                                    backing_votes.backing_validators_per_candidate.iter()
-                                {
-                                    // destructure para_id
-                                    let Id(para_id) = candidate_receipt.descriptor.para_id;
-
-                                    if let Some((_, vote)) = group_authorities.iter().find(
-                                        |(ValidatorIndex(para_idx), _)| {
-                                            *para_idx == *group_para_val_idx
-                                        },
-                                    ) {
-                                        // get authority index from active_validator_indices
-                                        if let Some(ValidatorIndex(auth_idx)) =
-                                            active_validator_indices
-                                                .get(*group_para_val_idx as usize)
-                                        {
-                                            // NOTE: in case there are less backing authorities than the original group len it means that someone is missing.
-                                            // keep track of the ones present so that the ones missing could be identified later
-                                            if group_authorities.len() < group.len() {
-                                                authorities_present.push(*auth_idx);
-                                                para_id_flagged = Some(para_id);
-                                            }
-
-                                            // get para_record for the same on chain votes session
-                                            if let Some(para_record) = records.get_mut_para_record(
-                                                *auth_idx,
-                                                Some(backing_votes.session),
-                                            ) {
-                                                match vote {
-                                                    ValidityAttestation::Explicit(_) => {
-                                                        para_record.inc_explicit_votes(para_id);
-                                                    }
-                                                    ValidityAttestation::Implicit(_) => {
-                                                        para_record.inc_implicit_votes(para_id);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        // assign current para_id to the group
-                                        records.update_para_id_by_group(
-                                            para_id,
-                                            u32::try_from(group_idx).unwrap(),
-                                            Some(backing_votes.session),
-                                        );
-                                        continue 'outer;
-                                    }
-                                }
-                            }
-                            if authorities_present.len() > 0 && para_id_flagged.is_some() {
-                                records.inc_missing_vote_for_the_missing_authorities(
-                                    authorities_present,
-                                    para_id_flagged.unwrap(),
-                                    u32::try_from(group_idx).unwrap(),
-                                    Some(backing_votes.session),
+/// Track initiated disputes per authority
+fn track_disputes(
+    records: &mut Records,
+    backing_votes: &OnChainVotes,
+    active_validator_indices: &ActiveValidatorIndices,
+    block_number: BlockNumber,
+) -> Result<(), OnetError> {
+    for dispute_statement_set in backing_votes.disputes.iter() {
+        for (statement, ValidatorIndex(para_idx), _) in dispute_statement_set.statements.iter() {
+            match statement {
+                DisputeStatement::Invalid(_) => {
+                    if let Some(ValidatorIndex(auth_idx)) =
+                        active_validator_indices.get(*para_idx as usize)
+                    {
+                        // Log stash address for the initiated dispute
+                        if let Some(authority_record) =
+                            records.get_mut_authority_record(*auth_idx, Some(backing_votes.session))
+                        {
+                            if let Some(stash) = authority_record.address() {
+                                warn!(
+                                    "Dispute initiated for stash: {} ({}) {:?}",
+                                    stash, auth_idx, statement
                                 );
                             }
                         }
-
-                        // ***********************************************************************
-                        // Track Core Assignments only after specVersion > 1000000
-                        // ***********************************************************************
-                        // Fetch last_runtime_upgrade
-                        let last_runtime_upgrade_addr =
-                            relay_runtime::storage().system().last_runtime_upgrade();
-
-                        if let Some(info) = api
-                            .storage()
-                            .at(block_hash)
-                            .fetch(&last_runtime_upgrade_addr)
-                            .await?
+                        // Get para_record for the same on chain votes session
+                        if let Some(para_record) =
+                            records.get_mut_para_record(*auth_idx, Some(backing_votes.session))
                         {
-                            // TODO: evaluate how history can also be imported with different metadata
-                            //
-                            // if info.spec_version >= 1000000 && info.spec_version < 1002000 {
-                            //     // Fetch availability_cores
-                            //     let availability_cores_addr = relay_runtime::storage()
-                            //         .para_scheduler()
-                            //         .availability_cores();
-
-                            //     if let Some(availability_cores) = api
-                            //         .storage()
-                            //         .at(block_hash)
-                            //         .fetch(&availability_cores_addr)
-                            //         .await?
-                            //     {
-                            //         for (i, core_occupied) in availability_cores.iter().enumerate()
-                            //         {
-                            //             let core_idx = u32::try_from(i).unwrap();
-                            //             match &core_occupied {
-                            //                 CoreOccupied::Free => records.update_core_free(
-                            //                     core_idx,
-                            //                     Some(backing_votes.session),
-                            //                 ),
-                            //                 CoreOccupied::Paras(paras_entry) => {
-                            //                     // destructure para_id
-                            //                     let Id(para_id) = paras_entry.assignment.para_id;
-                            //                     records.update_core_by_para_id(
-                            //                         para_id,
-                            //                         core_idx,
-                            //                         Some(backing_votes.session),
-                            //                     );
-                            //                 }
-                            //             }
-                            //         }
-                            //     }
-                            // }
-
-                            // TODO: evaluate availability_cores in westend_next runtime
-                            // if info.spec_version >= 1002000 {
-                            //     // Fetch availability_cores
-                            //     let availability_cores_addr = relay_runtime::storage()
-                            //         .para_scheduler()
-                            //         .availability_cores();
-
-                            //     if let Some(availability_cores) = api
-                            //         .storage()
-                            //         .at(block_hash)
-                            //         .fetch(&availability_cores_addr)
-                            //         .await?
-                            //     {
-                            //         for (i, core_occupied) in availability_cores.iter().enumerate()
-                            //         {
-                            //             let core_idx = u32::try_from(i).unwrap();
-                            //             match &core_occupied {
-                            //                 CoreOccupied::Free => records.update_core_free(
-                            //                     core_idx,
-                            //                     Some(backing_votes.session),
-                            //                 ),
-                            //                 CoreOccupied::Paras(paras_entry) => {
-                            //                     match &paras_entry.assignment {
-                            //                         //     ParasEntry::<u32>
-                            //                         Assignment::Pool {
-                            //                             para_id: Id(para_id),
-                            //                             core_index: _,
-                            //                         } => {
-                            //                             records.update_core_by_para_id(
-                            //                                 para_id.clone(),
-                            //                                 core_idx,
-                            //                                 Some(backing_votes.session),
-                            //                             );
-                            //                         }
-                            //                         Assignment::Bulk(Id(para_id)) => {
-                            //                             records.update_core_by_para_id(
-                            //                                 para_id.clone(),
-                            //                                 core_idx,
-                            //                                 Some(backing_votes.session),
-                            //                             );
-                            //                         }
-                            //                     }
-                            //                 }
-                            //             }
-                            //         }
-                            //     }
-                            // }
-                        }
-
-                        // ***********************************************************************
-                        // Track Initiated Disputes
-                        // ***********************************************************************
-                        for dispute_statement_set in backing_votes.disputes.iter() {
-                            for (statement, ValidatorIndex(para_idx), _) in
-                                dispute_statement_set.statements.iter()
-                            {
-                                match statement {
-                                    DisputeStatement::Invalid(_) => {
-                                        if let Some(ValidatorIndex(auth_idx)) =
-                                            active_validator_indices.get(*para_idx as usize)
-                                        {
-                                            // Log stash address for the initiated dispute
-                                            if let Some(authority_record) = records
-                                                .get_mut_authority_record(
-                                                    *auth_idx,
-                                                    Some(backing_votes.session),
-                                                )
-                                            {
-                                                if let Some(stash) = authority_record.address() {
-                                                    warn!(
-                                                        "Dispute initiated for stash: {} ({}) {:?}",
-                                                        stash, auth_idx, statement
-                                                    );
-                                                }
-                                            }
-                                            // Get para_record for the same on chain votes session
-                                            if let Some(para_record) = records.get_mut_para_record(
-                                                *auth_idx,
-                                                Some(backing_votes.session),
-                                            ) {
-                                                para_record.push_dispute(
-                                                    block_number,
-                                                    format!("{:?}", statement),
-                                                );
-                                            }
-                                        } else {
-                                            warn!("Dispute initiated at block {block_number} but authority record for para_idx: {para_idx} not found!");
-                                        }
-                                    }
-                                    _ => continue,
-                                }
-                            }
-                        }
-
-                        // ***********************************************************************
-                        // Track Availability data from bitfields
-                        // ***********************************************************************
-                        // NOTE: authorities_present vec will contain the authorities present in para_inherent.data.bitfields and it's useful
-                        // to increase unavailability to the authorities not present
-                        let mut authorities_present = Vec::new();
-                        let extrinsics = api.blocks().at(block_hash).await?.extrinsics().await?;
-                        for res in extrinsics.find::<Enter>() {
-                            let extrinsic = res?;
-                            for availability_bitfield in extrinsic.value.data.bitfields.iter() {
-                                // Note: availability_bitfield.validator_index is the index of the validator in the paras_shared.active_validator_indices
-                                let ValidatorIndex(para_idx) =
-                                    &availability_bitfield.validator_index;
-
-                                if let Some(ValidatorIndex(auth_idx)) =
-                                    active_validator_indices.get(*para_idx as usize)
-                                {
-                                    // Get para_record for the same on chain votes session
-                                    if let Some(para_record) = records
-                                        .get_mut_para_record(*auth_idx, Some(backing_votes.session))
-                                    {
-                                        let AvailabilityBitfield(decoded_bits) =
-                                            &availability_bitfield.payload;
-                                        if decoded_bits.as_bits().iter().any(|x| x) {
-                                            para_record.inc_availability();
-                                        } else {
-                                            para_record.push_unavailable_at(block_number);
-                                        }
-                                    }
-                                    // Keep track of the authorities that show up in para_inherent.data.bitfields
-                                    authorities_present.push(*auth_idx);
-                                }
-                            }
-                        }
-                        // Also increase unavailability to the authorities that do not show up in para_inherent.data.bitfields
-                        if active_validator_indices.len() != authorities_present.len() {
-                            for ValidatorIndex(auth_idx) in active_validator_indices.iter() {
-                                if !authorities_present.contains(auth_idx) {
-                                    if let Some(para_record) = records
-                                        .get_mut_para_record(*auth_idx, Some(backing_votes.session))
-                                    {
-                                        para_record.push_unavailable_at(block_number);
-                                    }
-                                }
-                            }
+                            para_record.push_dispute(block_number, format!("{:?}", statement));
                         }
                     } else {
-                        warn!("None on chain voted recorded.");
+                        warn!("Dispute initiated at block {block_number} but authority record for para_idx: {para_idx} not found!");
                     }
-                } else {
-                    warn!("None para validator indices defined.");
                 }
-            } else {
-                warn!("None validator groups defined.");
+                _ => continue,
             }
-        } else {
-            warn!("None reward points at era {}.", &records.current_era());
         }
-        debug!("records {:?}", records);
     }
+
+    Ok(())
+}
+
+/// Fetch block extrinsics and track data availability per authority
+async fn fetch_and_track_availability(
+    api: &OnlineClient<PolkadotConfig>,
+    records: &mut Records,
+    backing_votes: &OnChainVotes,
+    active_validator_indices: &ActiveValidatorIndices,
+    block_number: BlockNumber,
+    block_hash: H256,
+) -> Result<(), OnetError> {
+    // NOTE: authorities_present vec will contain the authorities present in para_inherent.data.bitfields and it's useful
+    // to increase unavailability to the authorities not present
+    let mut authorities_present = Vec::new();
+    let extrinsics = api.blocks().at(block_hash).await?.extrinsics().await?;
+    for res in extrinsics.find::<Enter>() {
+        let extrinsic = res?;
+        for availability_bitfield in extrinsic.value.data.bitfields.iter() {
+            // Note: availability_bitfield.validator_index is the index of the validator in the paras_shared.active_validator_indices
+            let ValidatorIndex(para_idx) = &availability_bitfield.validator_index;
+
+            if let Some(ValidatorIndex(auth_idx)) = active_validator_indices.get(*para_idx as usize)
+            {
+                // Get para_record for the same on chain votes session
+                if let Some(para_record) =
+                    records.get_mut_para_record(*auth_idx, Some(backing_votes.session))
+                {
+                    let AvailabilityBitfield(decoded_bits) = &availability_bitfield.payload;
+                    if decoded_bits.as_bits().iter().any(|x| x) {
+                        para_record.inc_availability();
+                    } else {
+                        para_record.push_unavailable_at(block_number);
+                    }
+                }
+                // Keep track of the authorities that show up in para_inherent.data.bitfields
+                authorities_present.push(*auth_idx);
+            }
+        }
+    }
+    // Also increase unavailability to the authorities that do not show up in para_inherent.data.bitfields
+    if active_validator_indices.len() != authorities_present.len() {
+        for ValidatorIndex(auth_idx) in active_validator_indices.iter() {
+            if !authorities_present.contains(auth_idx) {
+                if let Some(para_record) =
+                    records.get_mut_para_record(*auth_idx, Some(backing_votes.session))
+                {
+                    para_record.push_unavailable_at(block_number);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn track_records(
+    onet: &Onet,
+    records: &mut Records,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+) -> Result<(), OnetError> {
+    let rc_api = onet.client().clone();
+
+    // Update records current block number
+    records.set_current_block_number(rc_block_number.into());
+
+    // Extract authority from the block header
+    let block_authority_index = get_authority_index(&onet, Some(rc_block_hash))
+        .await?
+        .ok_or_else(|| OnetError::from("Authority index not found"))?;
+
+    // Fetch session index
+    let session_index = fetch_session_index(&rc_api, rc_block_hash).await?;
+
+    // Track block authored
+    if let Some(authority_record) =
+        records.get_mut_authority_record(block_authority_index, Some(session_index))
+    {
+        authority_record.push_authored_block(rc_block_number);
+    }
+
+    // Fetch para validator groups
+    let validator_groups = fetch_validator_groups(&rc_api, rc_block_hash).await?;
+
+    // Fetch para validator indices
+    let active_validator_indices = fetch_validator_indices(&rc_api, rc_block_hash).await?;
+
+    // Fetch on chain votes
+    let backing_votes = fetch_on_chain_votes(&rc_api, rc_block_hash).await?;
+
+    // Fetch availability cores
+    // let availability_cores = fetch_availability_cores(&rc_api, rc_block_hash).await?;
+    //
+    //
+
+    // Fetcht and Track authority points
+    fetch_and_track_authority_points(
+        &rc_api,
+        records,
+        block_authority_index,
+        session_index,
+        rc_block_hash,
+    )
+    .await?;
+
+    // Track authority votes
+    track_authority_votes(
+        records,
+        &backing_votes,
+        &validator_groups,
+        &active_validator_indices,
+    )?;
+
+    // TODO: Track core assignments
+    // track_core_assignments(records, &backing_votes, availability_cores)?;
+
+    // Track disputes
+    track_disputes(
+        records,
+        &backing_votes,
+        &active_validator_indices,
+        rc_block_number,
+    )?;
+
+    // Fetch and Track availability
+    fetch_and_track_availability(
+        &rc_api,
+        records,
+        &backing_votes,
+        &active_validator_indices,
+        rc_block_number,
+        rc_block_hash,
+    )
+    .await?;
+
+    debug!("records {:?}", records);
 
     Ok(())
 }
@@ -2003,7 +2096,11 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     let mut validators: Validators = Vec::new();
 
     // Load TVP stashes
-    let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url(false).await?;
+    let tvp_stashes: Vec<AccountId32> = if onet.runtime().is_dn_supported() {
+        try_fetch_stashes_from_remote_url(false, None).await?
+    } else {
+        Vec::new()
+    };
 
     // Fetch active validators
     let authorities_addr = relay_runtime::storage().session().validators();
@@ -3289,7 +3386,8 @@ pub async fn cache_session_stats_records(
     let start = Instant::now();
     let config = CONFIG.clone();
     let onet: Onet = Onet::new().await;
-    let api = onet.client().clone();
+    let rc_api = onet.client().clone();
+    let ah_api = onet.asset_hub_client().clone();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
     // Load network details
@@ -3299,8 +3397,8 @@ pub async fn cache_session_stats_records(
     // cache all validators profile every new session and snapshot session stats
 
     if let Some(block) = onet.rpc().chain_get_header(Some(block_hash)).await? {
-        let active_era_addr = relay_runtime::storage().staking().active_era();
-        let era_index = match api
+        let active_era_addr = ah_runtime::storage().staking().active_era();
+        let era_index = match ah_api
             .storage()
             .at(block.parent_hash)
             .fetch(&active_era_addr)
@@ -3311,7 +3409,7 @@ pub async fn cache_session_stats_records(
         };
 
         let current_index_addr = relay_runtime::storage().session().current_index();
-        let epoch_index = match api
+        let epoch_index = match relay_api
             .storage()
             .at(block.parent_hash)
             .fetch(&current_index_addr)
@@ -3331,7 +3429,11 @@ pub async fn cache_session_stats_records(
         let nominators_map = collect_nominators_data(&onet, block.parent_hash).await?;
 
         // Load TVP stashes
-        let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url(is_loading).await?;
+        let tvp_stashes: Vec<AccountId32> = if onet.runtime().is_dn_supported() {
+            try_fetch_stashes_from_remote_url(is_loading, None).await?
+        } else {
+            Vec::new()
+        };
 
         // Fetch active validators
         let authorities_addr = relay_runtime::storage().session().validators();

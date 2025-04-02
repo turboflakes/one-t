@@ -232,6 +232,16 @@ fn default_p2p_timeout_seconds() -> u64 {
     240
 }
 
+/// sets the timeout used by p2p-explorer
+fn default_asset_hub_para_id() -> u32 {
+    1000
+}
+
+/// sets the timeout used by p2p-explorer
+fn default_people_para_id() -> u32 {
+    1004
+}
+
 #[derive(Clone, Deserialize, Debug)]
 pub struct Config {
     // general
@@ -247,10 +257,14 @@ pub struct Config {
     pub error_interval: u64,
     #[serde(default)]
     pub substrate_ws_url: String,
-    #[serde(default)]
-    pub substrate_people_ws_url: String,
+    #[serde(default = "default_asset_hub_para_id")]
+    pub asset_hub_para_id: u32,
     #[serde(default)]
     pub substrate_asset_hub_ws_url: String,
+    #[serde(default = "default_people_para_id")]
+    pub people_para_id: u32,
+    #[serde(default)]
+    pub substrate_people_ws_url: String,
     #[serde(default = "default_data_path")]
     pub data_path: String,
     #[serde(default = "default_data_path_read_only")]
@@ -376,7 +390,7 @@ fn get_config() -> Config {
     .arg(
       Arg::with_name("CHAIN")
           .index(1)
-          .possible_values(&["paseo", "kusama", "polkadot"])
+          .possible_values(&["polkadot", "kusama", "paseo", "westend" ])
           .help(
             "Sets the substrate-based chain for which 'onet' will try to connect",
           )

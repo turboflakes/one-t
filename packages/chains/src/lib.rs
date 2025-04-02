@@ -55,6 +55,7 @@ impl SupportedRuntime {
             Self::Polkadot => SupportedParasRuntime::PeoplePolkadot,
             Self::Kusama => SupportedParasRuntime::PeopleKusama,
             Self::Paseo => SupportedParasRuntime::PeoplePaseo,
+            Self::WestendNext => SupportedParasRuntime::PeopleWestendNext,
             _ => unimplemented!("PeopleChain not supported"),
         }
     }
@@ -70,6 +71,7 @@ impl SupportedRuntime {
 
     pub fn asset_hub_runtime(&self) -> SupportedParasRuntime {
         match &self {
+            Self::Kusama => SupportedParasRuntime::AssetHubKusama,
             Self::WestendNext => SupportedParasRuntime::AssetHubWestendNext,
             _ => unimplemented!("AssetHubChain not supported"),
         }
@@ -86,6 +88,13 @@ impl SupportedRuntime {
         let config = CONFIG.clone();
         format!("#{}", config.matrix_public_room)
     }
+
+    pub fn is_dn_supported(&self) -> bool {
+        match &self {
+            Self::Polkadot | Self::Kusama => true,
+            _ => false,
+        }
+    }
 }
 
 impl From<String> for SupportedRuntime {
@@ -98,8 +107,10 @@ impl From<String> for SupportedRuntime {
             "paseo" => Self::Paseo,
             "PAS" => Self::Paseo,
             "westend" => Self::WestendNext,
-            "WND" => Self::WestendNext,
-            _ => unimplemented!("Chain prefix not supported"),
+            // TODO: westend should be supported as WND
+            // for local testing use UNIT
+            "UNIT" => Self::WestendNext,
+            _ => unimplemented!("Chain prefix not supported {v}"),
         }
     }
 }
@@ -131,17 +142,20 @@ pub enum SupportedParasRuntime {
     PeoplePolkadot,
     PeopleKusama,
     PeoplePaseo,
+    PeopleWestendNext,
     AssetHubWestendNext,
+    AssetHubKusama,
 }
 
 impl SupportedParasRuntime {
     pub fn default_rpc_url(&self) -> String {
         let config = CONFIG.clone();
         match &self {
-            Self::PeoplePolkadot | Self::PeopleKusama | Self::PeoplePaseo => {
-                config.substrate_people_ws_url
-            }
-            Self::AssetHubWestendNext => config.substrate_asset_hub_ws_url,
+            Self::PeoplePolkadot
+            | Self::PeopleKusama
+            | Self::PeoplePaseo
+            | Self::PeopleWestendNext => config.substrate_people_ws_url,
+            Self::AssetHubWestendNext | Self::AssetHubKusama => config.substrate_asset_hub_ws_url,
         }
     }
 }
@@ -152,7 +166,9 @@ impl std::fmt::Display for SupportedParasRuntime {
             Self::PeoplePolkadot => write!(f, "People Polkadot"),
             Self::PeopleKusama => write!(f, "People Kusama"),
             Self::PeoplePaseo => write!(f, "People Paseo"),
+            Self::PeopleWestendNext => write!(f, "People Westend Next"),
             Self::AssetHubWestendNext => write!(f, "Asset Hub Westend Next"),
+            Self::AssetHubKusama => write!(f, "Asset Hub Kusama"),
         }
     }
 }

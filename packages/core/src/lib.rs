@@ -367,12 +367,23 @@ impl Onet {
         onet
     }
 
+    // DEPRECATE, use relay_client
     pub fn client(&self) -> &OnlineClient<PolkadotConfig> {
+        &self.client
+    }
+
+    pub fn relay_client(&self) -> &OnlineClient<PolkadotConfig> {
         &self.client
     }
 
     pub fn people_client(&self) -> &Option<OnlineClient<PolkadotConfig>> {
         &self.people_client_option
+    }
+
+    pub fn asset_hub_client(&self) -> &OnlineClient<PolkadotConfig> {
+        self.asset_hub_client_option
+            .as_ref()
+            .unwrap_or(&self.client)
     }
 
     pub fn rpc(&self) -> &LegacyRpcMethods<PolkadotConfig> {
