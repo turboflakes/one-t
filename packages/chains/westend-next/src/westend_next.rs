@@ -155,7 +155,8 @@ type NominationPoolsCall = asset_hub_runtime::runtime_types::pallet_nomination_p
 
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    let rc_api = onet.client().clone();
+    let rc_api = onet.relay_client().clone();
+    let rc_rpc = onet.relay_rpc().clone();
     let ah_api = onet.asset_hub_client().clone();
 
     let stashes: Vec<String> = config.pools_featured_nominees;
@@ -166,7 +167,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
     // Initialize from the first block of the session of last block processed
     let latest_block_number = get_latest_block_number_processed()?;
-    let latest_block_hash = fetch_relay_chain_block_hash(onet, latest_block_number).await?;
+    let latest_block_hash = fetch_relay_chain_block_hash(&rc_rpc, latest_block_number).await?;
 
     // Fetch ParaSession start block for the latest block processed
     let mut start_block_number = fetch_session_start_block(&rc_api, latest_block_hash).await?;
@@ -179,7 +180,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     start_block_number -= config.minimum_initial_eras * 6 * config.blocks_per_session;
 
     // get block hash from the start block
-    let rc_block_hash = fetch_relay_chain_block_hash(onet, start_block_number.into()).await?;
+    let rc_block_hash = fetch_relay_chain_block_hash(&rc_rpc, start_block_number.into()).await?;
 
     let ah_block_hash =
         fetch_asset_hub_block_hash_from_relay_chain(onet, start_block_number.into(), rc_block_hash)
@@ -269,21 +270,18 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                         .await?;
                     } else {
                         // fetch block_hash if not the finalized head
-                        if let Some(block_hash) = onet
-                            .rpc()
-                            .chain_get_block_hash(Some(block_number.into()))
-                            .await?
-                        {
-                            process_finalized_block(
-                                &onet,
-                                &mut subscribers,
-                                &mut records,
-                                block_number,
-                                block_hash,
-                                is_loading,
-                            )
-                            .await?;
-                        }
+                        let block_hash =
+                            fetch_relay_chain_block_hash(&rc_rpc, block_number).await?;
+
+                        process_finalized_block(
+                            &onet,
+                            &mut subscribers,
+                            &mut records,
+                            block_number,
+                            block_hash,
+                            is_loading,
+                        )
+                        .await?;
                     };
 
                     //
@@ -335,6 +333,7 @@ pub async fn process_finalized_block(
 
     let BlockProcessingContext {
         rc_api,
+        rc_rpc,
         ah_api,
         ah_rpc,
         parent_metadata,
@@ -342,16 +341,15 @@ pub async fn process_finalized_block(
     } = setup_processing_context(onet, rc_block_number).await?;
 
     // Process RC events with the parent_metadata
-    let mut ah_block_hash = None;
     process_relay_chain_events(
         &rc_api,
+        &rc_rpc,
         &ah_api,
         &ah_rpc,
         records,
         subscribers,
         rc_block_number,
         rc_block_hash,
-        &mut ah_block_hash,
         is_loading,
     )
     .await?;
@@ -365,9 +363,9 @@ pub async fn process_finalized_block(
     // Restore assignement of static_metadata to the api
     rc_api.set_metadata(current_metadata);
 
-    // // Update records
-    // // Note: these records should be updated after the switch of session
-    // track_records(&onet, records, rc_block_number, rc_block_hash).await?;
+    // Update records
+    // Note: these records should be updated after the switch of session
+    track_records(&onet, records, rc_block_number, rc_block_hash).await?;
 
     // // Cache pool stats every 10 minutes
     // try_run_cache_nomination_pools_stats(rc_block_number, rc_block_hash, ah_block_hash).await?;
@@ -387,6 +385,7 @@ pub async fn process_finalized_block(
 
 struct BlockProcessingContext {
     rc_api: OnlineClient<PolkadotConfig>,
+    rc_rpc: LegacyRpcMethods<PolkadotConfig>,
     ah_api: OnlineClient<PolkadotConfig>,
     ah_rpc: LegacyRpcMethods<PolkadotConfig>,
     parent_metadata: Metadata,
@@ -397,21 +396,20 @@ async fn setup_processing_context(
     onet: &Onet,
     block_number: BlockNumber,
 ) -> Result<BlockProcessingContext, OnetError> {
-    let rc_api = onet.client().clone();
+    let rc_api = onet.relay_client().clone();
+    let rc_rpc = onet.relay_rpc().clone();
     let ah_api = onet.asset_hub_client().clone();
     let ah_rpc = onet.asset_hub_rpc().clone();
     let current_metadata = rc_api.metadata().clone();
 
     // Get parent block metadata for better handling of runtime upgrades
-    let parent_block_hash = onet
-        .rpc()
-        .chain_get_block_hash(Some((block_number - 1).into()))
-        .await?;
-    let parent_metadata = onet.rpc().state_get_metadata(parent_block_hash).await?;
+    let parent_block_hash = fetch_relay_chain_block_hash(&rc_rpc, block_number - 1).await?;
+    let parent_metadata = rc_rpc.state_get_metadata(Some(parent_block_hash)).await?;
     rc_api.set_metadata(parent_metadata.clone());
 
     Ok(BlockProcessingContext {
         rc_api,
+        rc_rpc,
         ah_api,
         ah_rpc,
         parent_metadata,
@@ -421,13 +419,13 @@ async fn setup_processing_context(
 
 async fn process_relay_chain_events(
     rc_api: &OnlineClient<PolkadotConfig>,
+    rc_rpc: &LegacyRpcMethods<PolkadotConfig>,
     ah_api: &OnlineClient<PolkadotConfig>,
     ah_rpc: &LegacyRpcMethods<PolkadotConfig>,
     records: &mut Records,
     subscribers: &mut Subscribers,
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
-    ah_block_hash: &mut Option<H256>,
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
@@ -437,11 +435,15 @@ async fn process_relay_chain_events(
         let event = event?;
         if let Some(ev) = event.as_event::<CandidateIncluded>()? {
             if ev.0.descriptor.para_id == Id(config.asset_hub_para_id) {
-                *ah_block_hash = Some(ev.0.descriptor.para_head);
+                let ah_block_hash = ev.0.descriptor.para_head;
                 process_asset_hub_events(
+                    rc_api,
+                    rc_rpc,
                     ah_api,
                     ah_rpc,
-                    ev.0.descriptor.para_head,
+                    rc_block_number,
+                    rc_block_hash,
+                    ah_block_hash,
                     subscribers,
                     records,
                     is_loading,
@@ -450,7 +452,15 @@ async fn process_relay_chain_events(
             }
         } else if let Some(ev) = event.as_event::<NewSession>()? {
             info!("RC event {:?}", ev);
-            process_new_session_event(&rc_api, records, ev, rc_block_number, rc_block_hash).await?;
+            process_new_session_event(
+                &rc_api,
+                records,
+                ev,
+                rc_block_number,
+                rc_block_hash,
+                is_loading,
+            )
+            .await?;
         } else if let Some(ev) = event.as_event::<RootStored>()? {
             info!("RC event {:?}", ev);
         } else if let Some(ev) = event.as_event::<ValidatorSetReceived>()? {
@@ -469,6 +479,7 @@ async fn process_new_session_event(
     event: NewSession,
     rc_block_number: u64,
     rc_block_hash: H256,
+    is_loading: bool,
 ) -> Result<(), OnetError> {
     process_new_session(
         &rc_api,
@@ -479,9 +490,6 @@ async fn process_new_session_event(
     )
     .await?;
 
-    // // Network public report
-    // try_run_network_report(ev.session_index, &records, is_loading).await?;
-
     // // Cache session records every new session
     // try_run_cache_session_records(&records, rc_block_hash, ah_block_hash).await?;
 
@@ -491,24 +499,29 @@ async fn process_new_session_event(
     // // Cache nomination pools every new session
     // try_run_cache_nomination_pools(rc_block_number, rc_block_hash).await?;
 
-    // if !is_loading {
-    //     // Cache p2p discovery
-    //     try_run_cache_discovery_records(&records, rc_block_hash).await?;
-    // }
+    if !is_loading {
+        // Cache p2p discovery
+        try_run_cache_discovery_records(&records, rc_block_hash).await?;
+    }
     Ok(())
 }
 
 async fn process_asset_hub_events(
+    _rc_api: &OnlineClient<PolkadotConfig>,
+    rc_rpc: &LegacyRpcMethods<PolkadotConfig>,
     ah_api: &OnlineClient<PolkadotConfig>,
     ah_rpc: &LegacyRpcMethods<PolkadotConfig>,
-    ah_hash: H256,
+    rc_block_number: BlockNumber,
+    _rc_block_hash: H256,
+    ah_block_hash: H256,
     subscribers: &mut Subscribers,
     records: &mut Records,
     is_loading: bool,
 ) -> Result<(), OnetError> {
-    let ah_block_number = fetch_asset_hub_block_number(ah_rpc, ah_hash).await?;
+    let (ah_block_number, ah_parent_hash) =
+        fetch_asset_hub_block_info(ah_rpc, ah_block_hash).await?;
 
-    let events = ah_api.events().at(ah_hash).await?;
+    let events = ah_api.events().at(ah_block_hash).await?;
 
     for event in events.iter() {
         let event = event?;
@@ -526,6 +539,8 @@ async fn process_asset_hub_events(
             info!("AH event {:?}", ev);
         } else if let Some(ev) = event.as_event::<EraPaid>()? {
             info!("AH event {:?}", ev);
+            // Note: Network public report is based on the previous era index and parent hash
+            try_run_network_report(ev.era_index, &records, ah_parent_hash, is_loading).await?;
         } else if let Some(ev) = event.as_event::<SessionReportReceived>()? {
             info!("AH event {:?}", ev);
         } else if let Some(ev) = event.as_event::<OffenceReceived>()? {
@@ -575,7 +590,7 @@ pub fn rotate_session(
     let previous_era_index = records.current_era().clone();
 
     // Update records current Era and Epoch
-    records.rotate_session(active_era, starting_session);
+    records.start_new_epoch(active_era, starting_session);
 
     // Update records current block number
     records.set_current_ah_block_number(ah_block_number.into());
@@ -1474,13 +1489,14 @@ pub async fn track_records(
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
 ) -> Result<(), OnetError> {
-    let rc_api = onet.client().clone();
+    let rc_api = onet.relay_client().clone();
+    let rc_rpc = onet.relay_rpc().clone();
 
     // Update records current block number
     records.set_current_block_number(rc_block_number.into());
 
     // Extract authority from the block header
-    let block_authority_index = get_authority_index(&onet, Some(rc_block_hash))
+    let block_authority_index = get_authority_index(&rc_rpc, Some(rc_block_hash))
         .await?
         .ok_or_else(|| OnetError::from("Authority index not found"))?;
 
@@ -1508,7 +1524,7 @@ pub async fn track_records(
     //
     //
 
-    // Fetcht and Track authority points
+    // Fetch and Track authority points
     fetch_and_track_authority_points(
         &rc_api,
         records,
@@ -1882,29 +1898,23 @@ pub async fn run_parachains_report(
 }
 
 pub async fn try_run_network_report(
-    epoch_index: EpochIndex,
+    era_index: EraIndex,
     records: &Records,
-    rc_block_hash: H256,
     ah_block_hash: H256,
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if !config.matrix_disabled && !is_loading {
-        if (epoch_index as f64 % config.matrix_network_report_epoch_rate as f64)
-            == config.epoch_rate_threshold as f64
-        {
-            if records.total_full_epochs() > 0 {
-                let records_cloned = records.clone();
-                async_std::task::spawn(async move {
-                    if let Err(e) =
-                        run_network_report(&records_cloned, rc_block_hash, ah_block_hash).await
-                    {
-                        error!("try_run_network_report error: {:?}", e);
-                    }
-                });
-            } else {
-                warn!("No full sessions yet to run the network report.")
-            }
+        if records.total_full_epochs() > 0 {
+            let records_cloned = records.clone();
+            async_std::task::spawn(async move {
+                if let Err(e) = run_network_report(era_index, &records_cloned, ah_block_hash).await
+                {
+                    error!("try_run_network_report error: {:?}", e);
+                }
+            });
+        } else {
+            warn!("No full sessions yet to run the network report.")
         }
     }
 
@@ -1912,27 +1922,36 @@ pub async fn try_run_network_report(
 }
 
 pub async fn run_network_report(
+    active_era_index: EraIndex,
     records: &Records,
-    rc_block_hash: H256,
     ah_block_hash: H256,
 ) -> Result<(), OnetError> {
     let onet: Onet = Onet::new().await;
     let config = CONFIG.clone();
-    let rc_api = onet.client().clone();
+    let rc_api = onet.relay_client().clone();
+    let rc_rpc = onet.relay_rpc().clone();
     let ah_api = onet.asset_hub_client().clone();
 
     let network = Network::load(onet.rpc()).await?;
 
-    // Fetch active era index
-    let active_era = fetch_active_era_info(&rc_api, rc_block_hash).await?;
-    let active_era_index = active_era.index;
+    // Note: the network report is triggered when a session is rotated, or previous era paid;
+    // At this points records must have been already actualized with the new session authorities,
+    // and we want the report to be based on the previous eras, so we get the previous session index
+    // stored in the records and the last block hash of the previous session
+    let current_session_index = records.current_epoch() - 1;
 
-    // Fetch current epoch
-    let current_session_index = fetch_session_index(&rc_api, rc_block_hash).await?;
+    // Get the last block number of the previous session from records
+    let Some(rc_block_number) = records.end_block(Some(EpochKey(current_session_index))) else {
+        return Err(OnetError::from(format!(
+            "Last block number not available for session {current_session_index}"
+        )));
+    };
+
+    let rc_block_hash = fetch_relay_chain_block_hash(&rc_rpc, *rc_block_number).await?;
 
     // Fetch active era total stake
     let active_era_total_stake =
-        fetch_eras_total_stake(&rc_api, rc_block_hash, &active_era_index).await?;
+        fetch_eras_total_stake(&ah_api, ah_block_hash, &active_era_index).await?;
 
     // Set era/session details
     let metadata = ReportMetadata {
@@ -2889,10 +2908,10 @@ async fn try_run_nomination(
 }
 
 async fn get_authority_index(
-    onet: &Onet,
+    rpc: &LegacyRpcMethods<PolkadotConfig>,
     block_hash: Option<H256>,
 ) -> Result<Option<AuthorityIndex>, OnetError> {
-    if let Some(header) = onet.rpc().chain_get_header(block_hash).await? {
+    if let Some(header) = rpc.chain_get_header(block_hash).await? {
         match header.digest {
             Digest { logs } => {
                 for digests in logs.iter() {
@@ -3589,14 +3608,14 @@ async fn fetch_asset_hub_block_hash(
     Ok(None)
 }
 
-/// Fetch asset hub block number at the specified block hash
-async fn fetch_asset_hub_block_number(
+/// Fetch asset hub block header info at the specified block hash
+async fn fetch_asset_hub_block_info(
     rpc: &LegacyRpcMethods<PolkadotConfig>,
     hash: H256,
-) -> Result<BlockNumber, OnetError> {
+) -> Result<(BlockNumber, H256), OnetError> {
     rpc.chain_get_header(Some(hash))
         .await?
-        .map(|header| header.number.into())
+        .map(|header| (header.number.into(), header.parent_hash))
         .ok_or_else(|| {
             OnetError::from(format!("Block number not available at block hash {hash:?}"))
         })
@@ -3604,11 +3623,10 @@ async fn fetch_asset_hub_block_number(
 
 /// Fetch relay chain block hash from a specified block number
 async fn fetch_relay_chain_block_hash(
-    onet: &Onet,
+    rpc: &LegacyRpcMethods<PolkadotConfig>,
     block_number: BlockNumber,
 ) -> Result<H256, OnetError> {
-    onet.rpc()
-        .chain_get_block_hash(Some(block_number.into()))
+    rpc.chain_get_block_hash(Some(block_number.into()))
         .await?
         .ok_or_else(|| {
             OnetError::from(format!(
@@ -3624,13 +3642,14 @@ async fn fetch_asset_hub_block_hash_from_relay_chain(
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
 ) -> Result<H256, OnetError> {
-    let rc_api = onet.client().clone();
+    let rc_api = onet.relay_client().clone();
+    let rc_rpc = onet.relay_rpc().clone();
     if let Some(hash) = fetch_asset_hub_block_hash(&rc_api, rc_block_hash).await? {
         return Ok(hash);
     }
 
     let rc_next_block_number = rc_block_number + 1;
-    let rc_next_block_hash = fetch_relay_chain_block_hash(onet, rc_next_block_number).await?;
+    let rc_next_block_hash = fetch_relay_chain_block_hash(&rc_rpc, rc_next_block_number).await?;
 
     fetch_asset_hub_block_hash_from_relay_chain(onet, rc_next_block_number, rc_next_block_hash)
         .await

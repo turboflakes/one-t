@@ -425,8 +425,8 @@ impl Onet {
         &self.client
     }
 
-    pub fn people_client(&self) -> &Option<OnlineClient<PolkadotConfig>> {
-        &self.people_client_option
+    pub fn people_client(&self) -> &OnlineClient<PolkadotConfig> {
+        &self.people_client_option.as_ref().unwrap_or(&self.client)
     }
 
     pub fn asset_hub_client(&self) -> &OnlineClient<PolkadotConfig> {

@@ -283,7 +283,7 @@ impl Records {
         let mut eras = HashMap::new();
         eras.insert(current_epoch, current_era);
         Self {
-            current_era: 0,
+            current_era,
             current_epoch,
             first_epoch: current_epoch,
             eras: HashMap::new(),
@@ -300,10 +300,6 @@ impl Records {
             groups: HashMap::new(),
             authority_discovery_keys: HashMap::new(),
         }
-    }
-
-    pub fn rotate_session(&mut self, era: EraIndex, session: EpochIndex) {
-        self.eras.insert(session, era);
     }
 
     pub fn current_era(&self) -> EraIndex {
@@ -1166,8 +1162,8 @@ impl AuthorityRecord {
 
     pub fn points(&self) -> Points {
         if let Some(end_points) = self.end_points {
-            if end_points > self.start_points {
-                end_points - self.start_points
+            if end_points >= self.start_points {
+                end_points
             } else {
                 0
             }
