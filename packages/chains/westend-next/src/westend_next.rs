@@ -62,6 +62,7 @@ use std::{
 };
 
 use subxt::{
+    backend::legacy::LegacyRpcMethods,
     config::{
         substrate::{Digest, DigestItem},
         Header,
@@ -169,7 +170,6 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
     // Fetch ParaSession start block for the latest block processed
     let mut start_block_number = fetch_session_start_block(&rc_api, latest_block_hash).await?;
-    info!("Start block number_: {}", start_block_number);
     // Note: We want to start sync in the first block of a session.
     // For that we get the first block of a ParaSession and remove 1 block,
     // since ParaSession starts always at the the second block of a new session
@@ -177,7 +177,6 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     // Load into memory the minimum initial eras defined (default=0)
 
     start_block_number -= config.minimum_initial_eras * 6 * config.blocks_per_session;
-    info!("Start block number__: {}", start_block_number);
 
     // get block hash from the start block
     let rc_block_hash = fetch_relay_chain_block_hash(onet, start_block_number.into()).await?;
@@ -337,6 +336,7 @@ pub async fn process_finalized_block(
     let BlockProcessingContext {
         rc_api,
         ah_api,
+        ah_rpc,
         parent_metadata,
         current_metadata,
     } = setup_processing_context(onet, rc_block_number).await?;
@@ -346,6 +346,7 @@ pub async fn process_finalized_block(
     process_relay_chain_events(
         &rc_api,
         &ah_api,
+        &ah_rpc,
         records,
         subscribers,
         rc_block_number,
@@ -387,6 +388,7 @@ pub async fn process_finalized_block(
 struct BlockProcessingContext {
     rc_api: OnlineClient<PolkadotConfig>,
     ah_api: OnlineClient<PolkadotConfig>,
+    ah_rpc: LegacyRpcMethods<PolkadotConfig>,
     parent_metadata: Metadata,
     current_metadata: Metadata,
 }
@@ -395,9 +397,9 @@ async fn setup_processing_context(
     onet: &Onet,
     block_number: BlockNumber,
 ) -> Result<BlockProcessingContext, OnetError> {
-    let config = CONFIG.clone();
     let rc_api = onet.client().clone();
     let ah_api = onet.asset_hub_client().clone();
+    let ah_rpc = onet.asset_hub_rpc().clone();
     let current_metadata = rc_api.metadata().clone();
 
     // Get parent block metadata for better handling of runtime upgrades
@@ -411,6 +413,7 @@ async fn setup_processing_context(
     Ok(BlockProcessingContext {
         rc_api,
         ah_api,
+        ah_rpc,
         parent_metadata,
         current_metadata,
     })
@@ -419,6 +422,7 @@ async fn setup_processing_context(
 async fn process_relay_chain_events(
     rc_api: &OnlineClient<PolkadotConfig>,
     ah_api: &OnlineClient<PolkadotConfig>,
+    ah_rpc: &LegacyRpcMethods<PolkadotConfig>,
     records: &mut Records,
     subscribers: &mut Subscribers,
     rc_block_number: BlockNumber,
@@ -436,6 +440,7 @@ async fn process_relay_chain_events(
                 *ah_block_hash = Some(ev.0.descriptor.para_head);
                 process_asset_hub_events(
                     ah_api,
+                    ah_rpc,
                     ev.0.descriptor.para_head,
                     subscribers,
                     records,
@@ -473,17 +478,6 @@ async fn process_new_session_event(
         rc_block_hash,
     )
     .await?;
-    // switch_new_session(
-    //     &onet,
-    //     rc_block_number,
-    //     ev.session_index,
-    //     subscribers,
-    //     records,
-    //     rc_block_hash,
-    //     ah_block_hash,
-    //     is_loading,
-    // )
-    // .await?;
 
     // // Network public report
     // try_run_network_report(ev.session_index, &records, is_loading).await?;
@@ -506,13 +500,14 @@ async fn process_new_session_event(
 
 async fn process_asset_hub_events(
     ah_api: &OnlineClient<PolkadotConfig>,
+    ah_rpc: &LegacyRpcMethods<PolkadotConfig>,
     ah_hash: H256,
     subscribers: &mut Subscribers,
     records: &mut Records,
     is_loading: bool,
 ) -> Result<(), OnetError> {
-    // TODO: Get asset hub ah_block_number from the API
-    let ah_block_number = 0;
+    let ah_block_number = fetch_asset_hub_block_number(ah_rpc, ah_hash).await?;
+
     let events = ah_api.events().at(ah_hash).await?;
 
     for event in events.iter() {
@@ -3592,6 +3587,19 @@ async fn fetch_asset_hub_block_hash(
         }
     }
     Ok(None)
+}
+
+/// Fetch asset hub block number at the specified block hash
+async fn fetch_asset_hub_block_number(
+    rpc: &LegacyRpcMethods<PolkadotConfig>,
+    hash: H256,
+) -> Result<BlockNumber, OnetError> {
+    rpc.chain_get_header(Some(hash))
+        .await?
+        .map(|header| header.number.into())
+        .ok_or_else(|| {
+            OnetError::from(format!("Block number not available at block hash {hash:?}"))
+        })
 }
 
 /// Fetch relay chain block hash from a specified block number
