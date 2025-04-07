@@ -129,8 +129,9 @@ struct LoginRequest {
 struct LoginResponse {
     user_id: UserID,
     access_token: AccessToken,
-    home_server: String,
     device_id: String,
+    // DEPRECATED
+    // home_server: String,
     // "well_known": {
     //   "m.homeserver": {
     //       "base_url": "https://matrix-client.matrix.org/"
@@ -349,8 +350,8 @@ impl Matrix {
                 let response = res.json::<LoginResponse>().await?;
                 self.access_token = Some(response.access_token);
                 info!(
-                    "The '{} Bot' user {} has been authenticated at {}",
-                    MATRIX_BOT_NAME, response.user_id, response.home_server
+                    "The '{} Bot' user {} has been authenticated",
+                    MATRIX_BOT_NAME, response.user_id
                 );
                 Ok(())
             }
