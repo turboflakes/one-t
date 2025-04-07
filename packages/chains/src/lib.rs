@@ -173,7 +173,7 @@ impl std::fmt::Display for SupportedParasRuntime {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SupportedParasRuntimeType {
     People,
     AssetHub,
