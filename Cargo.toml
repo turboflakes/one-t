@@ -17,6 +17,8 @@ members = [
     # "packages/chains/kusama",
     # "packages/chains/polkadot",
     # "packages/chains/paseo",
+    "packages/chains/asset-hub-westend-next",
+    "packages/chains/people-westend",
     "packages/chains/westend-next",
 ]
 

@@ -19,6 +19,4 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 //
-mod asset_hub;
-mod people;
 pub mod westend_next;

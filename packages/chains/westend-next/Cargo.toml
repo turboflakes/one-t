@@ -20,6 +20,8 @@ onet-mcda = { path = "../../mcda" }
 onet-pools = { path = "../../pools" }
 onet-records = { path = "../../records" }
 onet-report = { path = "../../report" }
+onet-people-westend = { path = "../../chains/people-westend" }
+onet-asset-hub-westend-next = { path = "../../chains/asset-hub-westend-next" }
 
 async-recursion = { workspace = true }
 async-std = { workspace = true }

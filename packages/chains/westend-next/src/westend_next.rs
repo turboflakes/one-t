@@ -19,7 +19,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 //
-use super::asset_hub::{
+use async_recursion::async_recursion;
+use log::{debug, error, info, warn};
+use onet_api::responses::{AuthorityKey, AuthorityKeyCache};
+use onet_asset_hub_westend_next::{
     asset_hub_runtime,
     asset_hub_runtime::{
         balances::storage::types::total_issuance::TotalIssuance,
@@ -37,17 +40,13 @@ use super::asset_hub::{
         staking_next_rc_client::events::SessionReportReceived,
     },
 };
-use super::asset_hub::{
+use onet_asset_hub_westend_next::{
     fetch_active_era_info, fetch_bonded_controller_account, fetch_bonded_pools,
     fetch_era_reward_points, fetch_eras_start_session_index, fetch_eras_total_stake,
     fetch_eras_validator_reward, fetch_last_pool_id, fetch_ledger_from_controller,
     fetch_nominators, fetch_pool_metadata,
 };
-use super::asset_hub::{AssetHubCall, NominationPoolsCall};
-use super::people::{bytes_to_str, get_display_name, get_identity};
-use async_recursion::async_recursion;
-use log::{debug, error, info, warn};
-use onet_api::responses::{AuthorityKey, AuthorityKeyCache};
+use onet_asset_hub_westend_next::{AssetHubCall, NominationPoolsCall};
 use onet_cache::cache_records;
 use onet_cache::types::{CacheKey, Index, Trait, Verbosity};
 use onet_config::{Config, CONFIG, EPOCH_FILENAME};
@@ -60,6 +59,7 @@ use onet_dn::try_fetch_stashes_from_remote_url;
 use onet_errors::{CacheError, OnetError};
 use onet_matrix::FileInfo;
 use onet_mcda::{criterias::build_limits_from_session, scores::base_decimals};
+use onet_people_westend::{bytes_to_str, get_display_name, get_identity};
 use onet_pools::{
     nomination_pool_account, Account, AccountType, ActiveNominee, Pool, PoolNominees, PoolStats,
     Roles,
