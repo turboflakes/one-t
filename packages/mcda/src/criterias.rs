@@ -20,7 +20,10 @@
 // SOFTWARE.
 
 use crate::scores::base_decimals;
-use onet_cache::{get_conn, CacheKey, RedisPool, Trait};
+use onet_cache::{
+    provider::{get_conn, RedisPool},
+    types::{CacheKey, Trait},
+};
 use onet_errors::{CacheError, OnetError};
 use onet_records::EpochIndex;
 use redis::aio::Connection;

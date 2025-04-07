@@ -21,7 +21,7 @@
 
 use crate::helpers::respond_json;
 use actix_web::web::{Data, Json};
-use onet_cache::{get_conn, RedisPool};
+use onet_cache::provider::{get_conn, RedisPool};
 use onet_errors::{ApiError, CacheError};
 use redis::aio::Connection;
 use serde::{Deserialize, Serialize};

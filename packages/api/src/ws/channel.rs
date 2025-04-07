@@ -26,7 +26,10 @@ use crate::{
     },
     ws::server::{Message, Remove, Server, WsResponseMessage},
 };
-use onet_cache::{create_or_await_pool, get_conn, CacheKey, Index, RedisPool, Verbosity};
+use onet_cache::{
+    provider::{create_or_await_pool, get_conn, RedisPool},
+    types::{CacheKey, Index, Verbosity},
+};
 use onet_config::CONFIG;
 use onet_records::{BlockNumber, EpochIndex, SS58};
 

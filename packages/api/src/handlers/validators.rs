@@ -32,7 +32,10 @@ use actix_web::{
     HttpRequest,
 };
 use log::warn;
-use onet_cache::{get_conn, CacheKey, Index, RedisPool, Verbosity};
+use onet_cache::{
+    provider::{get_conn, RedisPool},
+    types::{CacheKey, Index, Verbosity},
+};
 use onet_config::CONFIG;
 use onet_dn::try_fetch_stashes_from_remote_url;
 use onet_errors::{ApiError, CacheError};

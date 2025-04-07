@@ -18,5 +18,6 @@ log = { workspace = true }
 mobc = { workspace = true }
 mobc-redis = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 subxt = { workspace = true }
 redis = { workspace = true }

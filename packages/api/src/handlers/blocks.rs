@@ -26,7 +26,10 @@ use crate::{
 };
 use actix_web::web::{Data, Json, Path, Query};
 use log::warn;
-use onet_cache::{get_conn, CacheKey, Index, RedisPool};
+use onet_cache::{
+    provider::{get_conn, RedisPool},
+    types::{CacheKey, Index},
+};
 use onet_errors::{ApiError, CacheError};
 use onet_records::{BlockNumber, EpochIndex};
 use redis::aio::Connection;

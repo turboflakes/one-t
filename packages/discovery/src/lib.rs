@@ -21,7 +21,7 @@
 //
 use log::info;
 use multiaddr::{Multiaddr, Protocol};
-use onet_cache::{CacheKey, Verbosity};
+use onet_cache::types::{CacheKey, Verbosity};
 use onet_config::CONFIG;
 use onet_core::Onet;
 use onet_errors::{CacheError, OnetError};

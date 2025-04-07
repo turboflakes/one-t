@@ -20,7 +20,10 @@
 // SOFTWARE.
 
 use log::{error, info, warn};
-use onet_cache::{create_or_await_pool, CacheKey, RedisPool};
+use onet_cache::{
+    provider::{create_or_await_pool, RedisPool},
+    types::CacheKey,
+};
 use onet_chains::{ChainPrefix, ChainTokenSymbol, SupportedParasRuntimeType, SupportedRuntime};
 use onet_config::{Config, BLOCK_FILENAME, CONFIG};
 use onet_errors::{CacheError, OnetError};
@@ -347,6 +350,7 @@ async fn handle_connection_error(error: &OnetError, ws_url: &str) {
 // }
 
 pub struct Onet {
+    config: Config,
     runtime: SupportedRuntime,
     client: OnlineClient<PolkadotConfig>,
     rpc: LegacyRpcMethods<PolkadotConfig>,
@@ -359,7 +363,6 @@ pub struct Onet {
     asset_hub_rpc_option: Option<LegacyRpcMethods<PolkadotConfig>>,
     matrix: Matrix,
     pub cache: RedisPool,
-    config: Config,
 }
 
 impl Onet {
@@ -378,6 +381,7 @@ impl Onet {
             });
 
         Onet {
+            config,
             runtime: clients.runtime,
             client: clients.relay_client,
             rpc: clients.relay_rpc,
@@ -386,7 +390,6 @@ impl Onet {
             asset_hub_rpc_option: clients.asset_hub_rpc,
             matrix,
             cache: create_or_await_pool(CONFIG.clone()),
-            config,
         }
     }
 

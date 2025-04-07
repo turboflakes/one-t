@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use onet_cache::Index;
+use onet_cache::types::Index;
 use onet_mcda::criterias::{
     Filters, Interval, Intervals, Weights, FILTERS_CAPACITY, WEIGHTS_CAPACITY,
 };

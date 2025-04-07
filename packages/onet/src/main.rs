@@ -24,7 +24,7 @@ use actix_cors::Cors;
 use actix_web::{dev::ServerHandle, http, middleware, rt, web, App, HttpServer};
 use log::{error, info, warn};
 use onet_api::{routes::routes, ws::server};
-use onet_cache::add_pool;
+use onet_cache::provider::add_pool;
 use onet_chains::SupportedRuntime;
 use onet_config::CONFIG;
 use onet_core::Onet;
