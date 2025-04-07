@@ -24,7 +24,7 @@ use async_recursion::async_recursion;
 use log::{debug, error, info, warn};
 use onet_api::responses::{AuthorityKey, AuthorityKeyCache};
 use onet_cache::{CacheKey, Index, Trait, Verbosity};
-use onet_config::{CONFIG, EPOCH_FILENAME};
+use onet_config::{Config, CONFIG, EPOCH_FILENAME};
 use onet_core::{
     get_account_id_from_storage_key, get_latest_block_number_processed, get_signer_from_seed,
     get_subscribers, get_subscribers_by_epoch, write_latest_block_number_processed, Onet,
@@ -370,8 +370,8 @@ pub async fn process_finalized_block(
     // // Cache pool stats every 10 minutes
     // try_run_cache_nomination_pools_stats(rc_block_number, rc_block_hash, ah_block_hash).await?;
 
-    // // Cache records at every block
-    // cache_track_records(&onet, &records).await?;
+    // Cache records at every block
+    cache_track_records(&onet, &records).await?;
 
     // Log block processed duration time
     info!(
@@ -672,217 +672,390 @@ pub async fn process_matrix_reports(
 // cache_track_records is called once at every block
 pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.cache_writer_enabled {
-        let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+    if !config.cache_writer_enabled {
+        return Ok(());
+    }
 
-        // cache records every new block
-        if let Some(current_block) = records.current_block() {
-            let current_era = records.current_era();
-            let current_epoch = records.current_epoch();
+    let Some(current_block) = records.current_block() else {
+        return Ok(());
+    };
 
-            let mut parachains_map: BTreeMap<ParaId, ParachainRecord> = BTreeMap::new();
-            let mut session_stats = SessionStats::default();
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+    let mut session_stats = SessionStats::default();
+    let mut parachains_map: BTreeMap<ParaId, ParachainRecord> = BTreeMap::new();
 
-            if let Some(authorities) = records.get_authorities(None) {
-                for authority_idx in authorities.iter() {
-                    if let Some(authority_record) =
-                        records.get_authority_record(*authority_idx, None)
-                    {
-                        // aggregate authority session_stats counters
-                        session_stats.authorities += 1;
-                        session_stats.points += authority_record.points();
-                        // info!("___block: {} points: {}", current_block, session_stats.points);
-                        session_stats.authored_blocks += authority_record.total_authored_blocks();
+    let current_era = records.current_era();
+    let current_epoch = records.current_epoch();
 
-                        //
-                        let authority_key =
-                            CacheKey::AuthorityRecord(current_era, current_epoch, *authority_idx);
+    // Process authority records and collect statistics
+    process_authority_records(&mut cache, records, &mut session_stats, &mut parachains_map).await?;
 
-                        let mut data: BTreeMap<String, String> = BTreeMap::new();
-                        if let Some(para_record) = records.get_para_record(*authority_idx, None) {
-                            // aggregate para_authority session_stats counters
-                            session_stats.para_authorities += 1;
-                            session_stats.core_assignments += para_record.total_core_assignments();
-                            session_stats.explicit_votes += para_record.total_explicit_votes();
-                            session_stats.implicit_votes += para_record.total_implicit_votes();
-                            session_stats.missed_votes += para_record.total_missed_votes();
-                            session_stats.disputes += para_record.total_disputes();
-                            // bitfields availability
-                            session_stats.bitfields_availability +=
-                                para_record.total_availability();
-                            session_stats.bitfields_unavailability +=
-                                para_record.total_unavailability();
+    // Cache session statistics
+    cache_session_stats(&mut cache, &config, current_block, &session_stats).await?;
 
-                            //
-                            let serialized = serde_json::to_string(&para_record)?;
-                            data.insert(String::from("para"), serialized);
+    // Cache parachain statistics
+    cache_parachain_stats(
+        &mut cache,
+        &config,
+        records.current_epoch(),
+        &parachains_map,
+    )
+    .await?;
 
-                            // cache para.stats as a different cache key
-                            let serialized = serde_json::to_string(&para_record.para_stats())?;
-                            redis::pipe()
-                                .atomic()
-                                .cmd("HSET")
-                                .arg(CacheKey::AuthorityRecordVerbose(
-                                    authority_key.to_string(),
-                                    Verbosity::Stats,
-                                ))
-                                .arg(String::from("para_stats"))
-                                .arg(serialized)
-                                .cmd("EXPIRE")
-                                .arg(CacheKey::AuthorityRecordVerbose(
-                                    authority_key.to_string(),
-                                    Verbosity::Stats,
-                                ))
-                                .arg(config.cache_writer_prunning)
-                                .query_async::<_, ()>(&mut cache as &mut Connection)
-                                .await
-                                .map_err(CacheError::RedisCMDError)?;
+    // Cache current block for session
+    cache_current_block_for_session(&mut cache, &config, records, current_block).await?;
 
-                            // cache para.summary as a different cache key
-                            let summary = ParaStats {
-                                points: para_record.total_points(),
-                                authored_blocks: para_record.total_authored_blocks(),
-                                core_assignments: para_record.total_core_assignments(),
-                                explicit_votes: para_record.total_explicit_votes(),
-                                implicit_votes: para_record.total_implicit_votes(),
-                                missed_votes: para_record.total_missed_votes(),
-                            };
-                            let serialized = serde_json::to_string(&summary)?;
-                            redis::pipe()
-                                .atomic()
-                                .cmd("HSET")
-                                .arg(CacheKey::AuthorityRecordVerbose(
-                                    authority_key.to_string(),
-                                    Verbosity::Summary,
-                                ))
-                                .arg(String::from("para_summary"))
-                                .arg(serialized)
-                                .cmd("EXPIRE")
-                                .arg(CacheKey::AuthorityRecordVerbose(
-                                    authority_key.to_string(),
-                                    Verbosity::Summary,
-                                ))
-                                .arg(config.cache_writer_prunning)
-                                .query_async::<_, ()>(&mut cache as &mut Connection)
-                                .await
-                                .map_err(CacheError::RedisCMDError)?;
+    if let Some(authorities) = records.get_authorities(None) {
+        for authority_idx in authorities.iter() {
+            if let Some(authority_record) = records.get_authority_record(*authority_idx, None) {
+                // aggregate authority session_stats counters
+                session_stats.authorities += 1;
+                session_stats.points += authority_record.points();
+                // info!("___block: {} points: {}", current_block, session_stats.points);
+                session_stats.authored_blocks += authority_record.total_authored_blocks();
 
-                            // aggregate parachains counters
-                            for (para_id, stats) in para_record.para_stats().iter() {
-                                let pm = parachains_map
-                                    .entry(*para_id)
-                                    .or_insert(ParachainRecord::default());
-                                pm.stats.implicit_votes += stats.implicit_votes();
-                                pm.stats.explicit_votes += stats.explicit_votes();
-                                pm.stats.missed_votes += stats.missed_votes();
-                                pm.stats.authored_blocks += stats.authored_blocks();
-                                pm.stats.points += stats.points();
-                                // NOTE: parachain core_assignments is related to the val_group
-                                // to calculate the core_assignments, just take into consideration that each authority in the val_group
-                                // has 1 core_assignment which means that 5 validators ca in the same group represent 1 core_assignment for the parachain.
-                                // The total of core_assignments will be given in cents meaning 100 = 1
-                                let ca: u32 = (100 / (para_record.peers().len() + 1)) as u32
-                                    * stats.core_assignments();
-                                pm.stats.core_assignments += ca;
-                                pm.para_id = *para_id;
-                            }
+                //
+                let authority_key =
+                    CacheKey::AuthorityRecord(current_era, current_epoch, *authority_idx);
 
-                            if let Some(para_id) = para_record.para_id() {
-                                let pm = parachains_map
-                                    .entry(para_id)
-                                    .or_insert(ParachainRecord::default());
-                                pm.current_group = para_record.group();
-                                let mut authorities: Vec<AuthorityIndex> = vec![*authority_idx];
-                                authorities.append(&mut para_record.peers());
-                                pm.current_authorities = authorities;
-                            }
-                        }
-                        let serialized = serde_json::to_string(&authority_record)?;
-                        data.insert(String::from("auth"), serialized);
-                        redis::pipe()
-                            .atomic()
-                            .cmd("HSET")
-                            .arg(authority_key.to_string())
-                            .arg(data)
-                            .cmd("EXPIRE")
-                            .arg(authority_key.to_string())
-                            .arg(config.cache_writer_prunning)
-                            .query_async::<_, ()>(&mut cache as &mut Connection)
-                            .await
-                            .map_err(CacheError::RedisCMDError)?;
+                let mut data: BTreeMap<String, String> = BTreeMap::new();
+                if let Some(para_record) = records.get_para_record(*authority_idx, None) {
+                    // aggregate para_authority session_stats counters
+                    session_stats.para_authorities += 1;
+                    session_stats.core_assignments += para_record.total_core_assignments();
+                    session_stats.explicit_votes += para_record.total_explicit_votes();
+                    session_stats.implicit_votes += para_record.total_implicit_votes();
+                    session_stats.missed_votes += para_record.total_missed_votes();
+                    session_stats.disputes += para_record.total_disputes();
+                    // bitfields availability
+                    session_stats.bitfields_availability += para_record.total_availability();
+                    session_stats.bitfields_unavailability += para_record.total_unavailability();
+
+                    //
+                    let serialized = serde_json::to_string(&para_record)?;
+                    data.insert(String::from("para"), serialized);
+
+                    // cache para.stats as a different cache key
+                    let serialized = serde_json::to_string(&para_record.para_stats())?;
+                    redis::pipe()
+                        .atomic()
+                        .cmd("HSET")
+                        .arg(CacheKey::AuthorityRecordVerbose(
+                            authority_key.to_string(),
+                            Verbosity::Stats,
+                        ))
+                        .arg(String::from("para_stats"))
+                        .arg(serialized)
+                        .cmd("EXPIRE")
+                        .arg(CacheKey::AuthorityRecordVerbose(
+                            authority_key.to_string(),
+                            Verbosity::Stats,
+                        ))
+                        .arg(config.cache_writer_prunning)
+                        .query_async::<_, ()>(&mut cache as &mut Connection)
+                        .await
+                        .map_err(CacheError::RedisCMDError)?;
+
+                    // cache para.summary as a different cache key
+                    let summary = ParaStats {
+                        points: para_record.total_points(),
+                        authored_blocks: para_record.total_authored_blocks(),
+                        core_assignments: para_record.total_core_assignments(),
+                        explicit_votes: para_record.total_explicit_votes(),
+                        implicit_votes: para_record.total_implicit_votes(),
+                        missed_votes: para_record.total_missed_votes(),
+                    };
+                    let serialized = serde_json::to_string(&summary)?;
+                    redis::pipe()
+                        .atomic()
+                        .cmd("HSET")
+                        .arg(CacheKey::AuthorityRecordVerbose(
+                            authority_key.to_string(),
+                            Verbosity::Summary,
+                        ))
+                        .arg(String::from("para_summary"))
+                        .arg(serialized)
+                        .cmd("EXPIRE")
+                        .arg(CacheKey::AuthorityRecordVerbose(
+                            authority_key.to_string(),
+                            Verbosity::Summary,
+                        ))
+                        .arg(config.cache_writer_prunning)
+                        .query_async::<_, ()>(&mut cache as &mut Connection)
+                        .await
+                        .map_err(CacheError::RedisCMDError)?;
+
+                    // aggregate parachains counters
+                    for (para_id, stats) in para_record.para_stats().iter() {
+                        let pm = parachains_map
+                            .entry(*para_id)
+                            .or_insert(ParachainRecord::default());
+                        pm.stats.implicit_votes += stats.implicit_votes();
+                        pm.stats.explicit_votes += stats.explicit_votes();
+                        pm.stats.missed_votes += stats.missed_votes();
+                        pm.stats.authored_blocks += stats.authored_blocks();
+                        pm.stats.points += stats.points();
+                        // NOTE: parachain core_assignments is related to the val_group
+                        // to calculate the core_assignments, just take into consideration that each authority in the val_group
+                        // has 1 core_assignment which means that 5 validators ca in the same group represent 1 core_assignment for the parachain.
+                        // The total of core_assignments will be given in cents meaning 100 = 1
+                        let ca: u32 = (100 / (para_record.peers().len() + 1)) as u32
+                            * stats.core_assignments();
+                        pm.stats.core_assignments += ca;
+                        pm.para_id = *para_id;
+                    }
+
+                    if let Some(para_id) = para_record.para_id() {
+                        let pm = parachains_map
+                            .entry(para_id)
+                            .or_insert(ParachainRecord::default());
+                        pm.current_group = para_record.group();
+                        let mut authorities: Vec<AuthorityIndex> = vec![*authority_idx];
+                        authorities.append(&mut para_record.peers());
+                        pm.current_authorities = authorities;
                     }
                 }
-            }
-            let serialized = serde_json::to_string(&session_stats)?;
-
-            redis::pipe()
-                .atomic()
-                // cache current_block / finalized block
-                .cmd("SET")
-                .arg(CacheKey::FinalizedBlock)
-                .arg(*current_block)
-                // cache current_block / finalized block into a sorted set by session
-                .cmd("ZADD")
-                .arg(CacheKey::BlocksBySession(Index::Num(current_epoch.into())))
-                .arg(0)
-                .arg(*current_block)
-                .cmd("EXPIRE")
-                .arg(CacheKey::BlocksBySession(Index::Num(current_epoch.into())))
-                .arg(config.cache_writer_prunning)
-                // cache session_stats at every block
-                .cmd("SET")
-                .arg(CacheKey::BlockByIndexStats(Index::Num(*current_block)))
-                .arg(serialized)
-                .arg("EX")
-                .arg(config.cache_writer_prunning)
-                .query_async::<_, ()>(&mut cache as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
-
-            // cache parachains stats
-            for (para_id, records) in parachains_map.iter() {
-                let serialized = serde_json::to_string(&records)?;
+                let serialized = serde_json::to_string(&authority_record)?;
+                data.insert(String::from("auth"), serialized);
                 redis::pipe()
                     .atomic()
                     .cmd("HSET")
-                    .arg(CacheKey::ParachainsBySession(current_epoch))
-                    .arg(para_id.to_string())
-                    .arg(serialized)
+                    .arg(authority_key.to_string())
+                    .arg(data)
                     .cmd("EXPIRE")
-                    .arg(CacheKey::ParachainsBySession(current_epoch))
+                    .arg(authority_key.to_string())
                     .arg(config.cache_writer_prunning)
                     .query_async::<_, ()>(&mut cache as &mut Connection)
                     .await
                     .map_err(CacheError::RedisCMDError)?;
             }
+        }
+    }
+    let serialized = serde_json::to_string(&session_stats)?;
 
-            // cache current_block for the current_session
-            if let Some(start_block) = records.start_block(None) {
-                if current_block != start_block {
-                    let mut data: BTreeMap<String, String> = BTreeMap::new();
-                    data.insert(String::from("current_block"), (*current_block).to_string());
-                    // by `epoch_index`
-                    redis::pipe()
-                        .atomic()
-                        .cmd("HSET")
-                        .arg(CacheKey::SessionByIndex(Index::Num(
-                            records.current_epoch().into(),
-                        )))
-                        .arg(data)
-                        .cmd("EXPIRE")
-                        .arg(CacheKey::SessionByIndex(Index::Num(
-                            records.current_epoch().into(),
-                        )))
-                        .arg(config.cache_writer_prunning)
-                        .query_async::<_, ()>(&mut cache as &mut Connection)
-                        .await
-                        .map_err(CacheError::RedisCMDError)?;
-                }
-            }
+    redis::pipe()
+        .atomic()
+        // cache current_block / finalized block
+        .cmd("SET")
+        .arg(CacheKey::FinalizedBlock)
+        .arg(*current_block)
+        // cache current_block / finalized block into a sorted set by session
+        .cmd("ZADD")
+        .arg(CacheKey::BlocksBySession(Index::Num(current_epoch.into())))
+        .arg(0)
+        .arg(*current_block)
+        .cmd("EXPIRE")
+        .arg(CacheKey::BlocksBySession(Index::Num(current_epoch.into())))
+        .arg(config.cache_writer_prunning)
+        // cache session_stats at every block
+        .cmd("SET")
+        .arg(CacheKey::BlockByIndexStats(Index::Num(*current_block)))
+        .arg(serialized)
+        .arg("EX")
+        .arg(config.cache_writer_prunning)
+        .query_async::<_, ()>(&mut cache as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    // cache parachains stats
+    for (para_id, records) in parachains_map.iter() {
+        let serialized = serde_json::to_string(&records)?;
+        redis::pipe()
+            .atomic()
+            .cmd("HSET")
+            .arg(CacheKey::ParachainsBySession(current_epoch))
+            .arg(para_id.to_string())
+            .arg(serialized)
+            .cmd("EXPIRE")
+            .arg(CacheKey::ParachainsBySession(current_epoch))
+            .arg(config.cache_writer_prunning)
+            .query_async::<_, ()>(&mut cache as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+    }
+
+    // cache current_block for the current_session
+    if let Some(start_block) = records.start_block(None) {
+        if current_block != start_block {
+            let mut data: BTreeMap<String, String> = BTreeMap::new();
+            data.insert(String::from("current_block"), (*current_block).to_string());
+            // by `epoch_index`
+            redis::pipe()
+                .atomic()
+                .cmd("HSET")
+                .arg(CacheKey::SessionByIndex(Index::Num(
+                    records.current_epoch().into(),
+                )))
+                .arg(data)
+                .cmd("EXPIRE")
+                .arg(CacheKey::SessionByIndex(Index::Num(
+                    records.current_epoch().into(),
+                )))
+                .arg(config.cache_writer_prunning)
+                .query_async::<_, ()>(&mut cache as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
         }
     }
 
     Ok(())
+}
+
+async fn process_authority_records(
+    cache: &mut Connection,
+    records: &Records,
+    session_stats: &mut SessionStats,
+    parachains_map: &mut BTreeMap<ParaId, ParachainRecord>,
+) -> Result<(), OnetError> {
+    let Some(authorities) = records.get_authorities(None) else {
+        return Ok(());
+    };
+
+    for authority_idx in authorities {
+        process_single_authority(cache, records, session_stats, parachains_map, authority_idx)
+            .await?;
+    }
+
+    Ok(())
+}
+
+fn update_session_stats(stats: &mut SessionStats, authority_record: &AuthorityRecord) {
+    stats.authorities += 1;
+    stats.points += authority_record.points();
+    stats.authored_blocks += authority_record.total_authored_blocks();
+}
+
+async fn process_para_record(
+    cache: &mut Connection,
+    session_stats: &mut SessionStats,
+    parachains_map: &mut BTreeMap<ParaId, ParachainRecord>,
+    para_record: &ParaRecord,
+    authority_key: &CacheKey,
+) -> Result<(), OnetError> {
+    // let Some(authorities) = records.get_authorities(None) else {
+    //     return Ok(());
+    // };
+
+    // for authority_idx in authorities {
+    //     process_single_authority(cache, records, session_stats, parachains_map, authority_idx)
+    //         .await?;
+    // }
+
+    Ok(())
+}
+
+async fn cache_authority_data(
+    cache: &mut Connection,
+    authority_key: &CacheKey,
+    data: &BTreeMap<String, String>,
+) -> Result<(), OnetError> {
+    // let Some(authorities) = records.get_authorities(None) else {
+    //     return Ok(());
+    // };
+
+    // for authority_idx in authorities {
+    //     process_single_authority(cache, records, session_stats, parachains_map, authority_idx)
+    //         .await?;
+    // }
+
+    Ok(())
+}
+
+async fn cache_current_block_for_session(
+    cache: &mut Connection,
+    config: &Config,
+    records: &Records,
+    current_block: &BlockNumber,
+) -> Result<(), OnetError> {
+    let Some(start_block) = records.start_block(None) else {
+        return Ok(());
+    };
+
+    if current_block == start_block {
+        return Ok(());
+    }
+
+    let mut data: BTreeMap<String, String> = BTreeMap::new();
+    data.insert(String::from("current_block"), (*current_block).to_string());
+    // by `epoch_index`
+    redis::pipe()
+        .atomic()
+        .cmd("HSET")
+        .arg(CacheKey::SessionByIndex(Index::Num(
+            records.current_epoch().into(),
+        )))
+        .arg(data)
+        .cmd("EXPIRE")
+        .arg(CacheKey::SessionByIndex(Index::Num(
+            records.current_epoch().into(),
+        )))
+        .arg(config.cache_writer_prunning)
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
+}
+
+async fn process_single_authority(
+    cache: &mut Connection,
+    records: &Records,
+    session_stats: &mut SessionStats,
+    parachains_map: &mut BTreeMap<ParaId, ParachainRecord>,
+    authority_idx: AuthorityIndex,
+) -> Result<(), OnetError> {
+    let Some(authority_record) = records.get_authority_record(authority_idx, None) else {
+        return Ok(());
+    };
+
+    update_session_stats(session_stats, &authority_record);
+
+    let authority_key = CacheKey::AuthorityRecord(
+        records.current_era(),
+        records.current_epoch(),
+        authority_idx,
+    );
+
+    let mut data = BTreeMap::new();
+    data.insert(
+        "auth".to_string(),
+        serde_json::to_string(&authority_record)?,
+    );
+
+    if let Some(para_record) = records.get_para_record(authority_idx, None) {
+        process_para_record(
+            cache,
+            session_stats,
+            parachains_map,
+            &para_record,
+            &authority_key,
+        )
+        .await?;
+        data.insert("para".to_string(), serde_json::to_string(&para_record)?);
+    }
+
+    cache_authority_data(cache, &authority_key, &data).await?;
+
+    Ok(())
+}
+
+async fn cache_session_stats(
+    cache: &mut Connection,
+    config: &Config,
+    current_block: &BlockNumber,
+    session_stats: &SessionStats,
+) -> Result<(), OnetError> {
+    let serialized = serde_json::to_string(session_stats)?;
+    redis::pipe()
+        .atomic()
+        .cmd("SET")
+        .arg(CacheKey::BlockByIndexStats(Index::Num(*current_block)))
+        .arg(serialized)
+        .arg("EX")
+        .arg(config.cache_writer_prunning)
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)
 }
 
 pub async fn try_run_cache_discovery_records(

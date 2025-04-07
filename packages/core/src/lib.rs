@@ -359,10 +359,12 @@ pub struct Onet {
     asset_hub_rpc_option: Option<LegacyRpcMethods<PolkadotConfig>>,
     matrix: Matrix,
     pub cache: RedisPool,
+    config: Config,
 }
 
 impl Onet {
     pub async fn new() -> Onet {
+        let config = CONFIG.clone();
         let clients = create_or_await_substrate_node_clients(CONFIG.clone()).await;
 
         // Initialize matrix client
@@ -384,6 +386,7 @@ impl Onet {
             asset_hub_rpc_option: clients.asset_hub_rpc,
             matrix,
             cache: create_or_await_pool(CONFIG.clone()),
+            config,
         }
     }
 
@@ -450,33 +453,34 @@ impl Onet {
 
     // cache methods
     async fn cache_network(&self) -> Result<(), OnetError> {
-        let config = CONFIG.clone();
-        if config.cache_writer_enabled {
-            let mut conn = self.cache.get().await.map_err(CacheError::RedisPoolError)?;
-
-            let mut data: BTreeMap<String, String> = BTreeMap::new();
-
-            let network = Network::load(self.rpc()).await?;
-            // Get Network details
-            data.insert(String::from("name"), network.name);
-            data.insert(String::from("token_symbol"), network.token_symbol);
-            data.insert(
-                String::from("token_decimals"),
-                network.token_decimals.to_string(),
-            );
-            data.insert(String::from("ss58_format"), network.ss58_format.to_string());
-
-            // Cache genesis hash
-            let genesis_hash = self.rpc().genesis_hash().await?;
-            data.insert("genesis_hash".to_string(), format!("{:?}", genesis_hash));
-
-            let _: () = redis::cmd("HSET")
-                .arg(CacheKey::Network)
-                .arg(data)
-                .query_async(&mut conn as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
+        if !self.config.cache_writer_enabled {
+            return Ok(());
         }
+
+        let mut conn = self.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+        let mut data: BTreeMap<String, String> = BTreeMap::new();
+
+        let network = Network::load(self.rpc()).await?;
+        // Get Network details
+        data.insert(String::from("name"), network.name);
+        data.insert(String::from("token_symbol"), network.token_symbol);
+        data.insert(
+            String::from("token_decimals"),
+            network.token_decimals.to_string(),
+        );
+        data.insert(String::from("ss58_format"), network.ss58_format.to_string());
+
+        // Cache genesis hash
+        let genesis_hash = self.rpc().genesis_hash().await?;
+        data.insert("genesis_hash".to_string(), format!("{:?}", genesis_hash));
+
+        let _: () = redis::cmd("HSET")
+            .arg(CacheKey::Network)
+            .arg(data)
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
 
         Ok(())
     }
