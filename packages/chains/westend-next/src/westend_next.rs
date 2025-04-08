@@ -47,8 +47,8 @@ use onet_asset_hub_westend_next::{
     fetch_nominators, fetch_pool_metadata,
 };
 use onet_asset_hub_westend_next::{AssetHubCall, NominationPoolsCall};
-use onet_cache::cache_records;
 use onet_cache::types::{CacheKey, Index, Trait, Verbosity};
+use onet_cache::{cache_records, cache_records_at_session};
 use onet_config::{Config, CONFIG, EPOCH_FILENAME};
 use onet_core::{
     get_account_id_from_storage_key, get_latest_block_number_processed, get_signer_from_seed,
@@ -205,11 +205,12 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     // Initialize subscribers records
     initialize_records(&rc_api, &mut records, rc_block_hash).await?;
 
-    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+    let start_session_index =
+        fetch_eras_start_session_index(&ah_api, ah_block_hash, &era_index).await?;
 
     // Initialize cache
-    cache_session_records(&records, rc_block_hash, ah_block_hash).await?;
-
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+    cache_records_at_session(&mut cache, &records, start_session_index).await?;
     cache_records(&mut cache, &records).await?;
 
     // Initialize p2p discovery
@@ -329,8 +330,11 @@ pub async fn process_finalized_block(
         current_metadata,
     } = setup_processing_context(onet, rc_block_number).await?;
 
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
     // Process RC events with the parent_metadata
     process_relay_chain_events(
+        &mut cache,
         &rc_api,
         &rc_rpc,
         &ah_api,
@@ -354,9 +358,7 @@ pub async fn process_finalized_block(
 
     // Update records
     // Note: these records should be updated after the switch of session
-    track_records(&onet, records, rc_block_number, rc_block_hash).await?;
-
-    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+    track_records(&rc_api, &rc_rpc, records, rc_block_number, rc_block_hash).await?;
 
     // // Cache pool stats every 10 minutes
     // try_run_cache_nomination_pools_stats(rc_block_number, rc_block_hash, ah_block_hash).await?;
@@ -409,6 +411,7 @@ async fn setup_processing_context(
 }
 
 async fn process_relay_chain_events(
+    cache: &mut Connection,
     rc_api: &OnlineClient<PolkadotConfig>,
     rc_rpc: &LegacyRpcMethods<PolkadotConfig>,
     ah_api: &OnlineClient<PolkadotConfig>,
@@ -428,6 +431,7 @@ async fn process_relay_chain_events(
             if ev.0.descriptor.para_id == Id(config.asset_hub_para_id) {
                 let ah_block_hash = ev.0.descriptor.para_head;
                 process_asset_hub_events(
+                    cache,
                     rc_api,
                     rc_rpc,
                     ah_api,
@@ -481,9 +485,6 @@ async fn process_new_session_event(
     )
     .await?;
 
-    // // Cache session records every new session
-    // try_run_cache_session_records(&records, rc_block_hash, ah_block_hash).await?;
-
     // // Cache session stats records every new session
     // try_run_cache_session_stats_records(rc_block_hash, is_loading).await?;
 
@@ -498,8 +499,9 @@ async fn process_new_session_event(
 }
 
 async fn process_asset_hub_events(
+    cache: &mut Connection,
     _rc_api: &OnlineClient<PolkadotConfig>,
-    rc_rpc: &LegacyRpcMethods<PolkadotConfig>,
+    _rc_rpc: &LegacyRpcMethods<PolkadotConfig>,
     ah_api: &OnlineClient<PolkadotConfig>,
     ah_rpc: &LegacyRpcMethods<PolkadotConfig>,
     rc_block_number: BlockNumber,
@@ -518,14 +520,18 @@ async fn process_asset_hub_events(
         let event = event?;
         if let Some(ev) = event.as_event::<SessionRotated>()? {
             info!("AH event {:?}", ev);
-            let previous_era_index = rotate_session(
+            let previous_era_index = process_session_rotated(
                 ev.starting_session,
                 ev.active_era,
                 subscribers,
                 records,
                 ah_block_number,
             )?;
-            process_matrix_reports(previous_era_index, subscribers, records, is_loading).await?;
+            let start_session_index =
+                fetch_eras_start_session_index(&ah_api, ah_block_hash, &ev.active_era).await?;
+            cache_records_at_session(cache, records, start_session_index).await?;
+
+            try_run_matrix_reports(previous_era_index, subscribers, records, is_loading).await?;
         } else if let Some(ev) = event.as_event::<PagedElectionProceeded>()? {
             info!("AH event {:?}", ev);
         } else if let Some(ev) = event.as_event::<EraPaid>()? {
@@ -549,7 +555,7 @@ async fn process_asset_hub_events(
     Ok(())
 }
 
-/// Run rotate_session at RC NewSession event
+/// Process new session at RC NewSession event
 pub async fn process_new_session(
     rc_api: &OnlineClient<PolkadotConfig>,
     records: &mut Records,
@@ -567,8 +573,8 @@ pub async fn process_new_session(
     Ok(())
 }
 
-/// Run rotate_session at AHSessionRotated event
-pub fn rotate_session(
+/// Process session rotated at AH SessionRotated event
+pub fn process_session_rotated(
     starting_session: EpochIndex,
     active_era: EraIndex,
     subscribers: &mut Subscribers,
@@ -611,7 +617,7 @@ pub fn rotate_session(
 }
 
 /// Run process_matrix_reports after rotate_session
-pub async fn process_matrix_reports(
+pub async fn try_run_matrix_reports(
     previous_era_index: EraIndex,
     subscribers: &mut Subscribers,
     records: &mut Records,
@@ -620,42 +626,42 @@ pub async fn process_matrix_reports(
     let config = CONFIG.clone();
 
     // Try to run matrix reports
-    if !config.matrix_disabled && !is_loading {
-        let current_era_index = records.current_era();
-        // Send reports from previous session (verify if era_index is the same or previous)
-        let era_index: u32 = if current_era_index != previous_era_index {
-            previous_era_index
-        } else {
-            current_era_index
-        };
-
-        let records_cloned = records.clone();
-        let subscribers_cloned = subscribers.clone();
-        async_std::task::spawn(async move {
-            let epoch_index = records_cloned.current_epoch() - 1;
-            if let Err(e) =
-                run_val_perf_report(era_index, epoch_index, &records_cloned, &subscribers_cloned)
-                    .await
-            {
-                error!(
-                    "run_val_perf_report error: {:?} ({}//{})",
-                    e, era_index, epoch_index
-                );
-            }
-            if let Err(e) = run_groups_report(era_index, epoch_index, &records_cloned).await {
-                error!(
-                    "run_groups_report error: {:?} ({}//{})",
-                    e, era_index, epoch_index
-                );
-            }
-            if let Err(e) = run_parachains_report(era_index, epoch_index, &records_cloned).await {
-                error!(
-                    "run_parachains_report error: {:?} ({}//{})",
-                    e, era_index, epoch_index
-                );
-            }
-        });
+    if config.matrix_disabled || is_loading {
+        return Ok(());
     }
+    let current_era_index = records.current_era();
+    // Send reports from previous session (verify if era_index is the same or previous)
+    let era_index: u32 = if current_era_index != previous_era_index {
+        previous_era_index
+    } else {
+        current_era_index
+    };
+
+    let records_cloned = records.clone();
+    let subscribers_cloned = subscribers.clone();
+    async_std::task::spawn(async move {
+        let epoch_index = records_cloned.current_epoch() - 1;
+        if let Err(e) =
+            run_val_perf_report(era_index, epoch_index, &records_cloned, &subscribers_cloned).await
+        {
+            error!(
+                "run_val_perf_report error: {:?} ({}//{})",
+                e, era_index, epoch_index
+            );
+        }
+        if let Err(e) = run_groups_report(era_index, epoch_index, &records_cloned).await {
+            error!(
+                "run_groups_report error: {:?} ({}//{})",
+                e, era_index, epoch_index
+            );
+        }
+        if let Err(e) = run_parachains_report(era_index, epoch_index, &records_cloned).await {
+            error!(
+                "run_parachains_report error: {:?} ({}//{})",
+                e, era_index, epoch_index
+            );
+        }
+    });
 
     Ok(())
 }
@@ -665,213 +671,16 @@ pub async fn try_run_cache_discovery_records(
     block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.discovery_enabled {
-        let records_cloned = records.clone();
-        async_std::task::spawn(async move {
-            if let Err(e) = try_fetch_discovery_data(&records_cloned, block_hash).await {
-                error!("try_fetch_discovery_data error: {:?}", e);
-            }
-        });
+    if !config.discovery_enabled {
+        return Ok(());
     }
 
-    Ok(())
-}
-
-pub async fn try_run_cache_session_records(
-    records: &Records,
-    rc_block_hash: H256,
-    ah_block_hash: H256,
-) -> Result<(), OnetError> {
-    let config = CONFIG.clone();
-    if config.cache_writer_enabled {
-        let records_cloned = records.clone();
-        async_std::task::spawn(async move {
-            if let Err(e) =
-                cache_session_records(&records_cloned, rc_block_hash, ah_block_hash).await
-            {
-                error!("try_run_cache_session_records error: {:?}", e);
-            }
-        });
-    }
-
-    Ok(())
-}
-
-// cache_session_records is called once at every new session
-pub async fn cache_session_records(
-    records: &Records,
-    rc_block_hash: H256,
-    ah_block_hash: H256,
-) -> Result<(), OnetError> {
-    let config = CONFIG.clone();
-    if config.cache_writer_enabled {
-        let start = Instant::now();
-        let onet: Onet = Onet::new().await;
-        let rc_api = onet.client().clone();
-        let ah_api = onet.asset_hub_client().clone();
-        let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-
-        // cache records every new session
-        let current_era = records.current_era();
-        let current_epoch = records.current_epoch();
-
-        // --- Cache SessionByIndex -> `current` or `epoch_index` (to be able to search history)
-        if let Some(start_block) = records.start_block(None) {
-            if let Some(current_block) = records.current_block() {
-                // fetch start session index
-                let start_session_index =
-                    fetch_eras_start_session_index(&ah_api, ah_block_hash, &current_era).await?;
-
-                // era session index
-                let era_session_index = 1 + current_epoch - start_session_index;
-
-                let mut data: BTreeMap<String, String> = BTreeMap::new();
-                data.insert(String::from("era"), records.current_era().to_string());
-                data.insert(String::from("session"), records.current_epoch().to_string());
-                data.insert(String::from("start_block"), (*start_block).to_string());
-                data.insert(String::from("current_block"), (*current_block).to_string());
-                data.insert(
-                    String::from("era_session_index"),
-                    era_session_index.to_string(),
-                );
-
-                redis::pipe()
-                    .atomic()
-                    // by `epoch_index`
-                    .cmd("HSET")
-                    .arg(CacheKey::SessionByIndex(Index::Num(
-                        records.current_epoch().into(),
-                    )))
-                    .arg(data)
-                    .cmd("EXPIRE")
-                    .arg(CacheKey::SessionByIndex(Index::Num(
-                        records.current_epoch().into(),
-                    )))
-                    .arg(config.cache_writer_prunning)
-                    // by `current`
-                    .cmd("SET")
-                    .arg(CacheKey::SessionByIndex(Index::Str(String::from(
-                        "current",
-                    ))))
-                    .arg(records.current_epoch().to_string())
-                    //NOTE: make session_stats available to previous session by copying stats from previous block
-                    .cmd("COPY")
-                    .arg(CacheKey::BlockByIndexStats(Index::Num(*current_block - 1)))
-                    .arg(CacheKey::SessionByIndexStats(Index::Num(
-                        (current_epoch - 1).into(),
-                    )))
-                    .cmd("EXPIRE")
-                    .arg(CacheKey::SessionByIndexStats(Index::Num(
-                        (current_epoch - 1).into(),
-                    )))
-                    .arg(config.cache_writer_prunning)
-                    .query_async::<_, ()>(&mut cache as &mut Connection)
-                    .await
-                    .map_err(CacheError::RedisCMDError)?;
-            }
+    let records_cloned = records.clone();
+    async_std::task::spawn(async move {
+        if let Err(e) = try_fetch_discovery_data(&records_cloned, block_hash).await {
+            error!("try_fetch_discovery_data error: {:?}", e);
         }
-
-        // ---
-        // cache authorities every new session
-        if let Some(authorities) = records.get_authorities(None) {
-            for authority_idx in authorities.iter() {
-                if let Some(authority_record) = records.get_authority_record(*authority_idx, None) {
-                    if let Some(stash) = authority_record.address() {
-                        // cache authority key for the current era and session
-                        // along with data_type and identity
-                        let mut data: BTreeMap<String, String> = BTreeMap::new();
-                        data.insert(String::from("address"), stash.to_string());
-                        redis::pipe()
-                            .atomic()
-                            .cmd("HSET")
-                            .arg(CacheKey::AuthorityRecord(
-                                current_era,
-                                current_epoch,
-                                *authority_idx,
-                            ))
-                            .arg(data)
-                            .cmd("EXPIRE")
-                            .arg(CacheKey::AuthorityRecord(
-                                current_era,
-                                current_epoch,
-                                *authority_idx,
-                            ))
-                            .arg(config.cache_writer_prunning)
-                            .query_async::<_, ()>(&mut cache as &mut Connection)
-                            .await
-                            .map_err(CacheError::RedisCMDError)?;
-
-                        // cache authority key by stash account
-                        let mut data: BTreeMap<String, String> = BTreeMap::new();
-                        data.insert(String::from("era"), current_era.to_string());
-                        data.insert(String::from("session"), current_epoch.to_string());
-                        data.insert(String::from("authority"), (*authority_idx).to_string());
-                        redis::pipe()
-                            .atomic()
-                            .cmd("HSET")
-                            .arg(CacheKey::AuthorityKeyByAccountAndSession(
-                                stash.clone(),
-                                current_epoch,
-                            ))
-                            .arg(data)
-                            .cmd("EXPIRE")
-                            .arg(CacheKey::AuthorityKeyByAccountAndSession(
-                                stash.clone(),
-                                current_epoch,
-                            ))
-                            .arg(config.cache_writer_prunning)
-                            .query_async::<_, ()>(&mut cache as &mut Connection)
-                            .await
-                            .map_err(CacheError::RedisCMDError)?;
-
-                        // cache authority key into authorities by session to be easily filtered
-                        let _: () = redis::pipe()
-                            .atomic()
-                            .cmd("SADD")
-                            .arg(CacheKey::AuthorityKeysBySession(current_epoch))
-                            .arg(
-                                CacheKey::AuthorityRecord(
-                                    current_era,
-                                    current_epoch,
-                                    *authority_idx,
-                                )
-                                .to_string(),
-                            )
-                            .cmd("EXPIRE")
-                            .arg(CacheKey::AuthorityKeysBySession(current_epoch))
-                            .arg(config.cache_writer_prunning)
-                            .query_async::<_, ()>(&mut cache as &mut Connection)
-                            .await
-                            .map_err(CacheError::RedisCMDError)?;
-
-                        if records.get_para_record(*authority_idx, None).is_some() {
-                            // cache authority key into authorities by session (only para_validators) to be easily filtered
-                            let _: () = redis::pipe()
-                                .atomic()
-                                .cmd("SADD")
-                                .arg(CacheKey::AuthorityKeysBySessionParaOnly(current_epoch))
-                                .arg(
-                                    CacheKey::AuthorityRecord(
-                                        current_era,
-                                        current_epoch,
-                                        *authority_idx,
-                                    )
-                                    .to_string(),
-                                )
-                                .cmd("EXPIRE")
-                                .arg(CacheKey::AuthorityKeysBySessionParaOnly(current_epoch))
-                                .arg(config.cache_writer_prunning)
-                                .query_async::<_, ()>(&mut cache as &mut Connection)
-                                .await
-                                .map_err(CacheError::RedisCMDError)?;
-                        }
-                    }
-                }
-            }
-        }
-        // Log sesssion cache processed duration time
-        info!("Session #{} cached ({:?})", current_epoch, start.elapsed());
-    }
+    });
 
     Ok(())
 }
@@ -1259,14 +1068,12 @@ async fn fetch_and_track_availability(
 }
 
 pub async fn track_records(
-    onet: &Onet,
+    rc_api: &OnlineClient<PolkadotConfig>,
+    rc_rpc: &LegacyRpcMethods<PolkadotConfig>,
     records: &mut Records,
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
 ) -> Result<(), OnetError> {
-    let rc_api = onet.relay_client().clone();
-    let rc_rpc = onet.relay_rpc().clone();
-
     // Update records current block number
     records.set_current_block_number(rc_block_number.into());
 
@@ -2323,6 +2130,7 @@ pub async fn try_run_cache_nomination_pools_stats(
     Ok(())
 }
 
+// TODO: move cache_nomination_pools_nominees into cache package
 pub async fn cache_nomination_pools_nominees(
     rc_block_number: BlockNumber,
     rc_block_hash: H256,

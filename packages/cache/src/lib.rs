@@ -23,4 +23,4 @@ pub mod cache;
 pub mod provider;
 pub mod types;
 
-pub use cache::cache_records;
+pub use cache::{cache_records, cache_records_at_session};

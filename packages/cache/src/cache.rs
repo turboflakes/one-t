@@ -20,14 +20,16 @@
 // SOFTWARE.
 
 use super::types::{CacheKey, Index, Verbosity};
+use log::info;
 use onet_config::{Config, CONFIG};
 use onet_errors::{CacheError, OnetError};
 use onet_records::{
-    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, ParaId, ParaRecord, ParaStats,
-    ParachainRecord, Records, SessionStats,
+    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, ParaId, ParaRecord,
+    ParaStats, ParachainRecord, Records, SessionStats,
 };
 use redis::aio::Connection;
-use std::{collections::BTreeMap, result::Result};
+use std::{collections::BTreeMap, result::Result, time::Instant};
+use subxt::utils::AccountId32;
 
 // Cache records at every block
 pub async fn cache_records(cache: &mut Connection, records: &Records) -> Result<(), OnetError> {
@@ -82,6 +84,47 @@ async fn process_authority_records(
         )
         .await?;
     }
+
+    Ok(())
+}
+
+async fn process_authority(
+    cache: &mut Connection,
+    config: &Config,
+    records: &Records,
+    session_stats: &mut SessionStats,
+    parachains: &mut BTreeMap<ParaId, ParachainRecord>,
+    authority_idx: AuthorityIndex,
+) -> Result<(), OnetError> {
+    let Some(authority_record) = records.get_authority_record(authority_idx, None) else {
+        return Ok(());
+    };
+
+    let _ = update_session_stats_with_authority_record_data(session_stats, &authority_record);
+
+    // TODO: deprecate records.current_era() from CacheKey::AuthorityRecord
+    let authority_key = CacheKey::AuthorityRecord(
+        records.current_era(),
+        records.current_epoch(),
+        authority_idx,
+    );
+
+    let mut data = BTreeMap::new();
+    data.insert(
+        "auth".to_string(),
+        serde_json::to_string(&authority_record)?,
+    );
+
+    if let Some(para_record) = records.get_para_record(authority_idx, None) {
+        let _ = update_session_stats_with_para_record_data(session_stats, para_record);
+        cache_para_stats_data(cache, config, &authority_key, &para_record).await?;
+        cache_para_summary_data(cache, config, &authority_key, &para_record).await?;
+        let _ = update_parachains_with_para_record_data(parachains, &para_record, authority_idx);
+
+        data.insert("para".to_string(), serde_json::to_string(&para_record)?);
+    }
+
+    cache_authority_data(cache, config, &authority_key, &data).await?;
 
     Ok(())
 }
@@ -249,47 +292,6 @@ async fn cache_current_block(
     Ok(())
 }
 
-async fn process_authority(
-    cache: &mut Connection,
-    config: &Config,
-    records: &Records,
-    session_stats: &mut SessionStats,
-    parachains: &mut BTreeMap<ParaId, ParachainRecord>,
-    authority_idx: AuthorityIndex,
-) -> Result<(), OnetError> {
-    let Some(authority_record) = records.get_authority_record(authority_idx, None) else {
-        return Ok(());
-    };
-
-    let _ = update_session_stats_with_authority_record_data(session_stats, &authority_record);
-
-    // TODO: deprecate records.current_era() from CacheKey::AuthorityRecord
-    let authority_key = CacheKey::AuthorityRecord(
-        records.current_era(),
-        records.current_epoch(),
-        authority_idx,
-    );
-
-    let mut data = BTreeMap::new();
-    data.insert(
-        "auth".to_string(),
-        serde_json::to_string(&authority_record)?,
-    );
-
-    if let Some(para_record) = records.get_para_record(authority_idx, None) {
-        let _ = update_session_stats_with_para_record_data(session_stats, para_record);
-        cache_para_stats_data(cache, config, &authority_key, &para_record).await?;
-        cache_para_summary_data(cache, config, &authority_key, &para_record).await?;
-        let _ = update_parachains_with_para_record_data(parachains, &para_record, authority_idx);
-
-        data.insert("para".to_string(), serde_json::to_string(&para_record)?);
-    }
-
-    cache_authority_data(cache, config, &authority_key, &data).await?;
-
-    Ok(())
-}
-
 async fn cache_authority_data(
     cache: &mut Connection,
     config: &Config,
@@ -368,6 +370,260 @@ async fn cache_parachain_stats(
             .await
             .map_err(CacheError::RedisCMDError)?;
     }
+
+    Ok(())
+}
+
+// Cache records at every new session
+pub async fn cache_records_at_session(
+    cache: &mut Connection,
+    records: &Records,
+    start_session_index: EpochIndex,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if !config.cache_writer_enabled {
+        return Ok(());
+    }
+
+    let start = Instant::now();
+
+    // --- Cache SessionByIndex -> `current` or `epoch_index` (to be able to search history)
+    cache_session_by_index(cache, &config, records, start_session_index).await?;
+
+    process_authority_records_at_session(cache, &config, records).await?;
+
+    // Log sesssion cache processed duration time
+    info!(
+        "Session #{} cached ({:?})",
+        records.current_epoch(),
+        start.elapsed()
+    );
+
+    Ok(())
+}
+
+async fn process_authority_records_at_session(
+    cache: &mut Connection,
+    config: &Config,
+    records: &Records,
+) -> Result<(), OnetError> {
+    let Some(authorities) = records.get_authorities(None) else {
+        return Ok(());
+    };
+
+    for authority_idx in authorities {
+        process_authority_at_session(cache, config, records, authority_idx).await?;
+    }
+
+    Ok(())
+}
+
+async fn process_authority_at_session(
+    cache: &mut Connection,
+    config: &Config,
+    records: &Records,
+    authority_idx: AuthorityIndex,
+) -> Result<(), OnetError> {
+    let Some(authority_record) = records.get_authority_record(authority_idx, None) else {
+        return Ok(());
+    };
+
+    let Some(stash) = authority_record.address() else {
+        return Ok(());
+    };
+
+    // TODO: deprecate records.current_era() from CacheKey::AuthorityRecord
+    let authority_key = CacheKey::AuthorityRecord(
+        records.current_era(),
+        records.current_epoch(),
+        authority_idx,
+    );
+
+    cache_authority_stash(cache, config, &authority_key, stash).await?;
+    cache_authority_key(
+        cache,
+        config,
+        records.current_era(),
+        records.current_epoch(),
+        authority_idx,
+        stash,
+    )
+    .await?;
+    cache_authority_key_into_authorities(cache, config, records.current_epoch(), &authority_key)
+        .await?;
+
+    if records.get_para_record(authority_idx, None).is_some() {
+        cache_para_authority_key_into_authorities(
+            cache,
+            config,
+            records.current_epoch(),
+            &authority_key,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+// cache authority stash account
+async fn cache_authority_stash(
+    cache: &mut Connection,
+    config: &Config,
+    authority_key: &CacheKey,
+    stash: &AccountId32,
+) -> Result<(), OnetError> {
+    let mut data: BTreeMap<String, String> = BTreeMap::new();
+    data.insert(String::from("address"), stash.to_string());
+    redis::pipe()
+        .atomic()
+        .cmd("HSET")
+        .arg(authority_key.to_string())
+        .arg(data)
+        .cmd("EXPIRE")
+        .arg(authority_key.to_string())
+        .arg(config.cache_writer_prunning)
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
+}
+
+// cache authority key by stash account
+async fn cache_authority_key(
+    cache: &mut Connection,
+    config: &Config,
+    current_era: EraIndex,
+    current_epoch: EpochIndex,
+    authority_idx: AuthorityIndex,
+    stash: &AccountId32,
+) -> Result<(), OnetError> {
+    let mut data: BTreeMap<String, String> = BTreeMap::new();
+    data.insert(String::from("era"), current_era.to_string());
+    data.insert(String::from("session"), current_epoch.to_string());
+    data.insert(String::from("authority"), authority_idx.to_string());
+    redis::pipe()
+        .atomic()
+        .cmd("HSET")
+        .arg(CacheKey::AuthorityKeyByAccountAndSession(
+            stash.clone(),
+            current_epoch,
+        ))
+        .arg(data)
+        .cmd("EXPIRE")
+        .arg(CacheKey::AuthorityKeyByAccountAndSession(
+            stash.clone(),
+            current_epoch,
+        ))
+        .arg(config.cache_writer_prunning)
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
+}
+
+// cache authority key into authorities by session to be easily filtered
+async fn cache_authority_key_into_authorities(
+    cache: &mut Connection,
+    config: &Config,
+    current_epoch: EpochIndex,
+    authority_key: &CacheKey,
+) -> Result<(), OnetError> {
+    redis::pipe()
+        .atomic()
+        .cmd("SADD")
+        .arg(CacheKey::AuthorityKeysBySession(current_epoch))
+        .arg(authority_key.to_string())
+        .cmd("EXPIRE")
+        .arg(CacheKey::AuthorityKeysBySession(current_epoch))
+        .arg(config.cache_writer_prunning)
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
+}
+
+// cache authority key into authorities by session (only para_validators) to be easily filtered
+async fn cache_para_authority_key_into_authorities(
+    cache: &mut Connection,
+    config: &Config,
+    current_epoch: EpochIndex,
+    authority_key: &CacheKey,
+) -> Result<(), OnetError> {
+    redis::pipe()
+        .atomic()
+        .cmd("SADD")
+        .arg(CacheKey::AuthorityKeysBySessionParaOnly(current_epoch))
+        .arg(authority_key.to_string())
+        .cmd("EXPIRE")
+        .arg(CacheKey::AuthorityKeysBySessionParaOnly(current_epoch))
+        .arg(config.cache_writer_prunning)
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
+}
+
+async fn cache_session_by_index(
+    cache: &mut Connection,
+    config: &Config,
+    records: &Records,
+    start_session_index: u32,
+) -> Result<(), OnetError> {
+    let Some(start_block) = records.start_block(None) else {
+        return Ok(());
+    };
+
+    let Some(current_block) = records.current_block() else {
+        return Ok(());
+    };
+
+    // era session index
+    let current_epoch = records.current_epoch();
+    let era_session_index = 1 + current_epoch - start_session_index;
+
+    let mut data: BTreeMap<String, String> = BTreeMap::new();
+    data.insert(String::from("era"), records.current_era().to_string());
+    data.insert(String::from("session"), current_epoch.to_string());
+    data.insert(String::from("start_block"), (*start_block).to_string());
+    data.insert(String::from("current_block"), (*current_block).to_string());
+    data.insert(
+        String::from("era_session_index"),
+        era_session_index.to_string(),
+    );
+
+    redis::pipe()
+        .atomic()
+        // by `epoch_index`
+        .cmd("HSET")
+        .arg(CacheKey::SessionByIndex(Index::Num(current_epoch.into())))
+        .arg(data)
+        .cmd("EXPIRE")
+        .arg(CacheKey::SessionByIndex(Index::Num(current_epoch.into())))
+        .arg(config.cache_writer_prunning)
+        // by `current`
+        .cmd("SET")
+        .arg(CacheKey::SessionByIndex(Index::Str(String::from(
+            "current",
+        ))))
+        .arg(current_epoch.to_string())
+        //NOTE: make session_stats available to previous session by copying stats from previous block
+        .cmd("COPY")
+        .arg(CacheKey::BlockByIndexStats(Index::Num(*current_block - 1)))
+        .arg(CacheKey::SessionByIndexStats(Index::Num(
+            (current_epoch - 1).into(),
+        )))
+        .cmd("EXPIRE")
+        .arg(CacheKey::SessionByIndexStats(Index::Num(
+            (current_epoch - 1).into(),
+        )))
+        .arg(config.cache_writer_prunning)
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
 
     Ok(())
 }
