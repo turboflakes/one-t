@@ -19,14 +19,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use super::types::{CacheKey, Index, Verbosity};
+use super::limits::build_limits_from_session;
+use super::types::{CacheKey, Index, Trait, Verbosity};
 use log::info;
 use onet_config::{Config, CONFIG};
 use onet_errors::{CacheError, OnetError};
 use onet_records::{
-    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, ParaId, ParaRecord,
-    ParaStats, ParachainRecord, Records, SessionStats,
+    AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, NetworkSessionStats,
+    ParaId, ParaRecord, ParaStats, ParachainRecord, Records, SessionStats, ValidatorProfileRecord,
 };
+use onet_report::Network;
 use redis::aio::Connection;
 use std::{collections::BTreeMap, result::Result, time::Instant};
 use subxt::utils::AccountId32;
@@ -621,6 +623,161 @@ async fn cache_session_by_index(
             (current_epoch - 1).into(),
         )))
         .arg(config.cache_writer_prunning)
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
+}
+
+pub async fn cache_validator_profile(
+    cache: &mut Connection,
+    config: &Config,
+    profile: &ValidatorProfileRecord,
+    network: &Network,
+    stash: &AccountId32,
+    current_epoch: EpochIndex,
+) -> Result<(), OnetError> {
+    let serialized = serde_json::to_string(&profile)?;
+    redis::pipe()
+        .atomic()
+        .cmd("SET")
+        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+        .arg(serialized)
+        .cmd("EXPIRE")
+        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+        .arg(config.cache_writer_prunning)
+        .cmd("SADD")
+        .arg(CacheKey::ValidatorAccountsBySession(current_epoch))
+        .arg(stash.to_string())
+        .cmd("EXPIRE")
+        .arg(CacheKey::ValidatorAccountsBySession(current_epoch))
+        .arg(config.cache_writer_prunning)
+        // cache own_stake rank
+        .cmd("ZADD")
+        .arg(CacheKey::NomiBoardBySessionAndTrait(
+            current_epoch,
+            Trait::OwnStake,
+        ))
+        .arg(
+            profile
+                .own_stake_trimmed(network.token_decimals as u32)
+                .to_string(),
+        ) // score
+        .arg(stash.to_string())
+        .cmd("EXPIRE")
+        .arg(CacheKey::NomiBoardBySessionAndTrait(
+            current_epoch,
+            Trait::OwnStake,
+        ))
+        .arg(config.cache_writer_prunning)
+        // cache nominators_stake rank
+        .cmd("ZADD")
+        .arg(CacheKey::NomiBoardBySessionAndTrait(
+            current_epoch,
+            Trait::NominatorsStake,
+        ))
+        .arg(
+            profile
+                .nominators_stake_trimmed(network.token_decimals as u32)
+                .to_string(),
+        ) // score
+        .arg(stash.to_string())
+        .cmd("EXPIRE")
+        .arg(CacheKey::NomiBoardBySessionAndTrait(
+            current_epoch,
+            Trait::NominatorsStake,
+        ))
+        .arg(config.cache_writer_prunning)
+        // cache nominators_counter rank
+        .cmd("ZADD")
+        .arg(CacheKey::NomiBoardBySessionAndTrait(
+            current_epoch,
+            Trait::NominatorsCounter,
+        ))
+        .arg(profile.nominators_counter.to_string()) // score
+        .arg(stash.to_string())
+        .cmd("EXPIRE")
+        .arg(CacheKey::NomiBoardBySessionAndTrait(
+            current_epoch,
+            Trait::NominatorsCounter,
+        ))
+        .arg(config.cache_writer_prunning)
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
+}
+
+pub async fn cache_network_stats_at_session(
+    cache: &mut Connection,
+    config: &Config,
+    stats: &NetworkSessionStats,
+    current_epoch: EpochIndex,
+) -> Result<(), OnetError> {
+    let serialized = serde_json::to_string(&stats)?;
+    redis::pipe()
+        .atomic()
+        .cmd("SET")
+        .arg(CacheKey::NetworkStatsBySession(Index::Num(
+            current_epoch.into(),
+        )))
+        .arg(serialized)
+        .cmd("EXPIRE")
+        .arg(CacheKey::NetworkStatsBySession(Index::Num(
+            current_epoch.into(),
+        )))
+        .arg(config.cache_writer_prunning)
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
+}
+
+pub async fn cache_board_limits_at_session(
+    cache: &mut Connection,
+    config: &Config,
+    rc_block_number: BlockNumber,
+    current_era: EraIndex,
+    current_epoch: EpochIndex,
+) -> Result<(), OnetError> {
+    // Set synced session associated with era (useful for nomi boards)
+    let mut era_data: BTreeMap<String, String> = BTreeMap::new();
+    era_data.insert(String::from("synced_session"), current_epoch.to_string());
+    era_data.insert(
+        String::from(format!("synced_at_block:{}", current_epoch)),
+        rc_block_number.to_string(),
+    );
+
+    // Build session limits
+    let limits = build_limits_from_session(cache, current_epoch).await?;
+    let limits_serialized = serde_json::to_string(&limits)?;
+
+    // Set era and limits associated with session (useful for nomi boards)
+    let mut session_data: BTreeMap<String, String> = BTreeMap::new();
+    session_data.insert(String::from("era"), current_era.to_string());
+    session_data.insert(String::from("limits"), limits_serialized.to_string());
+
+    // by `current_epoch`
+    redis::pipe()
+        .atomic()
+        .cmd("HSET")
+        .arg(CacheKey::EraByIndex(Index::Num(current_era.into())))
+        .arg(era_data)
+        .cmd("EXPIRE")
+        .arg(CacheKey::EraByIndex(Index::Num(current_era.into())))
+        .arg(config.cache_writer_prunning)
+        .cmd("HSET")
+        .arg(CacheKey::NomiBoardEraBySession(current_epoch))
+        .arg(session_data)
+        .cmd("EXPIRE")
+        .arg(CacheKey::NomiBoardEraBySession(current_epoch))
+        .arg(config.cache_writer_prunning)
+        .cmd("SET")
+        .arg(CacheKey::EraByIndex(Index::Current))
+        .arg(current_era.to_string())
         .query_async::<_, ()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;

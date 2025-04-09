@@ -60,7 +60,7 @@ pub async fn fetch_active_era_info(
         .await?
         .ok_or_else(|| {
             OnetError::from(format!(
-                "Active era not defined at block hash {ah_block_hash}"
+                "Active era not defined at block hash {ah_block_hash:?}"
             ))
         })
 }
@@ -80,7 +80,9 @@ pub async fn fetch_eras_start_session_index(
         .fetch(&addr)
         .await?
         .ok_or_else(|| {
-            OnetError::from(format!("Start session index at block hash {ah_block_hash}"))
+            OnetError::from(format!(
+                "Start session index at block hash {ah_block_hash:?}"
+            ))
         })
 }
 
@@ -98,7 +100,7 @@ pub async fn fetch_eras_total_stake(
         .await?
         .ok_or_else(|| {
             OnetError::from(format!(
-                "Eras total stake not defined at block hash {ah_block_hash}"
+                "Eras total stake not defined at block hash {ah_block_hash:?}"
             ))
         })
 }
@@ -119,7 +121,7 @@ pub async fn fetch_eras_validator_reward(
         .await?
         .ok_or_else(|| {
             OnetError::from(format!(
-                "Eras validator reward not defined at block hash {ah_block_hash}"
+                "Eras validator reward not defined at block hash {ah_block_hash:?} for era {era}"
             ))
         })
 }
@@ -138,7 +140,7 @@ pub async fn fetch_nominators(
         .await?
         .ok_or_else(|| {
             OnetError::from(format!(
-                "Nominators not defined at block hash {ah_block_hash}"
+                "Nominators not defined at block hash {ah_block_hash:?}"
             ))
         })
 }
@@ -158,7 +160,7 @@ pub async fn fetch_last_pool_id(
         .await?
         .ok_or_else(|| {
             OnetError::from(format!(
-                "Last pool ID not defined at block hash {ah_block_hash}"
+                "Last pool ID not defined at block hash {ah_block_hash:?}"
             ))
         })
 }
@@ -179,7 +181,7 @@ pub async fn fetch_bonded_pools(
         .await?
         .ok_or_else(|| {
             OnetError::from(format!(
-                "Bonded Pools not defined at block hash {ah_block_hash}"
+                "Bonded Pools not defined at block hash {ah_block_hash:?}"
             ))
         })
 }
@@ -200,7 +202,7 @@ pub async fn fetch_pool_metadata(
         .await?
         .ok_or_else(|| {
             OnetError::from(format!(
-                "PoolMetadata not defined at block hash {ah_block_hash}"
+                "PoolMetadata not defined at block hash {ah_block_hash:?}"
             ))
         })
 }
@@ -221,7 +223,7 @@ pub async fn fetch_era_reward_points(
         .await?
         .ok_or_else(|| {
             OnetError::from(format!(
-                "Era reward points not found at block hash {ah_block_hash} and era {era}",
+                "Era reward points not found at block hash {ah_block_hash:?} and era {era}",
             ))
         })
 }
@@ -240,7 +242,7 @@ pub async fn fetch_bonded_controller_account(
         .await?
         .ok_or_else(|| {
             OnetError::from(format!(
-                "Bonded controller not found at block hash {ah_block_hash} and era {stash}"
+                "Bonded controller not found at block hash {ah_block_hash:?} and era {stash}"
             ))
         })
 }
@@ -259,7 +261,7 @@ pub async fn fetch_ledger_from_controller(
         .await?
         .ok_or_else(|| {
             OnetError::from(format!(
-                "Bonded controller not found at block hash {ah_block_hash}"
+                "Bonded controller not found at block hash {ah_block_hash:?}"
             ))
         })
 }

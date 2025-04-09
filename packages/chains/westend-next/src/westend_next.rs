@@ -48,7 +48,10 @@ use onet_asset_hub_westend_next::{
 };
 use onet_asset_hub_westend_next::{AssetHubCall, NominationPoolsCall};
 use onet_cache::types::{CacheKey, Index, Trait, Verbosity};
-use onet_cache::{cache_records, cache_records_at_session};
+use onet_cache::{
+    cache_board_limits_at_session, cache_network_stats_at_session, cache_records,
+    cache_records_at_session, cache_validator_profile,
+};
 use onet_config::{Config, CONFIG, EPOCH_FILENAME};
 use onet_core::{
     get_account_id_from_storage_key, get_latest_block_number_processed, get_signer_from_seed,
@@ -58,7 +61,7 @@ use onet_discovery::try_fetch_discovery_data;
 use onet_dn::try_fetch_stashes_from_remote_url;
 use onet_errors::{CacheError, OnetError};
 use onet_matrix::FileInfo;
-use onet_mcda::{criterias::build_limits_from_session, scores::base_decimals};
+use onet_mcda::scores::base_decimals;
 use onet_people_westend::{bytes_to_str, get_display_name, get_identity};
 use onet_pools::{
     nomination_pool_account, Account, AccountType, ActiveNominee, Pool, PoolNominees, PoolStats,
@@ -485,9 +488,6 @@ async fn process_new_session_event(
     )
     .await?;
 
-    // // Cache session stats records every new session
-    // try_run_cache_session_stats_records(rc_block_hash, is_loading).await?;
-
     // // Cache nomination pools every new session
     // try_run_cache_nomination_pools(rc_block_number, rc_block_hash).await?;
 
@@ -505,7 +505,7 @@ async fn process_asset_hub_events(
     ah_api: &OnlineClient<PolkadotConfig>,
     ah_rpc: &LegacyRpcMethods<PolkadotConfig>,
     rc_block_number: BlockNumber,
-    _rc_block_hash: H256,
+    rc_block_hash: H256,
     ah_block_hash: H256,
     subscribers: &mut Subscribers,
     records: &mut Records,
@@ -530,6 +530,15 @@ async fn process_asset_hub_events(
             let start_session_index =
                 fetch_eras_start_session_index(&ah_api, ah_block_hash, &ev.active_era).await?;
             cache_records_at_session(cache, records, start_session_index).await?;
+
+            // Cache session stats records every new session
+            try_run_cache_session_stats_records(
+                rc_block_number,
+                rc_block_hash,
+                ah_block_hash,
+                is_loading,
+            )
+            .await?;
 
             try_run_matrix_reports(previous_era_index, subscribers, records, is_loading).await?;
         } else if let Some(ev) = event.as_event::<PagedElectionProceeded>()? {
@@ -2531,20 +2540,18 @@ pub async fn try_run_cache_session_stats_records(
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.cache_writer_enabled {
-        async_std::task::spawn(async move {
-            if let Err(e) = cache_session_stats_records(
-                rc_block_number,
-                rc_block_hash,
-                ah_block_hash,
-                is_loading,
-            )
-            .await
-            {
-                error!("try_run_cache_session_stats_records error: {:?}", e);
-            }
-        });
+    if !config.cache_writer_enabled {
+        return Ok(());
     }
+
+    async_std::task::spawn(async move {
+        if let Err(e) =
+            cache_session_stats_records(rc_block_number, rc_block_hash, ah_block_hash, is_loading)
+                .await
+        {
+            error!("try_run_cache_session_stats_records error: {:?}", e);
+        }
+    });
 
     Ok(())
 }
@@ -2602,21 +2609,21 @@ pub async fn cache_session_stats_records(
         // validator stash address
         let stash = get_account_id_from_storage_key(storage_resp.key_bytes);
         // create a new validator instance
-        let mut v = ValidatorProfileRecord::new(stash.clone());
+        let mut profile = ValidatorProfileRecord::new(stash.clone());
         // validator controller address
         let controller = fetch_bonded_controller_account(&ah_api, ah_block_hash, &stash).await?;
-        v.controller = Some(controller.clone());
+        profile.controller = Some(controller.clone());
         // get own stake
         let staking_ledger =
             fetch_ledger_from_controller(&ah_api, ah_block_hash, &controller).await?;
-        v.own_stake = staking_ledger.active;
+        profile.own_stake = staking_ledger.active;
 
         // deconstruct commisssion
         let Perbill(commission) = storage_resp.value.commission;
-        v.commission = commission;
+        profile.commission = commission;
 
         // verify subset (1_000_000_000 = 100% commission)
-        v.subset = if commission != 1_000_000_000 {
+        profile.subset = if commission != 1_000_000_000 {
             if !tvp_stashes.contains(&stash) {
                 Subset::NONTVP
             } else {
@@ -2627,21 +2634,21 @@ pub async fn cache_session_stats_records(
         };
 
         // check if is in active set
-        v.is_active = authorities.contains(&stash);
+        profile.is_active = authorities.contains(&stash);
 
         // calculate session mvr and avg it with previous value
-        v.mvr =
+        profile.mvr =
             try_calculate_avg_mvr_by_session_and_stash(&onet, epoch_index, stash.clone()).await?;
         // keep track of when mvr was updated
-        if v.mvr.is_some() {
-            v.mvr_session = Some(epoch_index);
+        if profile.mvr.is_some() {
+            profile.mvr_session = Some(epoch_index);
         }
 
         // check if block nominations
-        v.is_blocked = storage_resp.value.blocked;
+        profile.is_blocked = storage_resp.value.blocked;
 
         // get identity
-        v.identity = get_identity(&onet, &stash, None).await?;
+        profile.identity = get_identity(&onet, &stash, None).await?;
 
         // set nominators data
         if let Some(nominators) = nominators_map.get(&stash) {
@@ -2652,79 +2659,15 @@ pub async fn cache_session_stats_records(
             //     .collect::<Vec<String>>()
             //     .join(",");
 
-            v.nominators_stake = nominators.iter().map(|(_, x, _)| x).sum();
-            v.nominators_raw_stake = nominators.iter().map(|(_, x, y)| x / y).sum();
-            v.nominators_counter = nominators.len().try_into().unwrap();
+            profile.nominators_stake = nominators.iter().map(|(_, x, _)| x).sum();
+            profile.nominators_raw_stake = nominators.iter().map(|(_, x, y)| x / y).sum();
+            profile.nominators_counter = nominators.len().try_into().unwrap();
         }
 
-        let serialized = serde_json::to_string(&v)?;
-        redis::pipe()
-            .atomic()
-            .cmd("SET")
-            .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
-            .arg(serialized)
-            .cmd("EXPIRE")
-            .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
-            .arg(config.cache_writer_prunning)
-            .cmd("SADD")
-            .arg(CacheKey::ValidatorAccountsBySession(epoch_index))
-            .arg(stash.to_string())
-            .cmd("EXPIRE")
-            .arg(CacheKey::ValidatorAccountsBySession(epoch_index))
-            .arg(config.cache_writer_prunning)
-            // cache own_stake rank
-            .cmd("ZADD")
-            .arg(CacheKey::NomiBoardBySessionAndTrait(
-                epoch_index,
-                Trait::OwnStake,
-            ))
-            .arg(
-                v.own_stake_trimmed(network.token_decimals as u32)
-                    .to_string(),
-            ) // score
-            .arg(stash.to_string())
-            .cmd("EXPIRE")
-            .arg(CacheKey::NomiBoardBySessionAndTrait(
-                epoch_index,
-                Trait::OwnStake,
-            ))
-            .arg(config.cache_writer_prunning)
-            // cache nominators_stake rank
-            .cmd("ZADD")
-            .arg(CacheKey::NomiBoardBySessionAndTrait(
-                epoch_index,
-                Trait::NominatorsStake,
-            ))
-            .arg(
-                v.nominators_stake_trimmed(network.token_decimals as u32)
-                    .to_string(),
-            ) // score
-            .arg(stash.to_string())
-            .cmd("EXPIRE")
-            .arg(CacheKey::NomiBoardBySessionAndTrait(
-                epoch_index,
-                Trait::NominatorsStake,
-            ))
-            .arg(config.cache_writer_prunning)
-            // cache nominators_counter rank
-            .cmd("ZADD")
-            .arg(CacheKey::NomiBoardBySessionAndTrait(
-                epoch_index,
-                Trait::NominatorsCounter,
-            ))
-            .arg(v.nominators_counter.to_string()) // score
-            .arg(stash.to_string())
-            .cmd("EXPIRE")
-            .arg(CacheKey::NomiBoardBySessionAndTrait(
-                epoch_index,
-                Trait::NominatorsCounter,
-            ))
-            .arg(config.cache_writer_prunning)
-            .query_async::<_, ()>(&mut cache as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?;
+        cache_validator_profile(&mut cache, &config, &profile, &network, &stash, epoch_index)
+            .await?;
 
-        validators.push(v);
+        validators.push(profile);
     }
 
     // track chilled nodes by checking if a session authority is no longer part of the validator list
@@ -2862,23 +2805,10 @@ pub async fn cache_session_stats_records(
         nss.subsets.push(ss);
     }
 
-    // serialize and cache
-    let serialized = serde_json::to_string(&nss)?;
-    redis::pipe()
-        .atomic()
-        .cmd("SET")
-        .arg(CacheKey::NetworkStatsBySession(Index::Num(
-            epoch_index.into(),
-        )))
-        .arg(serialized)
-        .cmd("EXPIRE")
-        .arg(CacheKey::NetworkStatsBySession(Index::Num(
-            epoch_index.into(),
-        )))
-        .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(&mut cache as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?;
+    cache_network_stats_at_session(&mut cache, &config, &nss, epoch_index).await?;
+
+    cache_board_limits_at_session(&mut cache, &config, rc_block_number, era_index, epoch_index)
+        .await?;
 
     // Log sesssion cache processed duration time
     info!(
@@ -2886,45 +2816,6 @@ pub async fn cache_session_stats_records(
         epoch_index,
         start.elapsed()
     );
-
-    // Set synced session associated with era (useful for nomi boards)
-    let mut era_data: BTreeMap<String, String> = BTreeMap::new();
-    era_data.insert(String::from("synced_session"), epoch_index.to_string());
-    era_data.insert(
-        String::from(format!("synced_at_block:{}", epoch_index)),
-        rc_block_number.to_string(),
-    );
-
-    // Build session limits
-    let limits = build_limits_from_session(&onet.cache.clone(), epoch_index).await?;
-    let limits_serialized = serde_json::to_string(&limits)?;
-
-    // Set era and limits associated with session (useful for nomi boards)
-    let mut session_data: BTreeMap<String, String> = BTreeMap::new();
-    session_data.insert(String::from("era"), era_index.to_string());
-    session_data.insert(String::from("limits"), limits_serialized.to_string());
-
-    // by `epoch_index`
-    redis::pipe()
-        .atomic()
-        .cmd("HSET")
-        .arg(CacheKey::EraByIndex(Index::Num(era_index.into())))
-        .arg(era_data)
-        .cmd("EXPIRE")
-        .arg(CacheKey::EraByIndex(Index::Num(era_index.into())))
-        .arg(config.cache_writer_prunning)
-        .cmd("HSET")
-        .arg(CacheKey::NomiBoardEraBySession(epoch_index))
-        .arg(session_data)
-        .cmd("EXPIRE")
-        .arg(CacheKey::NomiBoardEraBySession(epoch_index))
-        .arg(config.cache_writer_prunning)
-        .cmd("SET")
-        .arg(CacheKey::EraByIndex(Index::Current))
-        .arg(era_index.to_string())
-        .query_async::<_, ()>(&mut cache as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?;
 
     Ok(())
 }

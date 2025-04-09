@@ -20,7 +20,11 @@
 // SOFTWARE.
 
 pub mod cache;
+pub mod limits;
 pub mod provider;
 pub mod types;
 
-pub use cache::{cache_records, cache_records_at_session};
+pub use cache::{
+    cache_board_limits_at_session, cache_network_stats_at_session, cache_records,
+    cache_records_at_session, cache_validator_profile,
+};
