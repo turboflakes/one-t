@@ -50,7 +50,7 @@ use onet_asset_hub_westend_next::{AssetHubCall, NominationPoolsCall};
 use onet_cache::types::{CacheKey, Index, Trait, Verbosity};
 use onet_cache::{
     cache_board_limits_at_session, cache_network_stats_at_session, cache_records,
-    cache_records_at_session, cache_validator_profile,
+    cache_records_at_session, cache_validator_profile, cache_validator_profile_only,
 };
 use onet_config::{Config, CONFIG, EPOCH_FILENAME};
 use onet_core::{
@@ -87,7 +87,7 @@ use std::{
     result::Result,
     str::FromStr,
     thread, time,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use subxt::{
@@ -511,7 +511,7 @@ async fn process_asset_hub_events(
     records: &mut Records,
     is_loading: bool,
 ) -> Result<(), OnetError> {
-    let (ah_block_number, ah_parent_hash) =
+    let (ah_block_number, ah_parent_block_hash) =
         fetch_asset_hub_block_info(ah_rpc, ah_block_hash).await?;
 
     let events = ah_api.events().at(ah_block_hash).await?;
@@ -520,7 +520,7 @@ async fn process_asset_hub_events(
         let event = event?;
         if let Some(ev) = event.as_event::<SessionRotated>()? {
             info!("AH event {:?}", ev);
-            let previous_era_index = process_session_rotated(
+            let previous_epoch_era_index = process_session_rotated(
                 ev.starting_session,
                 ev.active_era,
                 subscribers,
@@ -531,22 +531,26 @@ async fn process_asset_hub_events(
                 fetch_eras_start_session_index(&ah_api, ah_block_hash, &ev.active_era).await?;
             cache_records_at_session(cache, records, start_session_index).await?;
 
-            // Cache session stats records every new session
+            // Cache session stats records every new session with data collected
+            // from the parent AH block hash
             try_run_cache_session_stats_records(
+                ev.starting_session - 1,
                 rc_block_number,
                 rc_block_hash,
                 ah_block_hash,
+                ah_parent_block_hash,
                 is_loading,
             )
             .await?;
-
-            try_run_matrix_reports(previous_era_index, subscribers, records, is_loading).await?;
+            try_run_matrix_reports(records, subscribers, previous_epoch_era_index, is_loading)
+                .await?;
         } else if let Some(ev) = event.as_event::<PagedElectionProceeded>()? {
             info!("AH event {:?}", ev);
         } else if let Some(ev) = event.as_event::<EraPaid>()? {
             info!("AH event {:?}", ev);
             // Note: Network public report is based on the previous era index and parent hash
-            try_run_network_report(ev.era_index, &records, ah_parent_hash, is_loading).await?;
+            try_run_network_report(ev.era_index, &records, ah_parent_block_hash, is_loading)
+                .await?;
         } else if let Some(ev) = event.as_event::<SessionReportReceived>()? {
             info!("AH event {:?}", ev);
         } else if let Some(ev) = event.as_event::<OffenceReceived>()? {
@@ -627,9 +631,9 @@ pub fn process_session_rotated(
 
 /// Run process_matrix_reports after rotate_session
 pub async fn try_run_matrix_reports(
-    previous_era_index: EraIndex,
-    subscribers: &mut Subscribers,
     records: &mut Records,
+    subscribers: &mut Subscribers,
+    previous_epoch_era_index: EraIndex,
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
@@ -640,8 +644,8 @@ pub async fn try_run_matrix_reports(
     }
     let current_era_index = records.current_era();
     // Send reports from previous session (verify if era_index is the same or previous)
-    let era_index: u32 = if current_era_index != previous_era_index {
-        previous_era_index
+    let era_index: u32 = if current_era_index != previous_epoch_era_index {
+        previous_epoch_era_index
     } else {
         current_era_index
     };
@@ -1495,19 +1499,19 @@ pub async fn try_run_network_report(
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if !config.matrix_disabled && !is_loading {
-        if records.total_full_epochs() > 0 {
-            let records_cloned = records.clone();
-            async_std::task::spawn(async move {
-                if let Err(e) = run_network_report(era_index, &records_cloned, ah_block_hash).await
-                {
-                    error!("try_run_network_report error: {:?}", e);
-                }
-            });
-        } else {
-            warn!("No full sessions yet to run the network report.")
-        }
+    if config.matrix_disabled || is_loading {
+        return Ok(());
     }
+    if records.total_full_epochs() == 0 {
+        warn!("No full sessions yet to run the network report.");
+        return Ok(());
+    }
+    let records_cloned = records.clone();
+    async_std::task::spawn(async move {
+        if let Err(e) = run_network_report(era_index, &records_cloned, ah_block_hash).await {
+            error!("try_run_network_report error: {:?}", e);
+        }
+    });
 
     Ok(())
 }
@@ -2534,9 +2538,11 @@ async fn get_authority_index(
 /// The block hash given should be from the parent block where the
 /// `NewSession` event is present
 pub async fn try_run_cache_session_stats_records(
+    session_index: EpochIndex,
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
     ah_block_hash: H256,
+    ah_parent_block_hash: H256,
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
@@ -2545,9 +2551,15 @@ pub async fn try_run_cache_session_stats_records(
     }
 
     async_std::task::spawn(async move {
-        if let Err(e) =
-            cache_session_stats_records(rc_block_number, rc_block_hash, ah_block_hash, is_loading)
-                .await
+        if let Err(e) = cache_session_stats_records(
+            session_index,
+            rc_block_number,
+            rc_block_hash,
+            ah_block_hash,
+            ah_parent_block_hash,
+            is_loading,
+        )
+        .await
         {
             error!("try_run_cache_session_stats_records error: {:?}", e);
         }
@@ -2559,9 +2571,11 @@ pub async fn try_run_cache_session_stats_records(
 /// ---
 /// cache all validators profile and snapshot session stats at the last block of the session
 pub async fn cache_session_stats_records(
+    epoch_index: EpochIndex,
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
     ah_block_hash: H256,
+    ah_parent_block_hash: H256,
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
@@ -2573,11 +2587,6 @@ pub async fn cache_session_stats_records(
 
     // Load network details
     let network = Network::load(onet.rpc()).await?;
-
-    let active_era_info = fetch_active_era_info(&ah_api, ah_block_hash).await?;
-    let era_index = active_era_info.index;
-
-    let epoch_index = fetch_session_index(&rc_api, rc_block_hash).await?;
 
     // initialize network stats (cached syncing status)
     let mut nss = NetworkSessionStats::new(epoch_index, rc_block_number);
@@ -2596,7 +2605,7 @@ pub async fn cache_session_stats_records(
     };
 
     // Fetch active validators
-    let authorities = fetch_authorities(&ah_api, ah_block_hash).await?;
+    let authorities = fetch_authorities(&rc_api, rc_block_hash).await?;
 
     // Fetch all validators
     let validators_addr = asset_hub_runtime::storage().staking().validators_iter();
@@ -2678,30 +2687,24 @@ pub async fn cache_session_stats_records(
             .is_none()
         {
             // mark validator has chilled
-            let v: ValidatorProfileRecord = if let Ok(serialized_data) = redis::cmd("GET")
+            let profile: ValidatorProfileRecord = if let Ok(serialized_data) = redis::cmd("GET")
                 .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
                 .query_async::<Connection, String>(&mut cache as &mut Connection)
                 .await
             {
-                let mut v: ValidatorProfileRecord =
+                let mut profile: ValidatorProfileRecord =
                     serde_json::from_str(&serialized_data).unwrap_or_default();
-                v.is_chilled = true;
-                v
+                profile.is_chilled = true;
+                profile
             } else {
-                let mut v = ValidatorProfileRecord::new(stash.clone());
-                v.identity = get_identity(&onet, &stash, None).await?;
-                v.is_chilled = true;
-                v
+                let mut profile = ValidatorProfileRecord::new(stash.clone());
+                profile.identity = get_identity(&onet, &stash, None).await?;
+                profile.is_chilled = true;
+                profile
             };
-            let serialized = serde_json::to_string(&v)?;
-            redis::cmd("SET")
-                .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
-                .arg(serialized)
-                .query_async::<_, ()>(&mut cache as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
+            cache_validator_profile_only(&mut cache, &config, &profile, &stash).await?;
             //
-            validators.push(v);
+            validators.push(profile);
         }
     }
 
@@ -2713,6 +2716,11 @@ pub async fn cache_session_stats_records(
         .unwrap();
 
     // Fetch Era reward points
+    // Note: era_reward_points are asynchronously sent RC->AH at the beginning of each session
+    // We want to know which points were collected up to the last block of the session, so we need to gather the active era
+    // from the parent AH block
+    let active_era_info = fetch_active_era_info(&ah_api, ah_parent_block_hash).await?;
+    let era_index = active_era_info.index;
     let era_reward_points = fetch_era_reward_points(&ah_api, ah_block_hash, era_index).await?;
 
     nss.total_reward_points = era_reward_points.total;
@@ -2740,7 +2748,8 @@ pub async fn cache_session_stats_records(
     nss.total_staked = total_staked;
 
     // total rewarded from previous era
-    let last_rewarded = fetch_eras_validator_reward(&ah_api, ah_block_hash, &era_index).await?;
+    let last_rewarded =
+        fetch_eras_validator_reward(&ah_api, ah_block_hash, &(era_index - 1)).await?;
     nss.last_rewarded = last_rewarded;
 
     let subsets = vec![Subset::C100, Subset::NONTVP, Subset::TVP];

@@ -710,6 +710,28 @@ pub async fn cache_validator_profile(
     Ok(())
 }
 
+pub async fn cache_validator_profile_only(
+    cache: &mut Connection,
+    config: &Config,
+    profile: &ValidatorProfileRecord,
+    stash: &AccountId32,
+) -> Result<(), OnetError> {
+    let serialized = serde_json::to_string(&profile)?;
+    redis::pipe()
+        .atomic()
+        .cmd("SET")
+        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+        .arg(serialized)
+        .cmd("EXPIRE")
+        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+        .arg(config.cache_writer_prunning)
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
+}
+
 pub async fn cache_network_stats_at_session(
     cache: &mut Connection,
     config: &Config,

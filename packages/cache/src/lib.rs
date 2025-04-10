@@ -26,5 +26,5 @@ pub mod types;
 
 pub use cache::{
     cache_board_limits_at_session, cache_network_stats_at_session, cache_records,
-    cache_records_at_session, cache_validator_profile,
+    cache_records_at_session, cache_validator_profile, cache_validator_profile_only,
 };
