@@ -24,6 +24,7 @@ use super::types::{CacheKey, Index, Trait, Verbosity};
 use log::info;
 use onet_config::{Config, CONFIG};
 use onet_errors::{CacheError, OnetError};
+use onet_pools::{PoolId, PoolStats};
 use onet_records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, NetworkSessionStats,
     ParaId, ParaRecord, ParaStats, ParachainRecord, Records, SessionStats, ValidatorProfileRecord,
@@ -800,6 +801,35 @@ pub async fn cache_board_limits_at_session(
         .cmd("SET")
         .arg(CacheKey::EraByIndex(Index::Current))
         .arg(current_era.to_string())
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
+}
+
+pub async fn cache_nomination_pool_stats(
+    cache: &mut Connection,
+    config: &Config,
+    stats: &PoolStats,
+    pool_id: PoolId,
+    current_epoch: EpochIndex,
+) -> Result<(), OnetError> {
+    let serialized = serde_json::to_string(&stats)?;
+    redis::pipe()
+        .atomic()
+        .cmd("SET")
+        .arg(CacheKey::NominationPoolStatsByPoolAndSession(
+            pool_id,
+            current_epoch,
+        ))
+        .arg(serialized)
+        .cmd("EXPIRE")
+        .arg(CacheKey::NominationPoolStatsByPoolAndSession(
+            pool_id,
+            current_epoch,
+        ))
+        .arg(config.cache_writer_prunning)
         .query_async::<_, ()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;

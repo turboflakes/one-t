@@ -47,10 +47,10 @@ use onet_asset_hub_westend_next::{
     fetch_nominators, fetch_pool_metadata,
 };
 use onet_asset_hub_westend_next::{AssetHubCall, NominationPoolsCall};
-use onet_cache::types::{CacheKey, Index, Trait, Verbosity};
+use onet_cache::types::{CacheKey, Verbosity};
 use onet_cache::{
-    cache_board_limits_at_session, cache_network_stats_at_session, cache_records,
-    cache_records_at_session, cache_validator_profile, cache_validator_profile_only,
+    cache_board_limits_at_session, cache_network_stats_at_session, cache_nomination_pool_stats,
+    cache_records, cache_records_at_session, cache_validator_profile, cache_validator_profile_only,
 };
 use onet_config::{Config, CONFIG, EPOCH_FILENAME};
 use onet_core::{
@@ -363,9 +363,6 @@ pub async fn process_finalized_block(
     // Note: these records should be updated after the switch of session
     track_records(&rc_api, &rc_rpc, records, rc_block_number, rc_block_hash).await?;
 
-    // // Cache pool stats every 10 minutes
-    // try_run_cache_nomination_pools_stats(rc_block_number, rc_block_hash, ah_block_hash).await?;
-
     // Cache records at every block
     cache_records(&mut cache, &records).await?;
 
@@ -447,6 +444,10 @@ async fn process_relay_chain_events(
                     is_loading,
                 )
                 .await?;
+
+                // Cache pool stats every 10 minutes
+                try_run_cache_nomination_pools_stats(rc_block_number, rc_block_hash, ah_block_hash)
+                    .await?;
             }
         } else if let Some(ev) = event.as_event::<NewSession>()? {
             info!("RC event {:?}", ev);
@@ -2123,22 +2124,22 @@ pub async fn try_run_cache_nomination_pools(
 pub async fn try_run_cache_nomination_pools_stats(
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
-    ah_block_hash: Option<H256>,
+    ah_block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.cache_writer_enabled && config.pools_enabled && ah_block_hash.is_some() {
-        // collect nomination stats every minute
-        if (rc_block_number as f64 % 10.0_f64) == 0.0_f64 {
-            async_std::task::spawn(async move {
-                let ah_block_hash = ah_block_hash.unwrap();
-                if let Err(e) =
-                    cache_nomination_pools_stats(rc_block_number, rc_block_hash, ah_block_hash)
-                        .await
-                {
-                    error!("cache_nomination_pools_stats error: {:?}", e);
-                }
-            });
-        }
+    if !config.cache_writer_enabled || !config.pools_enabled {
+        return Ok(());
+    }
+
+    // collect nomination stats every minute
+    if (rc_block_number as f64 % 10.0_f64) == 0.0_f64 {
+        async_std::task::spawn(async move {
+            if let Err(e) =
+                cache_nomination_pools_stats(rc_block_number, rc_block_hash, ah_block_hash).await
+            {
+                error!("cache_nomination_pools_stats error: {:?}", e);
+            }
+        });
     }
     Ok(())
 }
@@ -2240,6 +2241,7 @@ pub async fn cache_nomination_pools_stats(
     rc_block_hash: H256,
     ah_block_hash: H256,
 ) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
     let rc_api = onet.client().clone();
@@ -2275,17 +2277,8 @@ pub async fn cache_nomination_pools_stats(
             let account_info = fetch_account_info(&rc_api, rc_block_hash, &stash_account).await?;
             pool_stats.reward = account_info.data.free;
 
-            // serialize and cache pool
-            let serialized = serde_json::to_string(&pool_stats)?;
-            redis::cmd("SET")
-                .arg(CacheKey::NominationPoolStatsByPoolAndSession(
-                    pool_id,
-                    epoch_index,
-                ))
-                .arg(serialized)
-                .query_async::<_, ()>(&mut cache as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
+            cache_nomination_pool_stats(&mut cache, &config, &pool_stats, pool_id, epoch_index)
+                .await?;
 
             valid_pool = Some(pool_id + 1);
         }
