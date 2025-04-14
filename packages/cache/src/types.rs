@@ -46,6 +46,28 @@ impl std::fmt::Display for Index {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ChainKey {
+    RC,
+    AH,
+}
+
+impl std::fmt::Display for ChainKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RC => write!(f, "rc"),
+            Self::AH => write!(f, "ah"),
+        }
+    }
+}
+
+impl Default for ChainKey {
+    fn default() -> Self {
+        ChainKey::RC
+    }
+}
+
 pub type AuthorityRecordKey = String;
 
 #[derive(Clone, Eq, Hash, PartialEq, Debug)]
@@ -114,8 +136,8 @@ impl From<&String> for CacheType {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CacheKey {
     Network,
-    FinalizedBlock,
-    BestBlock,
+    FinalizedBlock(ChainKey),
+    BestBlock(ChainKey),
     PushedBlockByClientId(usize),
     BlockByIndexStats(Index),
     BlocksBySession(Index),
@@ -152,8 +174,8 @@ impl std::fmt::Display for CacheKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Network => write!(f, "network"),
-            Self::BestBlock => write!(f, "best"),
-            Self::FinalizedBlock => write!(f, "finalized"),
+            Self::BestBlock(chain) => write!(f, "{}:best", chain),
+            Self::FinalizedBlock(chain) => write!(f, "{}:finalized", chain),
             Self::PushedBlockByClientId(client_id) => write!(f, "pushed:{}", client_id),
             Self::BlockByIndexStats(block_index) => write!(f, "b:{}:s", block_index),
             Self::BlocksBySession(session_index) => write!(f, "bs:{}", session_index),

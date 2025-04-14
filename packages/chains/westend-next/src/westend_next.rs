@@ -47,7 +47,7 @@ use onet_asset_hub_westend_next::{
     fetch_nominators, fetch_pool_metadata,
 };
 use onet_asset_hub_westend_next::{AssetHubCall, NominationPoolsCall};
-use onet_cache::types::{CacheKey, Verbosity};
+use onet_cache::types::{CacheKey, ChainKey, Verbosity};
 use onet_cache::{
     cache_board_limits_at_session, cache_network_stats_at_session, cache_nomination_pool_stats,
     cache_records, cache_records_at_session, cache_validator_profile, cache_validator_profile_only,
@@ -303,7 +303,7 @@ pub async fn process_best_block(
     if config.cache_writer_enabled {
         let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
         redis::cmd("SET")
-            .arg(CacheKey::BestBlock)
+            .arg(CacheKey::BestBlock(ChainKey::RC))
             .arg(block_number.to_string())
             .query_async::<_, ()>(&mut cache as &mut Connection)
             .await

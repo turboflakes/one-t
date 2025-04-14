@@ -28,7 +28,7 @@ use crate::{
 };
 use onet_cache::{
     provider::{create_or_await_pool, get_conn, RedisPool},
-    types::{CacheKey, Index, Verbosity},
+    types::{CacheKey, ChainKey, Index, Verbosity},
 };
 use onet_config::CONFIG;
 use onet_records::{BlockNumber, EpochIndex, SS58};
@@ -125,7 +125,7 @@ impl Channel {
                         let future = async {
                             if let Ok(mut conn) = get_conn(&act.cache).await {
                                 if let Ok(finalized_block_number) = redis::cmd("GET")
-                                    .arg(CacheKey::FinalizedBlock)
+                                    .arg(CacheKey::FinalizedBlock(ChainKey::RC))
                                     .query_async::<Connection, BlockNumber>(&mut conn)
                                     .await
                                 {
@@ -284,7 +284,7 @@ impl Channel {
                         let future = async {
                             if let Ok(mut conn) = get_conn(&act.cache).await {
                                 if let Ok(block_number) = redis::cmd("GET")
-                                    .arg(CacheKey::BestBlock)
+                                    .arg(CacheKey::BestBlock(ChainKey::RC))
                                     .query_async::<Connection, BlockNumber>(&mut conn)
                                     .await
                                 {
@@ -383,7 +383,7 @@ impl Channel {
                         let future = async {
                             if let Ok(mut conn) = get_conn(&act.cache).await {
                                 if let Ok(finalized_block_number) = redis::cmd("GET")
-                                    .arg(CacheKey::FinalizedBlock)
+                                    .arg(CacheKey::FinalizedBlock(ChainKey::RC))
                                     .query_async::<Connection, BlockNumber>(&mut conn)
                                     .await
                                 {
@@ -469,7 +469,7 @@ impl Channel {
                         let future = async {
                             if let Ok(mut conn) = get_conn(&act.cache).await {
                                 if let Ok(finalized_block_number) = redis::cmd("GET")
-                                    .arg(CacheKey::FinalizedBlock)
+                                    .arg(CacheKey::FinalizedBlock(ChainKey::RC))
                                     .query_async::<Connection, BlockNumber>(&mut conn)
                                     .await
                                 {
@@ -554,7 +554,7 @@ impl Channel {
                         let future = async {
                             if let Ok(mut conn) = get_conn(&act.cache).await {
                                 if let Ok(finalized_block_number) = redis::cmd("GET")
-                                    .arg(CacheKey::FinalizedBlock)
+                                    .arg(CacheKey::FinalizedBlock(ChainKey::RC))
                                     .query_async::<Connection, BlockNumber>(&mut conn)
                                     .await
                                 {

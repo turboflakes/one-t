@@ -28,7 +28,7 @@ use actix_web::web::{Data, Json, Path, Query};
 use log::warn;
 use onet_cache::{
     provider::{get_conn, RedisPool},
-    types::{CacheKey, Index},
+    types::{CacheKey, ChainKey, Index},
 };
 use onet_errors::{ApiError, CacheError};
 use onet_records::{BlockNumber, EpochIndex};
@@ -42,6 +42,8 @@ pub struct Params {
     // show_stats indicates whether session stats should be retrieved or not, default false
     #[serde(default)]
     show_stats: bool,
+    #[serde(default)]
+    chain_key: ChainKey,
 }
 
 fn default_index() -> Index {
@@ -119,8 +121,10 @@ pub async fn get_finalized_block(
 ) -> Result<Json<BlockResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
+    let chain_key: ChainKey = params.chain_key.clone().into();
+
     if let Ok(block_number) = redis::cmd("GET")
-        .arg(CacheKey::FinalizedBlock)
+        .arg(CacheKey::FinalizedBlock(chain_key))
         .query_async::<Connection, BlockNumber>(&mut conn)
         .await
     {
@@ -148,13 +152,15 @@ pub async fn get_finalized_block(
 
 /// Get best block
 pub async fn get_best_block(
-    _params: Query<Params>,
+    params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<BlockResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
+    let chain_key: ChainKey = params.chain_key.clone().into();
+
     if let Ok(block_number) = redis::cmd("GET")
-        .arg(CacheKey::BestBlock)
+        .arg(CacheKey::BestBlock(chain_key))
         .query_async::<Connection, BlockNumber>(&mut conn)
         .await
     {

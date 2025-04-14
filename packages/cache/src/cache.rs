@@ -20,7 +20,7 @@
 // SOFTWARE.
 
 use super::limits::build_limits_from_session;
-use super::types::{CacheKey, Index, Trait, Verbosity};
+use super::types::{CacheKey, ChainKey, Index, Trait, Verbosity};
 use log::info;
 use onet_config::{Config, CONFIG};
 use onet_errors::{CacheError, OnetError};
@@ -329,7 +329,7 @@ async fn cache_session_stats(
         .atomic()
         // cache current_block / finalized block
         .cmd("SET")
-        .arg(CacheKey::FinalizedBlock)
+        .arg(CacheKey::FinalizedBlock(ChainKey::RC))
         .arg(*current_block)
         // cache current_block / finalized block into a sorted set by session
         .cmd("ZADD")
