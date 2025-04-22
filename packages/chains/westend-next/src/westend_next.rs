@@ -49,8 +49,9 @@ use onet_asset_hub_westend_next::{
 use onet_asset_hub_westend_next::{AssetHubCall, NominationPoolsCall};
 use onet_cache::types::{CacheKey, ChainKey, Verbosity};
 use onet_cache::{
-    cache_board_limits_at_session, cache_network_stats_at_session, cache_nomination_pool_stats,
-    cache_records, cache_records_at_session, cache_validator_profile, cache_validator_profile_only,
+    cache_best_block, cache_board_limits_at_session, cache_network_stats_at_session,
+    cache_nomination_pool_stats, cache_records, cache_records_at_session, cache_validator_profile,
+    cache_validator_profile_only,
 };
 use onet_config::{Config, CONFIG, EPOCH_FILENAME};
 use onet_core::{
@@ -223,15 +224,24 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     let mut latest_block_number_processed: Option<u64> = Some(start_block_number.into());
     let mut is_loading = true;
 
-    // Subscribe head
+    // AH Subscribe head
+    try_run_subscribe_best_asset_hub().await?;
+
+    // RC Subscribe head
     // NOTE: the reason why we subscribe head and not finalized_head,
     // is just because head is in sync more frequently.
     // finalized_head can always be queried so as soon as it changes we process th repective block_hash
     let mut blocks_sub = rc_api.blocks().subscribe_best().await?;
     while let Some(Ok(best_block)) = blocks_sub.next().await {
-        info!("Block #{:?} received", best_block.number());
+        info!("RC Block #{:?} best received", best_block.number());
         // update records best_block number
-        process_best_block(&onet, &mut records, best_block.number().into()).await?;
+        process_best_block(
+            &onet,
+            &mut records,
+            ChainKey::RC,
+            best_block.number().into(),
+        )
+        .await?;
 
         // fetch latest finalized block
         let finalized_block_hash = onet.rpc().chain_get_finalized_head().await?;
@@ -240,7 +250,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
             .chain_get_header(Some(finalized_block_hash))
             .await?
         {
-            info!("Block #{:?} finalized in storage", block.number);
+            info!("RC Block #{:?} finalized fetched", block.number);
             // process older blocks that have not been processed first
             while let Some(processed_block_number) = latest_block_number_processed {
                 if block.number as u64 == processed_block_number {
@@ -293,6 +303,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 pub async fn process_best_block(
     onet: &Onet,
     records: &mut Records,
+    chain_key: ChainKey,
     block_number: BlockNumber,
 ) -> Result<(), OnetError> {
     // update best block number
@@ -300,15 +311,11 @@ pub async fn process_best_block(
 
     // if api enabled cache best block
     let config = CONFIG.clone();
-    if config.cache_writer_enabled {
-        let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-        redis::cmd("SET")
-            .arg(CacheKey::BestBlock(ChainKey::RC))
-            .arg(block_number.to_string())
-            .query_async::<_, ()>(&mut cache as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?;
+    if !config.cache_writer_enabled {
+        return Ok(());
     }
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+    cache_best_block(&mut cache, chain_key, block_number).await?;
 
     Ok(())
 }
@@ -322,7 +329,7 @@ pub async fn process_finalized_block(
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
-    debug!("Block #{} to be processed now", rc_block_number);
+    debug!("RC Block #{} to be processed now", rc_block_number);
 
     let BlockProcessingContext {
         rc_api,
@@ -368,12 +375,41 @@ pub async fn process_finalized_block(
 
     // Log block processed duration time
     info!(
-        "Block #{} processed ({:?})",
+        "RC Block #{} processed ({:?})",
         rc_block_number,
         start.elapsed()
     );
 
     Ok(())
+}
+
+pub async fn try_run_subscribe_best_asset_hub() -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if !config.cache_writer_enabled {
+        return Ok(());
+    }
+
+    async_std::task::spawn(async move {
+        if let Err(e) = subscribe_best_asset_hub().await {
+            error!("subscribe_best_asset_hub error: {:?}", e);
+        }
+    });
+
+    Ok(())
+}
+
+pub async fn subscribe_best_asset_hub() -> Result<(), OnetError> {
+    let onet: Onet = Onet::new().await;
+    let ah_api = onet.asset_hub_client().clone();
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+    let mut blocks_sub = ah_api.blocks().subscribe_best().await?;
+    while let Some(Ok(best_block)) = blocks_sub.next().await {
+        info!("AH Block #{:?} best received", best_block.number());
+        let block_number = best_block.number();
+        let chain_key = ChainKey::AH;
+        cache_best_block(&mut cache, chain_key, block_number.into()).await?;
+    }
+    Err(OnetError::SubscriptionFinished)
 }
 
 struct BlockProcessingContext {
@@ -2998,7 +3034,9 @@ async fn fetch_asset_hub_block_info(
         .await?
         .map(|header| (header.number.into(), header.parent_hash))
         .ok_or_else(|| {
-            OnetError::from(format!("Block number not available at block hash {hash:?}"))
+            OnetError::from(format!(
+                "AH Block number not available at block hash {hash:?}"
+            ))
         })
 }
 

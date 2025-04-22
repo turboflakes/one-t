@@ -351,7 +351,7 @@ impl Records {
     }
 
     // deprecated: use finalized_block
-    pub fn current_block(&self) -> Option<&BlockNumber> {
+    pub fn _current_block(&self) -> Option<&BlockNumber> {
         let block = self.end_block(Some(EpochKey(self.current_epoch)));
         if block.is_none() {
             return self.start_block(Some(EpochKey(self.current_epoch)));

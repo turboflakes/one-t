@@ -41,7 +41,7 @@ pub async fn cache_records(cache: &mut Connection, records: &Records) -> Result<
         return Ok(());
     }
 
-    let Some(current_block) = records.current_block() else {
+    let Some(finalized_block) = records.finalized_block() else {
         return Ok(());
     };
 
@@ -54,13 +54,20 @@ pub async fn cache_records(cache: &mut Connection, records: &Records) -> Result<
     process_authority_records(cache, &config, records, &mut session_stats, &mut parachains).await?;
 
     // Cache session statistics
-    cache_session_stats(cache, &config, current_epoch, current_block, &session_stats).await?;
+    cache_session_stats(
+        cache,
+        &config,
+        current_epoch,
+        finalized_block,
+        &session_stats,
+    )
+    .await?;
 
     // Cache parachain statistics
     cache_parachain_stats(cache, &config, current_epoch, &parachains).await?;
 
-    // Cache current block
-    cache_current_block(cache, &config, records, current_block).await?;
+    // Cache finalized block
+    cache_finalized_block(cache, &config, records, finalized_block).await?;
 
     Ok(())
 }
@@ -259,7 +266,22 @@ async fn cache_para_summary_data(
     Ok(())
 }
 
-async fn cache_current_block(
+pub async fn cache_best_block(
+    cache: &mut Connection,
+    chain_key: ChainKey,
+    block_number: BlockNumber,
+) -> Result<(), OnetError> {
+    redis::cmd("SET")
+        .arg(CacheKey::BestBlock(chain_key))
+        .arg(block_number.to_string())
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
+}
+
+async fn cache_finalized_block(
     cache: &mut Connection,
     config: &Config,
     records: &Records,
@@ -321,27 +343,27 @@ async fn cache_session_stats(
     cache: &mut Connection,
     config: &Config,
     current_epoch: EpochIndex,
-    current_block: &BlockNumber,
+    finalized_block: &BlockNumber,
     session_stats: &SessionStats,
 ) -> Result<(), OnetError> {
     let serialized = serde_json::to_string(session_stats)?;
     redis::pipe()
         .atomic()
-        // cache current_block / finalized block
+        // cache finalized block
         .cmd("SET")
         .arg(CacheKey::FinalizedBlock(ChainKey::RC))
-        .arg(*current_block)
-        // cache current_block / finalized block into a sorted set by session
+        .arg(*finalized_block)
+        // cache finalized block into a sorted set by session
         .cmd("ZADD")
         .arg(CacheKey::BlocksBySession(Index::Num(current_epoch.into())))
         .arg(0)
-        .arg(*current_block)
+        .arg(*finalized_block)
         .cmd("EXPIRE")
         .arg(CacheKey::BlocksBySession(Index::Num(current_epoch.into())))
         .arg(config.cache_writer_prunning)
         // cache session_stats at every block
         .cmd("SET")
-        .arg(CacheKey::BlockByIndexStats(Index::Num(*current_block)))
+        .arg(CacheKey::BlockByIndexStats(Index::Num(*finalized_block)))
         .arg(serialized)
         .arg("EX")
         .arg(config.cache_writer_prunning)
@@ -580,7 +602,7 @@ async fn cache_session_by_index(
         return Ok(());
     };
 
-    let Some(current_block) = records.current_block() else {
+    let Some(finalized_block) = records.finalized_block() else {
         return Ok(());
     };
 
@@ -592,7 +614,10 @@ async fn cache_session_by_index(
     data.insert(String::from("era"), records.current_era().to_string());
     data.insert(String::from("session"), current_epoch.to_string());
     data.insert(String::from("start_block"), (*start_block).to_string());
-    data.insert(String::from("current_block"), (*current_block).to_string());
+    data.insert(
+        String::from("current_block"),
+        (*finalized_block).to_string(),
+    );
     data.insert(
         String::from("era_session_index"),
         era_session_index.to_string(),
@@ -615,7 +640,9 @@ async fn cache_session_by_index(
         .arg(current_epoch.to_string())
         //NOTE: make session_stats available to previous session by copying stats from previous block
         .cmd("COPY")
-        .arg(CacheKey::BlockByIndexStats(Index::Num(*current_block - 1)))
+        .arg(CacheKey::BlockByIndexStats(Index::Num(
+            *finalized_block - 1,
+        )))
         .arg(CacheKey::SessionByIndexStats(Index::Num(
             (current_epoch - 1).into(),
         )))
