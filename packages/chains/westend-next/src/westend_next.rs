@@ -49,9 +49,9 @@ use onet_asset_hub_westend_next::{
 use onet_asset_hub_westend_next::{AssetHubCall, NominationPoolsCall};
 use onet_cache::types::{CacheKey, ChainKey, Verbosity};
 use onet_cache::{
-    cache_best_block, cache_board_limits_at_session, cache_network_stats_at_session,
-    cache_nomination_pool_stats, cache_records, cache_records_at_session, cache_validator_profile,
-    cache_validator_profile_only,
+    cache_best_block, cache_board_limits_at_session, cache_finalized_block,
+    cache_network_stats_at_session, cache_nomination_pool_stats, cache_records,
+    cache_records_at_session, cache_validator_profile, cache_validator_profile_only,
 };
 use onet_config::{Config, CONFIG, EPOCH_FILENAME};
 use onet_core::{
@@ -607,6 +607,10 @@ async fn process_asset_hub_events(
         // || pallet == "MultiBlockSigned"
         // || pallet == "MultiBlockUnsigned"
     }
+
+    // cache finalized block
+    let chain_key = ChainKey::AH;
+    cache_finalized_block(cache, chain_key, ah_block_number.into()).await?;
 
     Ok(())
 }

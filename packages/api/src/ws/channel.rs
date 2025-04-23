@@ -283,6 +283,7 @@ impl Channel {
                     Topic::BestBlock => {
                         let future = async {
                             if let Ok(mut conn) = get_conn(&act.cache).await {
+                                let mut block_data = CacheMap::new();
                                 if let Ok(block_number) = redis::cmd("GET")
                                     .arg(CacheKey::BestBlock(ChainKey::RC))
                                     .query_async::<Connection, BlockNumber>(&mut conn)

@@ -66,9 +66,6 @@ pub async fn cache_records(cache: &mut Connection, records: &Records) -> Result<
     // Cache parachain statistics
     cache_parachain_stats(cache, &config, current_epoch, &parachains).await?;
 
-    // Cache finalized block
-    cache_finalized_block(cache, &config, records, finalized_block).await?;
-
     Ok(())
 }
 
@@ -281,35 +278,14 @@ pub async fn cache_best_block(
     Ok(())
 }
 
-async fn cache_finalized_block(
+pub async fn cache_finalized_block(
     cache: &mut Connection,
-    config: &Config,
-    records: &Records,
-    current_block: &BlockNumber,
+    chain_key: ChainKey,
+    block_number: BlockNumber,
 ) -> Result<(), OnetError> {
-    let Some(start_block) = records.start_block(None) else {
-        return Ok(());
-    };
-
-    if current_block == start_block {
-        return Ok(());
-    }
-
-    let mut data: BTreeMap<String, String> = BTreeMap::new();
-    data.insert(String::from("current_block"), (*current_block).to_string());
-    // by `epoch_index`
-    redis::pipe()
-        .atomic()
-        .cmd("HSET")
-        .arg(CacheKey::SessionByIndex(Index::Num(
-            records.current_epoch().into(),
-        )))
-        .arg(data)
-        .cmd("EXPIRE")
-        .arg(CacheKey::SessionByIndex(Index::Num(
-            records.current_epoch().into(),
-        )))
-        .arg(config.cache_writer_prunning)
+    redis::cmd("SET")
+        .arg(CacheKey::FinalizedBlock(chain_key))
+        .arg(block_number.to_string())
         .query_async::<_, ()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
@@ -346,7 +322,12 @@ async fn cache_session_stats(
     finalized_block: &BlockNumber,
     session_stats: &SessionStats,
 ) -> Result<(), OnetError> {
-    let serialized = serde_json::to_string(session_stats)?;
+    let session_stats_serialized = serde_json::to_string(session_stats)?;
+    let mut finalized_block_data: BTreeMap<String, String> = BTreeMap::new();
+    finalized_block_data.insert(
+        String::from("current_block"),
+        (*finalized_block).to_string(),
+    );
     redis::pipe()
         .atomic()
         // cache finalized block
@@ -364,8 +345,15 @@ async fn cache_session_stats(
         // cache session_stats at every block
         .cmd("SET")
         .arg(CacheKey::BlockByIndexStats(Index::Num(*finalized_block)))
-        .arg(serialized)
+        .arg(session_stats_serialized)
         .arg("EX")
+        .arg(config.cache_writer_prunning)
+        // cache finalized block as current block
+        .cmd("HSET")
+        .arg(CacheKey::SessionByIndex(Index::Num(current_epoch.into())))
+        .arg(finalized_block_data)
+        .cmd("EXPIRE")
+        .arg(CacheKey::SessionByIndex(Index::Num(current_epoch.into())))
         .arg(config.cache_writer_prunning)
         .query_async::<_, ()>(cache)
         .await

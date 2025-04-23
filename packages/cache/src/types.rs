@@ -64,7 +64,7 @@ impl std::fmt::Display for ChainKey {
 
 impl Default for ChainKey {
     fn default() -> Self {
-        ChainKey::RC
+        ChainKey::AH
     }
 }
 
