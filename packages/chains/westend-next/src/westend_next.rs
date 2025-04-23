@@ -307,7 +307,10 @@ pub async fn process_best_block(
     block_number: BlockNumber,
 ) -> Result<(), OnetError> {
     // update best block number
-    records.set_best_block_number(block_number.into());
+    match chain_key {
+        ChainKey::RC => records.set_relay_chain_best_block_number(block_number.into()),
+        ChainKey::AH => records.set_asset_hub_best_block_number(block_number.into()),
+    };
 
     // if api enabled cache best block
     let config = CONFIG.clone();
@@ -551,6 +554,8 @@ async fn process_asset_hub_events(
     let (ah_block_number, ah_parent_block_hash) =
         fetch_asset_hub_block_info(ah_rpc, ah_block_hash).await?;
 
+    records.set_asset_hub_block_number(ah_block_number, rc_block_number);
+
     let events = ah_api.events().at(ah_block_hash).await?;
 
     for event in events.iter() {
@@ -562,6 +567,7 @@ async fn process_asset_hub_events(
                 ev.active_era,
                 subscribers,
                 records,
+                rc_block_number,
                 ah_block_number,
             )?;
             let start_session_index =
@@ -616,7 +622,7 @@ pub async fn process_new_session(
     // Update records current Epoch
     records.set_new_epoch(new_session_index);
     // Update records current block number
-    records.set_current_block_number(rc_block_number.into());
+    records.set_relay_chain_block_number(rc_block_number.into());
     // Initialize records for new epoch
     initialize_records(&rc_api, records, rc_block_hash).await?;
 
@@ -629,6 +635,7 @@ pub fn process_session_rotated(
     active_era: EraIndex,
     subscribers: &mut Subscribers,
     records: &mut Records,
+    rc_block_number: u64,
     ah_block_number: u64,
 ) -> Result<EraIndex, OnetError> {
     let config = CONFIG.clone();
@@ -640,7 +647,7 @@ pub fn process_session_rotated(
     records.start_new_epoch(active_era, starting_session);
 
     // Update records current block number
-    records.set_current_ah_block_number(ah_block_number.into());
+    records.set_asset_hub_block_number(ah_block_number.into(), rc_block_number.into());
 
     // Update subscribers current Era and Epoch
     subscribers.start_new_epoch(active_era, starting_session);
@@ -1125,7 +1132,7 @@ pub async fn track_records(
     rc_block_hash: H256,
 ) -> Result<(), OnetError> {
     // Update records current block number
-    records.set_current_block_number(rc_block_number.into());
+    records.set_relay_chain_block_number(rc_block_number.into());
 
     // Extract authority from the block header
     let block_authority_index = get_authority_index(&rc_rpc, Some(rc_block_hash))

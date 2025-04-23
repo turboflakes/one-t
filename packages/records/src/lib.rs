@@ -65,6 +65,7 @@ pub type FlaggedEpochs = Vec<EpochIndex>;
 pub type SS58 = String;
 pub type DisputeKind = String;
 pub type AuthorityDiscoveryKey = [u8; 32];
+pub type BlockNumberTuple = (BlockNumber, BlockNumber);
 
 // Keys to be easily used in BTreeMap
 // DEPRECATE as EpochKey(pub EraIndex, pub EpochIndex)
@@ -255,7 +256,7 @@ pub struct Records {
     first_epoch: EpochIndex,
     eras: HashMap<EpochIndex, EraIndex>,
     blocks: HashMap<BlockKey, BlockNumber>,
-    ah_blocks: HashMap<BlockKey, BlockNumber>,
+    ah_blocks: HashMap<BlockKey, BlockNumberTuple>,
     authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
     addresses: HashMap<AddressKey, AuthorityIndex>,
     authority_records: HashMap<RecordKey, AuthorityRecord>,
@@ -384,7 +385,7 @@ impl Records {
         info!("New AH session {} at era {} started.", epoch, era);
     }
 
-    pub fn set_current_block_number(&mut self, block_number: BlockNumber) {
+    pub fn set_relay_chain_block_number(&mut self, block_number: BlockNumber) {
         // insert start block only if it doesn't already exist
         self.blocks
             .entry(BlockKey(EpochKey(self.current_epoch), BlockKind::Start))
@@ -396,29 +397,33 @@ impl Records {
         );
     }
 
-    pub fn set_best_block_number(&mut self, block_number: BlockNumber) {
+    pub fn set_relay_chain_best_block_number(&mut self, block_number: BlockNumber) {
         self.blocks.insert(
             BlockKey(EpochKey(self.current_epoch), BlockKind::Best),
             block_number,
         );
     }
 
-    pub fn set_current_ah_block_number(&mut self, block_number: BlockNumber) {
+    pub fn set_asset_hub_block_number(
+        &mut self,
+        ah_block_number: BlockNumber,
+        rc_block_number: BlockNumber,
+    ) {
         // insert start block only if it doesn't already exist
         self.ah_blocks
             .entry(BlockKey(EpochKey(self.current_epoch), BlockKind::Start))
-            .or_insert(block_number);
+            .or_insert((ah_block_number, rc_block_number));
         // update end block
         self.ah_blocks.insert(
             BlockKey(EpochKey(self.current_epoch), BlockKind::End),
-            block_number,
+            (ah_block_number, rc_block_number),
         );
     }
 
-    pub fn set_best_ah_block_number(&mut self, block_number: BlockNumber) {
+    pub fn set_asset_hub_best_block_number(&mut self, ah_block_number: BlockNumber) {
         self.ah_blocks.insert(
             BlockKey(EpochKey(self.current_epoch), BlockKind::Best),
-            block_number,
+            (ah_block_number, 0),
         );
     }
 
@@ -1011,6 +1016,7 @@ impl Records {
     pub fn remove(&mut self, epoch_key: EpochKey) {
         // Maps that need to be cleaned up
         // blocks: HashMap<BlockKey, BlockNumber>,
+        // ah_blocks: HashMap<BlockKey, BlockNumberTupple>,
         // authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
         // addresses: HashMap<AddressKey, AuthorityIndex>,
         // authority_records: HashMap<RecordKey, AuthorityRecord>,
@@ -1020,7 +1026,7 @@ impl Records {
         // discovery_records: HashMap<RecordKey, DiscoveryRecord>,
 
         let mut counter = 0;
-        // Remove blocks map
+        // Remove RC blocks
         if self
             .blocks
             .remove(&BlockKey(epoch_key.clone(), BlockKind::Start))
@@ -1030,6 +1036,21 @@ impl Records {
         }
         if self
             .blocks
+            .remove(&BlockKey(epoch_key.clone(), BlockKind::End))
+            .is_some()
+        {
+            counter += 1;
+        }
+        // Remove AH blocks
+        if self
+            .ah_blocks
+            .remove(&BlockKey(epoch_key.clone(), BlockKind::Start))
+            .is_some()
+        {
+            counter += 1;
+        }
+        if self
+            .ah_blocks
             .remove(&BlockKey(epoch_key.clone(), BlockKind::End))
             .is_some()
         {
