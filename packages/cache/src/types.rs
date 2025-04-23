@@ -22,6 +22,7 @@
 use onet_pools::PoolId;
 use onet_records::{AuthorityIndex, EpochIndex, EraIndex};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use subxt::{ext::sp_core::H256, utils::AccountId32};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -64,7 +65,19 @@ impl std::fmt::Display for ChainKey {
 
 impl Default for ChainKey {
     fn default() -> Self {
-        ChainKey::AH
+        ChainKey::RC
+    }
+}
+
+impl FromStr for ChainKey {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "rc" => Ok(ChainKey::RC),
+            "ah" => Ok(ChainKey::AH),
+            _ => Err(format!("Unknown chain key: {}", s)),
+        }
     }
 }
 

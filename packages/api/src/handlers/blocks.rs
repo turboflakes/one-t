@@ -124,11 +124,12 @@ pub async fn get_finalized_block(
     let chain_key: ChainKey = params.chain_key.clone().into();
 
     if let Ok(block_number) = redis::cmd("GET")
-        .arg(CacheKey::FinalizedBlock(chain_key))
+        .arg(CacheKey::FinalizedBlock(chain_key.clone()))
         .query_async::<Connection, BlockNumber>(&mut conn)
         .await
     {
         let mut data = CacheMap::new();
+        data.insert(String::from("chain_key"), chain_key.to_string());
         data.insert(String::from("block_number"), block_number.to_string());
         data.insert(String::from("is_finalized"), (true).to_string());
 
@@ -160,12 +161,13 @@ pub async fn get_best_block(
     let chain_key: ChainKey = params.chain_key.clone().into();
 
     if let Ok(block_number) = redis::cmd("GET")
-        .arg(CacheKey::BestBlock(chain_key))
+        .arg(CacheKey::BestBlock(chain_key.clone()))
         .query_async::<Connection, BlockNumber>(&mut conn)
         .await
     {
         let mut data = CacheMap::new();
-        data.insert(String::from("block_number"), block_number.to_string());
+        data.insert(String::from("chain_key"), chain_key.to_string());
+        data.insert(String::from(r"block_number"), block_number.to_string());
         data.insert(String::from("is_finalized"), (false).to_string());
         return respond_json(data.into());
     }
