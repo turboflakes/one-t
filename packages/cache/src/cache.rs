@@ -851,3 +851,24 @@ pub async fn cache_nomination_pool_stats(
 
     Ok(())
 }
+
+pub async fn cache_latest_pushed_block(
+    cache: &mut Connection,
+    config: &Config,
+    client_id: &usize,
+    rc_block_number: BlockNumber,
+) -> Result<(), OnetError> {
+    redis::pipe()
+        .atomic()
+        .cmd("SET")
+        .arg(CacheKey::PushedBlockByClientId(*client_id))
+        .arg(rc_block_number)
+        .cmd("EXPIRE")
+        .arg(CacheKey::PushedBlockByClientId(*client_id))
+        .arg(config.cache_writer_prunning)
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
+}
