@@ -115,6 +115,7 @@ use relay_runtime::{
     historical::events::RootStored,
     historical::events::RootsPruned,
     para_inclusion::events::CandidateIncluded,
+    para_inclusion::storage::types::v1::V1 as CoreInfo,
     para_inherent::calls::types::Enter,
     para_inherent::storage::types::on_chain_votes::OnChainVotes,
     para_scheduler::storage::types::session_start_block::SessionStartBlock,
@@ -3259,3 +3260,18 @@ async fn fetch_last_runtime_upgrade(
 //         .await?
 //         .ok_or_else(|| OnetError::from("Availability cores not found at block hash {hash}"))
 // }
+
+/// Fetch candidates pending availability by `ParaId`, at the specified block hash
+async fn fetch_candidates_pending_availability(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+    para_id: Id,
+) -> Result<CoreInfo, OnetError> {
+    let addr = relay_runtime::storage().para_inclusion().v1(para_id);
+
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| OnetError::from("Availability cores not found at block hash {hash}"))
+}
