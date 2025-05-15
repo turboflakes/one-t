@@ -76,17 +76,14 @@ use subxt_signer::sr25519::Keypair;
 mod node_runtime {}
 
 use node_runtime::{
-    // Event,
     para_inherent::calls::types::Enter,
     runtime_types::{
         bounded_collections::bounded_vec::BoundedVec, pallet_nomination_pools::PoolState,
         polkadot_parachain_primitives::primitives::Id,
-        polkadot_primitives::v8::AvailabilityBitfield, polkadot_primitives::v8::DisputeStatement,
-        polkadot_primitives::v8::ValidatorIndex, polkadot_primitives::v8::ValidityAttestation,
-        polkadot_runtime_parachains::scheduler::common::Assignment,
-        polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
-        sp_arithmetic::per_things::Perbill, sp_authority_discovery::app::Public,
-        sp_consensus_babe::digests::PreDigest,
+        polkadot_primitives::v8::AvailabilityBitfield, polkadot_primitives::v8::CoreIndex,
+        polkadot_primitives::v8::DisputeStatement, polkadot_primitives::v8::ValidatorIndex,
+        polkadot_primitives::v8::ValidityAttestation, sp_arithmetic::per_things::Perbill,
+        sp_authority_discovery::app::Public, sp_consensus_babe::digests::PreDigest,
     },
     session::events::NewSession,
     system::events::ExtrinsicFailed,
@@ -1408,50 +1405,76 @@ pub async fn track_records(
                             //         }
                             //     }
                             // }
-
-                            if info.spec_version >= 1002000 {
-                                // Fetch availability_cores
-                                let availability_cores_addr = node_runtime::storage()
-                                    .para_scheduler()
-                                    .availability_cores();
-
-                                if let Some(availability_cores) = api
+                            //
+                            // NOTE: DEPRECATED since spec_version > 1005000 availability_cores storage is no longer available
+                            // if info.spec_version >= 1002000 {
+                            //     // Fetch availability_cores
+                            //     let availability_cores_addr = node_runtime::storage()
+                            //         .para_scheduler()
+                            //         .availability_cores();
+                            //     if let Some(availability_cores) = api
+                            //         .storage()
+                            //         .at(block_hash)
+                            //         .fetch(&availability_cores_addr)
+                            //         .await?
+                            //     {
+                            //         for (i, core_occupied) in availability_cores.iter().enumerate()
+                            //         {
+                            //             let core_idx = u32::try_from(i).unwrap();
+                            //             match &core_occupied {
+                            //                 CoreOccupied::Free => records.update_core_free(
+                            //                     core_idx,
+                            //                     Some(backing_votes.session),
+                            //                 ),
+                            //                 CoreOccupied::Paras(paras_entry) => {
+                            //                     match &paras_entry.assignment {
+                            //                         //     ParasEntry::<u32>
+                            //                         Assignment::Pool {
+                            //                             para_id: Id(para_id),
+                            //                             core_index: _,
+                            //                         } => {
+                            //                             records.update_core_by_para_id(
+                            //                                 para_id.clone(),
+                            //                                 core_idx,
+                            //                                 Some(backing_votes.session),
+                            //                             );
+                            //                         }
+                            //                         Assignment::Bulk(Id(para_id)) => {
+                            //                             records.update_core_by_para_id(
+                            //                                 para_id.clone(),
+                            //                                 core_idx,
+                            //                                 Some(backing_votes.session),
+                            //                             );
+                            //                         }
+                            //                     }
+                            //                 }
+                            //             }
+                            //         }
+                            //     }
+                            // }
+                            //
+                            // NOTE: since spec_version 1005000 we track core assignments via
+                            // para_inclusion candidate descriptor
+                            if info.spec_version >= 1005000 {
+                                let paras_inclusion_addr =
+                                    node_runtime::storage().para_inclusion().v1_iter();
+                                let mut iter = api
                                     .storage()
                                     .at(block_hash)
-                                    .fetch(&availability_cores_addr)
-                                    .await?
-                                {
-                                    for (i, core_occupied) in availability_cores.iter().enumerate()
-                                    {
-                                        let core_idx = u32::try_from(i).unwrap();
-                                        match &core_occupied {
-                                            CoreOccupied::Free => records.update_core_free(
-                                                core_idx,
-                                                Some(backing_votes.session),
-                                            ),
-                                            CoreOccupied::Paras(paras_entry) => {
-                                                match &paras_entry.assignment {
-                                                    //     ParasEntry::<u32>
-                                                    Assignment::Pool {
-                                                        para_id: Id(para_id),
-                                                        core_index: _,
-                                                    } => {
-                                                        records.update_core_by_para_id(
-                                                            para_id.clone(),
-                                                            core_idx,
-                                                            Some(backing_votes.session),
-                                                        );
-                                                    }
-                                                    Assignment::Bulk(Id(para_id)) => {
-                                                        records.update_core_by_para_id(
-                                                            para_id.clone(),
-                                                            core_idx,
-                                                            Some(backing_votes.session),
-                                                        );
-                                                    }
-                                                }
-                                            }
-                                        }
+                                    .iter(paras_inclusion_addr)
+                                    .await?;
+                                while let Some(Ok(storage_resp)) = iter.next().await {
+                                    for candidate_pending_availability in storage_resp.value {
+                                        let CoreIndex(core_index) =
+                                            candidate_pending_availability.core;
+                                        let Id(para_id) =
+                                            candidate_pending_availability.descriptor.para_id;
+
+                                        records.update_core_by_para_id(
+                                            para_id,
+                                            core_index,
+                                            Some(backing_votes.session),
+                                        );
                                     }
                                 }
                             }
