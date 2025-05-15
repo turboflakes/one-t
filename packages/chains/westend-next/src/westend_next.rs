@@ -127,6 +127,7 @@ use relay_runtime::{
         pallet_balances::types::AccountData,
         polkadot_parachain_primitives::primitives::Id,
         polkadot_primitives::v8::AvailabilityBitfield,
+        polkadot_primitives::v8::CoreIndex,
         polkadot_primitives::v8::DisputeStatement,
         polkadot_primitives::v8::ValidatorIndex,
         polkadot_primitives::v8::ValidityAttestation,
@@ -997,43 +998,6 @@ fn track_authority_votes(
     Ok(())
 }
 
-/// TODO: Track authority core assignments per authority
-// fn track_core_assignments(
-//     records: &mut Records,
-//     backing_votes: &OnChainVotes,
-//     availability_cores: Vec<CoreOccupied<u32>>,
-// ) -> Result<(), OnetError> {
-//     for (i, core_occupied) in availability_cores.iter().enumerate() {
-//         let core_idx = u32::try_from(i).unwrap();
-//         match &core_occupied {
-//             CoreOccupied::Free => records.update_core_free(core_idx, Some(backing_votes.session)),
-//             CoreOccupied::Paras(paras_entry) => {
-//                 match &paras_entry.assignment {
-//                     //     ParasEntry::<u32>
-//                     Assignment::Pool {
-//                         para_id: Id(para_id),
-//                         core_index: _,
-//                     } => {
-//                         records.update_core_by_para_id(
-//                             para_id.clone(),
-//                             core_idx,
-//                             Some(backing_votes.session),
-//                         );
-//                     }
-//                     Assignment::Bulk(Id(para_id)) => {
-//                         records.update_core_by_para_id(
-//                             para_id.clone(),
-//                             core_idx,
-//                             Some(backing_votes.session),
-//                         );
-//                     }
-//                 }
-//             }
-//         }
-//     }
-//     Ok(())
-// }
-
 /// Track initiated disputes per authority
 fn track_disputes(
     records: &mut Records,
@@ -1074,6 +1038,30 @@ fn track_disputes(
         }
     }
 
+    Ok(())
+}
+
+/// Fetch and track the core assigned to a para_id from para_inclusion.v1 storage
+async fn fetch_and_track_core_assignments(
+    api: &OnlineClient<PolkadotConfig>,
+    records: &mut Records,
+    backing_votes: &OnChainVotes,
+    block_hash: H256,
+) -> Result<(), OnetError> {
+    let paras_inclusion_addr = relay_runtime::storage().para_inclusion().v1_iter();
+    let mut iter = api
+        .storage()
+        .at(block_hash)
+        .iter(paras_inclusion_addr)
+        .await?;
+    while let Some(Ok(storage_resp)) = iter.next().await {
+        for candidate_pending_availability in storage_resp.value {
+            let CoreIndex(core_index) = candidate_pending_availability.core;
+            let Id(para_id) = candidate_pending_availability.descriptor.para_id;
+
+            records.update_core_by_para_id(para_id, core_index, Some(backing_votes.session));
+        }
+    }
     Ok(())
 }
 
@@ -1163,11 +1151,6 @@ pub async fn track_records(
     // Fetch on chain votes
     let backing_votes = fetch_on_chain_votes(&rc_api, rc_block_hash).await?;
 
-    // Fetch availability cores
-    // let availability_cores = fetch_availability_cores(&rc_api, rc_block_hash).await?;
-    //
-    //
-
     // Fetch and Track authority points
     fetch_and_track_authority_points(
         &rc_api,
@@ -1186,9 +1169,6 @@ pub async fn track_records(
         &active_validator_indices,
     )?;
 
-    // TODO: Track core assignments
-    // track_core_assignments(records, &backing_votes, availability_cores)?;
-
     // Track disputes
     track_disputes(
         records,
@@ -1196,6 +1176,9 @@ pub async fn track_records(
         &active_validator_indices,
         rc_block_number,
     )?;
+
+    // Fetch and Track core assignments
+    fetch_and_track_core_assignments(&rc_api, records, &backing_votes, rc_block_hash).await?;
 
     // Fetch and Track availability
     fetch_and_track_availability(
@@ -3243,35 +3226,4 @@ async fn fetch_last_runtime_upgrade(
             "Last runtime upgrade not found at block hash {hash}"
         ))
     })
-}
-
-// TODO: Fetch availability cores at the specified block hash
-// async fn fetch_availability_cores(
-//     api: &OnlineClient<PolkadotConfig>,
-//     hash: H256,
-// ) -> Result<Vec<CoreOccupied<u32>>, OnetError> {
-//     let addr = node_runtime::storage()
-//         .para_scheduler()
-//         .availability_cores();
-
-//     api.storage()
-//         .at(hash)
-//         .fetch(&addr)
-//         .await?
-//         .ok_or_else(|| OnetError::from("Availability cores not found at block hash {hash}"))
-// }
-
-/// Fetch candidates pending availability by `ParaId`, at the specified block hash
-async fn fetch_candidates_pending_availability(
-    api: &OnlineClient<PolkadotConfig>,
-    hash: H256,
-    para_id: Id,
-) -> Result<CoreInfo, OnetError> {
-    let addr = relay_runtime::storage().para_inclusion().v1(para_id);
-
-    api.storage()
-        .at(hash)
-        .fetch(&addr)
-        .await?
-        .ok_or_else(|| OnetError::from("Availability cores not found at block hash {hash}"))
 }
