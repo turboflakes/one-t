@@ -92,9 +92,14 @@ fn default_minimum_initial_eras() -> u32 {
     0
 }
 
-/// provides default value for maximum_eras if ONET_MAXIMUM_HISTORY_ERAS env var is not set
+/// provides default value for maximum_history_eras if ONET_MAXIMUM_HISTORY_ERAS env var is not set
 fn default_maximum_history_eras() -> u32 {
     8
+}
+
+/// provides default value for maximum_number_last_sessions if ONET_MAXIMUM_NUMBER_LAST_SESSIONS env var is not set
+fn default_maximum_number_last_sessions() -> u32 {
+    192
 }
 
 /// provides default value for maximum_reports if ONET_MAXIMUM_REPORTS env var is not set
@@ -259,6 +264,8 @@ pub struct Config {
     pub minimum_initial_eras: u32,
     #[serde(default = "default_maximum_history_eras")]
     pub maximum_history_eras: u32,
+    #[serde(default = "default_maximum_number_last_sessions")]
+    pub maximum_number_last_sessions: u32,
     #[serde(default = "default_maximum_reports")]
     pub maximum_reports: u32,
     #[serde(default = "default_mvr_level_1")]

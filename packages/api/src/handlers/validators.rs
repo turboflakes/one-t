@@ -1093,6 +1093,7 @@ async fn calculate_validator_grade_by_stash(
     params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<ValidatorGradeResult, ApiError> {
+    let config = CONFIG.clone();
     let mut conn = get_conn(&cache).await?;
     let stash = AccountId32::from_str(&*stash.to_string()).map_err(|e| {
         ApiError::BadRequest(format!(
@@ -1123,9 +1124,9 @@ async fn calculate_validator_grade_by_stash(
 
     let mut data: Vec<ValidatorResult> = Vec::new();
 
-    // NOTE: currently define max number of sessions up to 192 with default being 6 sessions
-    // TODO: Add 'maximum_number_last_sessions' as configurable variable
-    if params.number_last_sessions > 0 && params.number_last_sessions <= 192 {
+    if params.number_last_sessions > 0
+        && params.number_last_sessions <= config.maximum_number_last_sessions
+    {
         let mut last = Some(requested_session_index - params.number_last_sessions);
 
         while let Some(session_index) = last {
@@ -1149,8 +1150,10 @@ async fn calculate_validator_grade_by_stash(
             }
         }
     } else {
-        let msg =
-            format!("The value of parameter 'number_last_sessions' must be between 1 and 192.");
+        let msg = format!(
+            "The value of parameter 'number_last_sessions' must be between 1 and {}.",
+            config.maximum_number_last_sessions
+        );
         warn!("{}", msg);
         return Err(ApiError::NotFound(msg));
     }
