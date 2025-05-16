@@ -19,6 +19,7 @@ onet-errors = { path = "../errors" }
 onet-matrix = { path = "../matrix" }
 # onet-paseo = { path = "../chains/paseo" }
 # onet-polkadot = { path = "../chains/polkadot" }
+onet-westend = { path = "../chains/westend" }
 onet-westend-next = { path = "../chains/westend-next" }
 
 actix = { workspace = true }

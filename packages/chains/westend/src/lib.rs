@@ -18,44 +18,5 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-
-use onet_mcda::criterias::{CriteriaFilters, CriteriaLimits, CriteriaWeights};
-use onet_records::{BlockNumber, EpochIndex};
-use serde::Serialize;
-use subxt::utils::H256;
-
-#[derive(Debug, Serialize, PartialEq)]
-pub struct MetaResult {
-    pub limits: String,
-}
-
-impl Default for MetaResult {
-    fn default() -> MetaResult {
-        MetaResult {
-            limits: String::default(),
-        }
-    }
-}
-
-#[derive(Debug, Serialize, PartialEq)]
-pub struct BoardResult {
-    pub hash: H256,
-    pub session: EpochIndex,
-    pub block_number: BlockNumber,
-    pub addresses: Vec<String>,
-    pub weights: CriteriaWeights,
-    pub limits: CriteriaLimits,
-    pub filters: CriteriaFilters,
-}
-
-#[derive(Debug, Serialize, PartialEq)]
-pub struct BoardsResult {
-    pub data: Vec<BoardResult>,
-}
-
-#[derive(Debug, Serialize, PartialEq)]
-pub struct LimitsResult {
-    pub session: EpochIndex,
-    pub block_number: BlockNumber,
-    pub limits: CriteriaLimits,
-}
+//
+pub mod westend;

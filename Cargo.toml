@@ -17,8 +17,10 @@ members = [
     # "packages/chains/kusama",
     # "packages/chains/polkadot",
     # "packages/chains/paseo",
-    "packages/chains/asset-hub-westend-next",
+    "packages/chains/asset-hub-westend",
     "packages/chains/people-westend",
+    "packages/chains/westend-next",
+    "packages/chains/asset-hub-westend-next",
     "packages/chains/westend-next",
 ]
 
@@ -64,24 +66,23 @@ mobc-redis = { version = "0.7", default-features = false, features = [
     "async-std-comp",
 ] }
 ctrlc = { version = "3.0", features = ["termination"] }
-
-# Subxt crates:
-subxt = { version = "0.38.0", features = [
-    "substrate-compat",
-    "native",
-    "reconnecting-rpc-client",
+codec = { package = "parity-scale-codec", version = "3.7.4", default-features = false, features = [
+    "derive",
 ] }
-subxt-signer = { version = "0.38.0", features = ["subxt"] }
+# Subxt crates:
+subxt = { version = "0.42.1", features = ["native", "reconnecting-rpc-client"] }
+subxt-signer = { version = "0.42.1", features = ["subxt"] }
+sp-core = "36.1.0"
 sp-core-hashing = "16.0.0"
 #
 async-std = { version = "1.11.0", features = ["attributes", "tokio1"] }
 env_logger = "0.9.0"
 futures = "0.3.13"
-codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = [
-    "derive",
-    "full",
-    "bit-vec",
-] }
+# codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = [
+#     "derive",
+#     "full",
+#     "bit-vec",
+# ] }
 hex = "0.4.3"
 # p2p-explorer
 multiaddr = "0.18.1"

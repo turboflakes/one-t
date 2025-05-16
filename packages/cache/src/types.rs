@@ -23,7 +23,7 @@ use onet_pools::PoolId;
 use onet_records::{AuthorityIndex, EpochIndex, EraIndex};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
-use subxt::{ext::sp_core::H256, utils::AccountId32};
+use subxt::utils::{AccountId32, H256};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]

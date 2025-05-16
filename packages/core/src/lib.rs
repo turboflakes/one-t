@@ -32,6 +32,7 @@ use onet_records::EpochIndex;
 use onet_report::{Network, ReportType};
 use redis::aio::Connection;
 use serde::{Deserialize, Serialize};
+use sp_core::crypto;
 use std::{
     collections::BTreeMap,
     convert::TryInto,
@@ -48,8 +49,8 @@ use subxt::{
         legacy::{rpc_methods::StorageKey, LegacyRpcMethods},
         rpc::reconnecting_rpc_client::{ExponentialBackoff, RpcClient},
     },
-    ext::sp_core::crypto,
-    utils::{validate_url_is_secure, AccountId32},
+    ext::subxt_rpcs::utils::validate_url_is_secure,
+    utils::AccountId32,
     OnlineClient, PolkadotConfig,
 };
 use subxt_signer::{bip39::Mnemonic, sr25519::Keypair};
