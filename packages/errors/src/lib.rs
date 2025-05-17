@@ -25,7 +25,6 @@ use derive_more::Display;
 use reqwest;
 use serde::{Deserialize, Serialize};
 use std::{str::Utf8Error, string::String};
-use subxt::{backend::rpc::reconnecting_rpc_client::RpcError, error::MetadataError};
 use thiserror::Error;
 
 /// On specific error messages
@@ -38,13 +37,13 @@ pub enum OnetError {
     #[error("SubxtCore error: {0}")]
     SubxtCoreError(#[from] subxt::ext::subxt_core::Error),
     #[error("RPC error: {0}")]
-    RpcError(#[from] RpcError),
+    RpcError(#[from] subxt::ext::subxt_rpcs::Error),
     #[error("Codec error: {0}")]
     CodecError(#[from] codec::Error),
     #[error("Utf8 error: {0}")]
     Utf8Error(#[from] Utf8Error),
     #[error("Metadata error: {0}")]
-    MetadataError(#[from] MetadataError),
+    MetadataError(#[from] subxt::error::MetadataError),
     #[error("Matrix error: {0}")]
     MatrixError(String),
     #[error("Subscription finished")]
@@ -59,8 +58,8 @@ pub enum OnetError {
     IOError(#[from] std::io::Error),
     #[error("Nomination pool error: {0}")]
     PoolError(String),
-    #[error("P2PError error: {0}")]
-    P2PError(#[from] Box<dyn std::error::Error + Send + 'static>),
+    #[error("Box error: {0}")]
+    BoxError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
     #[error("Other error: {0}")]
     Other(String),
 }
@@ -85,6 +84,10 @@ impl From<OnetError> for String {
         format!("{}", error).to_string()
     }
 }
+
+// Implement Send and Sync for OnetError
+// unsafe impl Send for OnetError {}
+// unsafe impl Sync for OnetError {}
 
 /// Onet specific error messages
 #[derive(Error, Debug)]

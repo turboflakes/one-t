@@ -22,7 +22,7 @@
 use onet_mcda::criterias::{CriteriaFilters, CriteriaLimits, CriteriaWeights};
 use onet_records::{BlockNumber, EpochIndex};
 use serde::Serialize;
-use subxt::ext::sp_core::H256;
+use subxt::utils::H256;
 
 #[derive(Debug, Serialize, PartialEq)]
 pub struct MetaResult {
