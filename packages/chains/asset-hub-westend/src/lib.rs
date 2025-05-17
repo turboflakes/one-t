@@ -21,7 +21,18 @@
 
 #[subxt::subxt(
     runtime_metadata_path = "artifacts/metadata/asset_hub_westend_metadata.scale",
-    derive_for_all_types = "PartialEq, Clone"
+    substitute_type(
+        path = "sp_staking::ExposurePage<A, B>",
+        with = "crate::custom_types::ExposurePage<A, B>"
+    ),
+    substitute_type(
+        path = "sp_staking::IndividualExposure<A>",
+        with = "crate::custom_types::IndividualExposure<A>"
+    ),
+    substitute_type(
+        path = "sp_staking::PagedExposureMetadata<A>",
+        with = "crate::custom_types::PagedExposureMetadata<A>"
+    )
 )]
 pub mod asset_hub_runtime {}
 use asset_hub_runtime::{
@@ -32,6 +43,7 @@ use asset_hub_runtime::{
     staking::storage::types::eras_total_stake::ErasTotalStake,
     staking::storage::types::nominators::Nominators,
 };
+pub mod custom_types;
 use onet_errors::OnetError;
 use onet_records::EraIndex;
 use subxt::{
