@@ -12,4 +12,5 @@ onet-errors = { path = "../../errors" }
 onet-records = { path = "../../records" }
 codec = { workspace = true }
 subxt = { workspace = true }
+scale-decode = { workspace = true }
 scale-encode = { workspace = true }

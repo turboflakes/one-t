@@ -21,6 +21,7 @@
 
 #[subxt::subxt(
     runtime_metadata_path = "artifacts/metadata/asset_hub_westend_metadata.scale",
+    derive_for_all_types = "PartialEq, Clone",
     substitute_type(
         path = "sp_staking::ExposurePage<A, B>",
         with = "crate::custom_types::ExposurePage<A, B>"
@@ -35,7 +36,7 @@
     )
 )]
 pub mod asset_hub_runtime {}
-use asset_hub_runtime::{
+pub use asset_hub_runtime::{
     nomination_pools::storage::types::bonded_pools::BondedPools,
     nomination_pools::storage::types::metadata::Metadata as PoolMetadata,
     runtime_types::pallet_staking_async::{ledger::StakingLedger, ActiveEraInfo, EraRewardPoints},
@@ -44,6 +45,8 @@ use asset_hub_runtime::{
     staking::storage::types::nominators::Nominators,
 };
 pub mod custom_types;
+
+use crate::custom_types::PagedExposureMetadata;
 use onet_errors::OnetError;
 use onet_records::EraIndex;
 use subxt::{
@@ -51,7 +54,7 @@ use subxt::{
     OnlineClient, PolkadotConfig,
 };
 
-pub type AssetHubCall = asset_hub_runtime::runtime_types::westend_runtime::RuntimeCall;
+pub type AssetHubCall = asset_hub_runtime::runtime_types::asset_hub_westend_runtime::RuntimeCall;
 pub type NominationPoolsCall =
     asset_hub_runtime::runtime_types::pallet_nomination_pools::pallet::Call;
 
@@ -72,27 +75,6 @@ pub async fn fetch_active_era_info(
             ))
         })
 }
-
-// /// Fetch eras start sesson info at the specified block hash (AH)
-// pub async fn fetch_eras_start_session_index(
-//     api: &OnlineClient<PolkadotConfig>,
-//     ah_block_hash: H256,
-//     era: &EraIndex,
-// ) -> Result<ErasStartSessionIndex, OnetError> {
-//     let addr = asset_hub_runtime::storage()
-//         .staking()
-//         .eras_start_session_index();
-
-//     api.storage()
-//         .at(ah_block_hash)
-//         .fetch(&addr)
-//         .await?
-//         .ok_or_else(|| {
-//             OnetError::from(format!(
-//                 "Start session index at block hash {ah_block_hash:?}"
-//             ))
-//         })
-// }
 
 /// Fetch eras total stake at the specified block hash (AH)
 pub async fn fetch_eras_total_stake(

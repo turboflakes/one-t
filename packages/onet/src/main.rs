@@ -36,8 +36,8 @@ use onet_matrix::Matrix;
 // use onet_polkadot::polkadot;
 use onet_westend::westend;
 // use onet_westend_next::westend_next;
+use sp_core::crypto;
 use std::{env, sync::mpsc, thread, time};
-use subxt::ext::sp_core::crypto;
 
 // #[actix_web::main]
 fn main() {

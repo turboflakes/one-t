@@ -17,11 +17,11 @@ members = [
     # "packages/chains/kusama",
     # "packages/chains/polkadot",
     # "packages/chains/paseo",
+    "packages/chains/westend",
     "packages/chains/asset-hub-westend",
     "packages/chains/people-westend",
-    "packages/chains/westend-next",
-    "packages/chains/asset-hub-westend-next",
-    "packages/chains/westend-next",
+    # "packages/chains/asset-hub-westend-next",
+    # "packages/chains/westend-next",
 ]
 
 resolver = "2"
@@ -69,7 +69,8 @@ ctrlc = { version = "3.0", features = ["termination"] }
 codec = { package = "parity-scale-codec", version = "3.7.4", default-features = false, features = [
     "derive",
 ] }
-scale-encode = "0.10.0"
+scale-encode = { version = "0.10.0", default-features = false }
+scale-decode = { version = "0.16.0", default-features = false }
 # Subxt crates:
 subxt = { version = "0.42.1", features = ["native", "reconnecting-rpc-client"] }
 subxt-signer = { version = "0.42.1", features = ["subxt"] }
