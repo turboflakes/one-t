@@ -27,10 +27,9 @@ use onet_asset_hub_westend_next::{
     asset_hub_runtime::{
         balances::storage::types::total_issuance::TotalIssuance,
         runtime_types::{
-            bounded_collections::bounded_vec::BoundedVec,
-            pallet_nomination_pools::PoolState,
-
-            // polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
+            bounded_collections::bounded_btree_map::BoundedBTreeMap,
+            bounded_collections::bounded_vec::BoundedVec, pallet_nomination_pools::PoolState,
+            pallet_staking_async::pallet::pallet::BoundedExposurePage,
             sp_arithmetic::per_things::Perbill,
         },
         staking::events::EraPaid,
@@ -40,13 +39,13 @@ use onet_asset_hub_westend_next::{
         staking_next_rc_client::events::SessionReportReceived,
     },
 };
+
 use onet_asset_hub_westend_next::{
     fetch_active_era_info, fetch_bonded_controller_account, fetch_bonded_pools,
-    fetch_era_reward_points, fetch_eras_start_session_index, fetch_eras_total_stake,
-    fetch_eras_validator_reward, fetch_last_pool_id, fetch_ledger_from_controller,
-    fetch_nominators, fetch_pool_metadata,
+    fetch_era_reward_points, fetch_eras_total_stake, fetch_eras_validator_reward,
+    fetch_last_pool_id, fetch_ledger_from_controller, fetch_nominators, fetch_pool_metadata,
+    AssetHubCall, NominationPoolsCall,
 };
-use onet_asset_hub_westend_next::{AssetHubCall, NominationPoolsCall};
 use onet_cache::types::{CacheKey, ChainKey, Verbosity};
 use onet_cache::{
     cache_best_block, cache_board_limits_at_session, cache_finalized_block,
@@ -68,6 +67,7 @@ use onet_pools::{
     nomination_pool_account, Account, AccountType, ActiveNominee, Pool, PoolNominees, PoolStats,
     Roles,
 };
+
 use onet_records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, DiscoveryRecord, EpochIndex, EpochKey, EraIndex,
     NetworkSessionStats, ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records,
@@ -91,13 +91,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use frame_metadata::RuntimeMetadataPrefixed;
 use subxt::{
     backend::legacy::LegacyRpcMethods,
     config::{
         substrate::{Digest, DigestItem},
         Header,
     },
-    ext::subxt_core::Metadata,
+    ext::{frame_metadata, subxt_core::Metadata},
     tx::TxStatus,
     utils::{AccountId32, H256},
     OnlineClient, PolkadotConfig,
@@ -140,9 +141,9 @@ use relay_runtime::{
     session::events::NewSession,
     session::storage::types::queued_keys::QueuedKeys,
     session::storage::types::validators::Validators as ValidatorSet,
-    staking_next_ah_client::events::CouldNotMergeAndDropped,
-    staking_next_ah_client::events::SetTooSmallAndDropped,
-    staking_next_ah_client::events::ValidatorSetReceived,
+    staking_async_ah_client::events::CouldNotMergeAndDropped,
+    staking_async_ah_client::events::SetTooSmallAndDropped,
+    staking_async_ah_client::events::ValidatorSetReceived,
     system::events::ExtrinsicFailed,
 };
 
@@ -211,12 +212,9 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     // Initialize subscribers records
     initialize_records(&rc_api, &mut records, rc_block_hash).await?;
 
-    let start_session_index =
-        fetch_eras_start_session_index(&ah_api, ah_block_hash, &era_index).await?;
-
     // Initialize cache
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-    cache_records_at_session(&mut cache, &records, start_session_index).await?;
+    cache_records_at_session(&mut cache, &records, session_index).await?;
     cache_records(&mut cache, &records).await?;
 
     // Initialize p2p discovery
@@ -269,7 +267,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                             &mut subscribers,
                             &mut records,
                             block_number,
-                            block.hash(),
+                            finalized_block_hash,
                             is_loading,
                         )
                         .await?;
@@ -438,7 +436,15 @@ async fn setup_processing_context(
 
     // Get parent block metadata for better handling of runtime upgrades
     let parent_block_hash = fetch_relay_chain_block_hash(&rc_rpc, block_number - 1).await?;
-    let parent_metadata = rc_rpc.state_get_metadata(Some(parent_block_hash)).await?;
+
+    // let parent_metadata = rc_api::fetch_latest_stable_metadata(parent_block_hash).await?;
+    let parent_metadata_bytes = rc_rpc
+        .state_get_metadata(Some(parent_block_hash))
+        .await?
+        .into_raw();
+    let parent_metadata: Metadata =
+        RuntimeMetadataPrefixed::decode(&mut &parent_metadata_bytes[..])?.try_into()?;
+
     rc_api.set_metadata(parent_metadata.clone());
 
     Ok(BlockProcessingContext {
@@ -572,9 +578,8 @@ async fn process_asset_hub_events(
                 rc_block_number,
                 ah_block_number,
             )?;
-            let start_session_index =
-                fetch_eras_start_session_index(&ah_api, ah_block_hash, &ev.active_era).await?;
-            cache_records_at_session(cache, records, start_session_index).await?;
+            // Cache records at the start of each session
+            cache_records_at_session(cache, records, ev.starting_session).await?;
 
             // Cache session stats records every new session with data collected
             // from the parent AH block hash
@@ -884,7 +889,7 @@ async fn fetch_and_track_authority_points(
     block_hash: H256,
 ) -> Result<(), OnetError> {
     let validator_points_addr = relay_runtime::storage()
-        .staking_next_ah_client()
+        .staking_async_ah_client()
         .validator_points_iter();
     let mut iter = api
         .storage()
@@ -1680,8 +1685,8 @@ pub async fn run_network_report(
     for era_index in start_era_index..active_era_index {
         // Fetch Era reward points
         let era_reward_points = fetch_era_reward_points(&ah_api, ah_block_hash, era_index).await?;
-
-        for (stash, points) in era_reward_points.individual.iter() {
+        let BoundedBTreeMap(individual) = era_reward_points.individual;
+        for (stash, points) in individual.iter() {
             validators
                 .iter_mut()
                 .filter(|v| v.stash == *stash)
@@ -2230,11 +2235,9 @@ pub async fn cache_nomination_pools_nominees(
                     .await?;
 
                 while let Some(Ok(storage_kv)) = iter.next().await {
-                    if let Some(individual) = storage_kv
-                        .value
-                        .others
-                        .iter()
-                        .find(|x| x.who == pool_stash_account)
+                    let BoundedExposurePage(exposure) = storage_kv.value;
+                    if let Some(individual) =
+                        exposure.others.iter().find(|x| x.who == pool_stash_account)
                     {
                         active.push(ActiveNominee::with(stash.clone(), individual.value));
                     }
@@ -2745,17 +2748,40 @@ pub async fn cache_session_stats_records(
     // from the parent AH block
     let active_era_info = fetch_active_era_info(&ah_api, ah_parent_block_hash).await?;
     let era_index = active_era_info.index;
-    let era_reward_points = fetch_era_reward_points(&ah_api, ah_block_hash, era_index).await?;
 
-    nss.total_reward_points = era_reward_points.total;
+    // nss.total_reward_points = era_reward_points.total;
 
-    for (stash, points) in era_reward_points.individual.iter() {
+    // NOTE: DEPRECATED era_reward_points in favor of validator points retrieved
+    // from asset_hub_staking_client.validator_points
+    //
+    // let era_reward_points = fetch_era_reward_points(&ah_api, ah_block_hash, era_index).await?;
+    // for (stash, points) in era_reward_points.individual {
+    //     validators
+    //         .iter_mut()
+    //         .filter(|v| v.stash.is_some())
+    //         .filter(|v| *(v.stash.as_ref().unwrap()) == *stash)
+    //         .for_each(|v| {
+    //             (*v).points = *points;
+    //         });
+    // }
+    //
+    // Fetch validator points from asset_hub_staking_client.validator_points
+    let storage_addr = relay_runtime::storage()
+        .staking_async_ah_client()
+        .validator_points_iter();
+    let mut iter = rc_api
+        .storage()
+        .at(rc_block_hash)
+        .iter(storage_addr)
+        .await?;
+    while let Some(Ok(storage_resp)) = iter.next().await {
+        let stash = get_account_id_from_storage_key(storage_resp.clone().key_bytes);
         validators
             .iter_mut()
             .filter(|v| v.stash.is_some())
-            .filter(|v| *(v.stash.as_ref().unwrap()) == *stash)
+            .filter(|v| *(v.stash.as_ref().unwrap()) == stash)
             .for_each(|v| {
-                (*v).points = *points;
+                (*v).points = storage_resp.value;
             });
     }
 
@@ -3104,7 +3130,7 @@ async fn fetch_validator_points(
     stash: &AccountId32,
 ) -> Result<Points, OnetError> {
     let addr = relay_runtime::storage()
-        .staking_next_ah_client()
+        .staking_async_ah_client()
         .validator_points(stash);
 
     api.storage().at(hash).fetch(&addr).await?.ok_or_else(|| {

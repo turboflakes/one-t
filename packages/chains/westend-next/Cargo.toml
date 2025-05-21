@@ -25,6 +25,7 @@ onet-asset-hub-westend-next = { path = "../../chains/asset-hub-westend-next" }
 
 async-recursion = { workspace = true }
 async-std = { workspace = true }
+frame-metadata = { workspace = true }
 hex = { workspace = true }
 log = { workspace = true }
 redis = { workspace = true }

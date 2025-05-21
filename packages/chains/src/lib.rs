@@ -59,7 +59,7 @@ impl SupportedRuntime {
             Self::Kusama => SupportedParasRuntime::PeopleKusama,
             Self::Paseo => SupportedParasRuntime::PeoplePaseo,
             Self::Westend => SupportedParasRuntime::PeopleWestend,
-            _ => unimplemented!("PeopleChain not supported"),
+            Self::WestendNext => SupportedParasRuntime::PeopleWestend,
         }
     }
 

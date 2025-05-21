@@ -17,11 +17,11 @@ members = [
     # "packages/chains/kusama",
     # "packages/chains/polkadot",
     # "packages/chains/paseo",
-    "packages/chains/westend",
-    "packages/chains/asset-hub-westend",
-    "packages/chains/people-westend",
-    # "packages/chains/asset-hub-westend-next",
-    # "packages/chains/westend-next",
+    # "packages/chains/westend",
+    # "packages/chains/asset-hub-westend",
+    # "packages/chains/people-westend",
+    "packages/chains/asset-hub-westend-next",
+    "packages/chains/westend-next",
 ]
 
 resolver = "2"
@@ -74,18 +74,17 @@ scale-decode = { version = "0.16.0", default-features = false }
 # Subxt crates:
 subxt = { version = "0.42.1", features = ["native", "reconnecting-rpc-client"] }
 subxt-signer = { version = "0.42.1", features = ["subxt"] }
+subxt-metadata = { version = "0.42.1", features = ["std"] }
 sp-core = "36.1.0"
 sp-core-hashing = "16.0.0"
 #
 async-std = { version = "1.11.0", features = ["attributes", "tokio1"] }
 env_logger = "0.9.0"
 futures = "0.3.13"
-# codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = [
-#     "derive",
-#     "full",
-#     "bit-vec",
-# ] }
 hex = "0.4.3"
+frame-metadata = { version = "23.0.0", default-features = false, features = [
+    "unstable",
+] }
 # p2p-explorer
 multiaddr = "0.18.1"
 libp2p = "0.52.0"

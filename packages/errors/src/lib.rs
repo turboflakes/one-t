@@ -25,6 +25,7 @@ use derive_more::Display;
 use reqwest;
 use serde::{Deserialize, Serialize};
 use std::{str::Utf8Error, string::String};
+use subxt_metadata::TryFromError as MetadataTryFromError;
 use thiserror::Error;
 
 /// On specific error messages
@@ -42,8 +43,12 @@ pub enum OnetError {
     CodecError(#[from] codec::Error),
     #[error("Utf8 error: {0}")]
     Utf8Error(#[from] Utf8Error),
+    /// Error working with metadata.
     #[error("Metadata error: {0}")]
     MetadataError(#[from] subxt::error::MetadataError),
+    /// Error decoding metadata.
+    #[error("Metadata Decoding error: {0}")]
+    MetadataDecoding(#[from] MetadataTryFromError),
     #[error("Matrix error: {0}")]
     MatrixError(String),
     #[error("Subscription finished")]

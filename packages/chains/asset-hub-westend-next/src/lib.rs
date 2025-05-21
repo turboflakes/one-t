@@ -21,20 +21,32 @@
 
 #[subxt::subxt(
     runtime_metadata_path = "artifacts/metadata/asset_hub_westend_next_metadata.scale",
-    derive_for_all_types = "PartialEq, Clone"
+    derive_for_all_types = "PartialEq, Clone",
+    // substitute_type(
+    //     path = "sp_staking::ExposurePage<A, B>",
+    //     with = "crate::custom_types::ExposurePage<A, B>"
+    // ),
+    // substitute_type(
+    //     path = "sp_staking::IndividualExposure<A>",
+    //     with = "crate::custom_types::IndividualExposure<A>"
+    // ),
+    // substitute_type(
+    //     path = "sp_staking::PagedExposureMetadata<A>",
+    //     with = "crate::custom_types::PagedExposureMetadata<A>"
+    // )
 )]
 pub mod asset_hub_runtime {}
-use asset_hub_runtime::{
+pub use asset_hub_runtime::{
     nomination_pools::storage::types::bonded_pools::BondedPools,
     nomination_pools::storage::types::metadata::Metadata as PoolMetadata,
-    runtime_types::{
-        pallet_staking_async::{ActiveEraInfo, EraRewardPoints, StakingLedger},
-        // polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
-    },
-    staking::storage::types::eras_start_session_index::ErasStartSessionIndex,
+    runtime_types::pallet_staking_async::{ledger::StakingLedger, ActiveEraInfo, EraRewardPoints},
+    // staking::storage::types::eras_start_session_index::ErasStartSessionIndex,
     staking::storage::types::eras_total_stake::ErasTotalStake,
     staking::storage::types::nominators::Nominators,
 };
+// pub mod custom_types;
+
+// use crate::custom_types::PagedExposureMetadata;
 use onet_errors::OnetError;
 use onet_records::EraIndex;
 use subxt::{
@@ -61,27 +73,6 @@ pub async fn fetch_active_era_info(
         .ok_or_else(|| {
             OnetError::from(format!(
                 "Active era not defined at block hash {ah_block_hash:?}"
-            ))
-        })
-}
-
-/// Fetch eras start sesson info at the specified block hash (AH)
-pub async fn fetch_eras_start_session_index(
-    api: &OnlineClient<PolkadotConfig>,
-    ah_block_hash: H256,
-    era: &EraIndex,
-) -> Result<ErasStartSessionIndex, OnetError> {
-    let addr = asset_hub_runtime::storage()
-        .staking()
-        .eras_start_session_index(era);
-
-    api.storage()
-        .at(ah_block_hash)
-        .fetch(&addr)
-        .await?
-        .ok_or_else(|| {
-            OnetError::from(format!(
-                "Start session index at block hash {ah_block_hash:?}"
             ))
         })
 }
@@ -212,7 +203,7 @@ pub async fn fetch_era_reward_points(
     api: &OnlineClient<PolkadotConfig>,
     ah_block_hash: H256,
     era: EraIndex,
-) -> Result<EraRewardPoints<AccountId32>, OnetError> {
+) -> Result<EraRewardPoints, OnetError> {
     let addr = asset_hub_runtime::storage()
         .staking()
         .eras_reward_points(&era);

@@ -68,7 +68,6 @@ use onet_pools::{
     nomination_pool_account, Account, AccountType, ActiveNominee, Pool, PoolNominees, PoolStats,
     Roles,
 };
-use onet_asset_hub_westend::asset_hub_runtime::runtime_types::pallet_staking_async::pallet::pallet::BoundedExposurePage;
 use onet_records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, DiscoveryRecord, EpochIndex, EpochKey, EraIndex,
     NetworkSessionStats, ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records,
@@ -147,7 +146,10 @@ use relay_runtime::{
     system::events::ExtrinsicFailed,
 };
 
-use onet_asset_hub_westend::asset_hub_runtime::runtime_types::bounded_collections::bounded_btree_map::BoundedBTreeMap;
+use onet_asset_hub_westend::asset_hub_runtime::runtime_types::{
+    bounded_collections::bounded_btree_map::BoundedBTreeMap,
+    pallet_staking_async::pallet::pallet::BoundedExposurePage,
+};
 
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
     let config = CONFIG.clone();
