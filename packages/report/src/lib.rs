@@ -366,7 +366,7 @@ impl From<RawDataRank> for Report {
         if let Some(blocks_interval) = data.meta.blocks_interval {
             report.add_raw_text(format!(
                 "\t{} blocks recorded from #{} to #{}",
-                blocks_interval.1 - blocks_interval.0,
+                1 + blocks_interval.1 - blocks_interval.0,
                 blocks_interval.0,
                 blocks_interval.1
             ));
@@ -508,7 +508,7 @@ impl From<RawDataGroup> for Report {
         if let Some(blocks_interval) = data.meta.blocks_interval {
             report.add_raw_text(format!(
                 "<i>{} blocks recorded from #{} to #{}</i>",
-                blocks_interval.1 - blocks_interval.0,
+                1 + blocks_interval.1 - blocks_interval.0,
                 blocks_interval.0,
                 blocks_interval.1
             ));
@@ -625,7 +625,7 @@ impl From<RawDataParachains> for Report {
         if let Some(blocks_interval) = data.meta.blocks_interval {
             report.add_raw_text(format!(
                 "<i>{} blocks recorded from #{} to #{}</i>",
-                blocks_interval.1 - blocks_interval.0,
+                1 + blocks_interval.1 - blocks_interval.0,
                 blocks_interval.0,
                 blocks_interval.1
             ));
@@ -704,7 +704,7 @@ impl From<RawDataPara> for Report {
         if let Some(blocks_interval) = data.meta.blocks_interval {
             report.add_raw_text(format!(
                 "<i>{} blocks recorded from #{} to #{}</i>",
-                blocks_interval.1 - blocks_interval.0,
+                1 + blocks_interval.1 - blocks_interval.0,
                 blocks_interval.0,
                 blocks_interval.1
             ));
@@ -786,7 +786,7 @@ impl From<RawDataPara> for Report {
 
                     // val. group validator names
                     clode_block.push_str(&format!(
-                        "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
+                        "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>5}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
                         "#",
                         format!("VAL_GROUP_{}", para_record.group().unwrap_or_default()),
                         "❒",
@@ -805,7 +805,7 @@ impl From<RawDataPara> for Report {
                     if let Some(mvr) = para_record.missed_votes_ratio() {
                         if let Some(bar) = para_record.bitfields_availability_ratio() {
                             clode_block.push_str(&format!(
-                                "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
+                                "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>5}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
                                 "*",
                                 slice(&replace_emoji(&data.validator.name, "_"), 24),
                                 authority_record.total_authored_blocks(),
@@ -827,7 +827,7 @@ impl From<RawDataPara> for Report {
                         || para_record.bitfields_availability_ratio().is_none()
                     {
                         clode_block.push_str(&format!(
-                            "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
+                            "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>5}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
                             "*",
                             slice(&replace_emoji(&data.validator.name, "_"), 24),
                             "-",
@@ -850,7 +850,7 @@ impl From<RawDataPara> for Report {
                         if let Some(mvr) = peer.2.missed_votes_ratio() {
                             if let Some(bar) = peer.2.bitfields_availability_ratio() {
                                 clode_block.push_str(&format!(
-                                "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
+                                "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>5}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
                                 peers_letters[i],
                                 slice(&replace_emoji(&peer.0.clone(), "_"), 24),
                                 peer.1.total_authored_blocks(),
@@ -869,7 +869,7 @@ impl From<RawDataPara> for Report {
                             }
                         }
                         clode_block.push_str(&format!(
-                            "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
+                            "{:<3}{:<24}{:>4}{:>4}{:>4}{:>4}{:>4}{:>5}{:>4}{:>8}{:>8}{:>6}{:>6}\n",
                             peers_letters[i],
                             slice(&replace_emoji(&peer.0.clone(), "_"), 24),
                             "-",

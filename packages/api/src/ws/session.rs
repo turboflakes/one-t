@@ -11,7 +11,7 @@ use crate::ws::{
 use actix::prelude::*;
 use actix_web_actors::ws;
 use log::{debug, warn};
-use onet_cache::Verbosity;
+use onet_cache::types::Verbosity;
 use onet_records::{BlockNumber, EpochIndex};
 use subxt::utils::AccountId32;
 

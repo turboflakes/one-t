@@ -26,7 +26,10 @@ use crate::handlers::boards::{
 use crate::helpers::respond_json;
 use actix_web::web::{Data, Json, Query};
 use log::{debug, warn};
-use onet_cache::{get_conn, CacheKey, Index, RedisPool};
+use onet_cache::{
+    provider::{get_conn, RedisPool},
+    types::{CacheKey, Index},
+};
 use onet_config::CONFIG;
 use onet_errors::{ApiError, CacheError};
 use onet_mcda::{

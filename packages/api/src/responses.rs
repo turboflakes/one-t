@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use onet_cache::types::ChainKey;
 use onet_pools::{Pool, PoolCounter, PoolNominees, PoolNomineesStats, PoolState, PoolStats, Roles};
 use onet_records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, DiscoveryRecord, EpochIndex, EraIndex,
@@ -119,8 +120,9 @@ impl std::fmt::Display for AuthorityKey {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BlockResult {
+    // chain_key
+    chain_key: ChainKey,
     // block_number
-    #[serde(skip_serializing_if = "BlockNumber::is_empty")]
     block_number: BlockNumber,
     // is_finalized
     #[serde(skip_serializing_if = "default")]
@@ -136,6 +138,11 @@ impl From<CacheMap> for BlockResult {
         let serialized = data.get("stats").unwrap_or(&"{}".to_string()).to_string();
         let stats: SessionStats = serde_json::from_str(&serialized).unwrap_or_default();
         BlockResult {
+            chain_key: data
+                .get("chain_key")
+                .unwrap_or(&"{}".to_string())
+                .parse::<ChainKey>()
+                .unwrap_or_default(),
             block_number: data
                 .get("block_number")
                 .unwrap_or(&zero)
