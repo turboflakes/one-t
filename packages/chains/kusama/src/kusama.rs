@@ -3168,7 +3168,7 @@ async fn get_identity(
         .fetch(&identity_of_addr)
         .await?
     {
-        Some((identity, _)) => {
+        Some(identity) => {
             debug!("identity {:?}", identity);
             let parent = parse_identity_data(identity.info.display);
             let identity = match sub_account_name {
