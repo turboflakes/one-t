@@ -30,7 +30,7 @@ use onet_records::{AuthorityIndex, EpochIndex, EraIndex};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use std::{thread, time};
-use subxt::{ext::sp_core::H256, utils::AccountId32};
+use subxt::{utils::AccountId32, utils::H256};
 
 pub type RedisPool = Pool<RedisConnectionManager>;
 pub type RedisConn = Connection<RedisConnectionManager>;

@@ -29,3 +29,4 @@ log = { workspace = true }
 subxt = { workspace = true }
 env_logger = { workspace = true }
 async-std = { workspace = true }
+sp-core = { workspace = true }

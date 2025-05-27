@@ -25,7 +25,7 @@ use onet_errors::{CacheError, OnetError};
 use onet_records::EpochIndex;
 use redis::aio::Connection;
 use serde::{Deserialize, Serialize};
-use subxt::ext::sp_core::H256;
+use subxt::utils::H256;
 
 /// Current weighs and limits capacity
 pub const WEIGHTS_CAPACITY: usize = 5;

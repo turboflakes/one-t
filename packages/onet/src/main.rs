@@ -34,8 +34,8 @@ use onet_kusama::kusama;
 use onet_matrix::Matrix;
 use onet_paseo::paseo;
 use onet_polkadot::polkadot;
+use sp_core::crypto;
 use std::{env, sync::mpsc, thread, time};
-use subxt::ext::sp_core::crypto;
 
 // #[actix_web::main]
 fn main() {
