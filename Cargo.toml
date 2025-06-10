@@ -17,8 +17,8 @@ members = [
     # "packages/chains/kusama",
     # "packages/chains/polkadot",
     # "packages/chains/paseo",
-    # "packages/chains/westend",
-    # "packages/chains/asset-hub-westend",
+    "packages/chains/westend",
+    "packages/chains/asset-hub-westend",
     # "packages/chains/people-westend",
     "packages/chains/asset-hub-westend-next",
     "packages/chains/westend-next",
@@ -72,9 +72,20 @@ codec = { package = "parity-scale-codec", version = "3.7.4", default-features = 
 scale-encode = { version = "0.10.0", default-features = false }
 scale-decode = { version = "0.16.0", default-features = false }
 # Subxt crates:
-subxt = { version = "0.42.1", features = ["native", "reconnecting-rpc-client"] }
-subxt-signer = { version = "0.42.1", features = ["subxt"] }
-subxt-metadata = { version = "0.42.1", features = ["std"] }
+# subxt = { version = "0.42.1", features = ["native", "reconnecting-rpc-client"] }
+# subxt-signer = { version = "0.42.1", features = ["subxt"] }
+# subxt-metadata = { version = "0.42.1", features = ["std"] }
+subxt = { git = "https://github.com/paritytech/subxt", branch = "master", features = [
+    "native",
+    "reconnecting-rpc-client",
+] }
+subxt-signer = { git = "https://github.com/paritytech/subxt", branch = "master", features = [
+    "subxt",
+] }
+subxt-metadata = { git = "https://github.com/paritytech/subxt", branch = "master", features = [
+    "std",
+] }
+
 sp-core = "36.1.0"
 sp-core-hashing = "16.0.0"
 #

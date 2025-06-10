@@ -18,6 +18,44 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-//
-pub mod custom_types;
-pub mod westend;
+
+use codec::{Decode, Encode};
+
+#[derive(Decode, Encode, Debug)]
+pub enum PreDigest {
+    #[codec(index = 1)]
+    Primary(PrimaryPreDigest),
+    #[codec(index = 2)]
+    SecondaryPlain(SecondaryPlainPreDigest),
+    #[codec(index = 3)]
+    SecondaryVRF(SecondaryVRFPreDigest),
+}
+
+#[derive(Decode, Encode, Debug)]
+pub struct PrimaryPreDigest {
+    pub authority_index: ::core::primitive::u32,
+    pub slot: Slot,
+    pub vrf_signature: VrfSignature,
+}
+
+#[derive(Decode, Encode, Debug)]
+pub struct SecondaryPlainPreDigest {
+    pub authority_index: ::core::primitive::u32,
+    pub slot: Slot,
+}
+
+#[derive(Decode, Encode, Debug)]
+pub struct SecondaryVRFPreDigest {
+    pub authority_index: ::core::primitive::u32,
+    pub slot: Slot,
+    pub vrf_signature: VrfSignature,
+}
+
+#[derive(Decode, Encode, Debug)]
+pub struct Slot(pub ::core::primitive::u64);
+
+#[derive(Decode, Encode, Debug)]
+pub struct VrfSignature {
+    pub pre_output: [::core::primitive::u8; 32usize],
+    pub proof: [::core::primitive::u8; 64usize],
+}

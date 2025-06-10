@@ -56,7 +56,9 @@ pub async fn get_identity(
 
     let api = onet.people_client();
 
-    let identity_of_addr = people_runtime::storage().identity().identity_of(stash);
+    let identity_of_addr = people_runtime::storage()
+        .identity()
+        .identity_of(stash.clone());
     match api
         .storage()
         .at_latest()
@@ -74,7 +76,7 @@ pub async fn get_identity(
             Ok(Some(identity))
         }
         None => {
-            let super_of_addr = people_runtime::storage().identity().super_of(stash);
+            let super_of_addr = people_runtime::storage().identity().super_of(stash.clone());
             if let Some((parent_account, data)) = api
                 .storage()
                 .at_latest()

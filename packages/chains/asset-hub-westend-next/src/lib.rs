@@ -81,7 +81,7 @@ pub async fn fetch_active_era_info(
 pub async fn fetch_eras_total_stake(
     api: &OnlineClient<PolkadotConfig>,
     ah_block_hash: H256,
-    era: &EraIndex,
+    era: EraIndex,
 ) -> Result<ErasTotalStake, OnetError> {
     let addr = asset_hub_runtime::storage().staking().eras_total_stake(era);
 
@@ -100,7 +100,7 @@ pub async fn fetch_eras_total_stake(
 pub async fn fetch_eras_validator_reward(
     api: &OnlineClient<PolkadotConfig>,
     ah_block_hash: H256,
-    era: &EraIndex,
+    era: EraIndex,
 ) -> Result<ErasTotalStake, OnetError> {
     let addr = asset_hub_runtime::storage()
         .staking()
@@ -121,7 +121,7 @@ pub async fn fetch_eras_validator_reward(
 pub async fn fetch_nominators(
     api: &OnlineClient<PolkadotConfig>,
     ah_block_hash: H256,
-    stash: &AccountId32,
+    stash: AccountId32,
 ) -> Result<Nominators, OnetError> {
     let addr = asset_hub_runtime::storage().staking().nominators(stash);
 
@@ -164,7 +164,7 @@ pub async fn fetch_bonded_pools(
 ) -> Result<BondedPools, OnetError> {
     let addr = asset_hub_runtime::storage()
         .nomination_pools()
-        .bonded_pools(&pool_id);
+        .bonded_pools(pool_id);
 
     api.storage()
         .at(ah_block_hash)
@@ -185,7 +185,7 @@ pub async fn fetch_pool_metadata(
 ) -> Result<PoolMetadata, OnetError> {
     let addr = asset_hub_runtime::storage()
         .nomination_pools()
-        .metadata(&pool_id);
+        .metadata(pool_id);
 
     api.storage()
         .at(ah_block_hash)
@@ -206,7 +206,7 @@ pub async fn fetch_era_reward_points(
 ) -> Result<EraRewardPoints, OnetError> {
     let addr = asset_hub_runtime::storage()
         .staking()
-        .eras_reward_points(&era);
+        .eras_reward_points(era);
 
     api.storage()
         .at(ah_block_hash)
@@ -225,7 +225,7 @@ pub async fn fetch_bonded_controller_account(
     ah_block_hash: H256,
     stash: &AccountId32,
 ) -> Result<AccountId32, OnetError> {
-    let addr = asset_hub_runtime::storage().staking().bonded(stash);
+    let addr = asset_hub_runtime::storage().staking().bonded(stash.clone());
 
     api.storage()
         .at(ah_block_hash)
@@ -244,7 +244,7 @@ pub async fn fetch_ledger_from_controller(
     ah_block_hash: H256,
     stash: &AccountId32,
 ) -> Result<StakingLedger, OnetError> {
-    let addr = asset_hub_runtime::storage().staking().ledger(stash);
+    let addr = asset_hub_runtime::storage().staking().ledger(stash.clone());
 
     api.storage()
         .at(ah_block_hash)

@@ -42,9 +42,8 @@ use onet_asset_hub_westend::{
 };
 use onet_asset_hub_westend::{
     fetch_active_era_info, fetch_bonded_controller_account, fetch_bonded_pools,
-    fetch_era_reward_points, fetch_eras_total_stake,
-    fetch_eras_validator_reward, fetch_last_pool_id, fetch_ledger_from_controller,
-    fetch_nominators, fetch_pool_metadata,
+    fetch_era_reward_points, fetch_eras_total_stake, fetch_eras_validator_reward,
+    fetch_last_pool_id, fetch_ledger_from_controller, fetch_nominators, fetch_pool_metadata,
 };
 use onet_asset_hub_westend::{AssetHubCall, NominationPoolsCall};
 use onet_cache::types::{CacheKey, ChainKey, Verbosity};
@@ -110,6 +109,7 @@ use subxt_signer::sr25519::Keypair;
 )]
 mod relay_runtime {}
 
+use crate::custom_types::PreDigest;
 use relay_runtime::{
     asset_hub_staking_client::events::CouldNotMergeAndDropped,
     asset_hub_staking_client::events::SetTooSmallAndDropped,
@@ -137,7 +137,6 @@ use relay_runtime::{
         polkadot_runtime_parachains::scheduler::common::Assignment,
         // polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
         sp_authority_discovery::app::Public,
-        sp_consensus_babe::digests::PreDigest,
     },
     session::events::new_session::SessionIndex,
     session::events::NewSession,
@@ -176,9 +175,15 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     // Load into memory the minimum initial eras defined (default=0)
 
     start_block_number -= config.minimum_initial_eras * 6 * config.blocks_per_session;
+    info!("Start indexing from block number: {}", start_block_number);
 
     // get block hash from the start block
     let rc_block_hash = fetch_relay_chain_block_hash(&rc_rpc, start_block_number.into()).await?;
+
+    use subxt::utils::AccountId32;
+    let stash = AccountId32::from_str("5C556QTtg1bJ43GDSgeowa3Ark6aeSHGTac1b2rKSXtgmSmW").unwrap();
+    let points = fetch_validator_points(&rc_api, rc_block_hash, stash.clone()).await?;
+    info!("Points: {}", points);
 
     let ah_block_hash =
         fetch_asset_hub_block_hash_from_relay_chain(onet, start_block_number.into(), rc_block_hash)
@@ -803,7 +808,8 @@ pub async fn initialize_records(
                             if let Some(address) = authorities.get(*auth_idx as usize) {
                                 // Fetch peer points
                                 let points =
-                                    fetch_validator_points(&rc_api, rc_block_hash, address).await?;
+                                    fetch_validator_points(&rc_api, rc_block_hash, address.clone())
+                                        .await?;
 
                                 // Define AuthorityRecord
                                 let authority_record =
@@ -857,7 +863,7 @@ pub async fn initialize_records(
                 }
             }
         } else {
-            let points = fetch_validator_points(&rc_api, rc_block_hash, stash).await?;
+            let points = fetch_validator_points(&rc_api, rc_block_hash, stash.clone()).await?;
 
             let authority_record =
                 AuthorityRecord::with_index_address_and_points(auth_idx, stash.clone(), points);
@@ -1085,25 +1091,25 @@ async fn fetch_and_track_availability(
     for res in extrinsics.find::<Enter>() {
         let extrinsic = res?;
         for availability_bitfield in extrinsic.value.data.bitfields.iter() {
-            // Note: availability_bitfield.validator_index is the index of the validator in the paras_shared.active_validator_indices
-            let ValidatorIndex(para_idx) = &availability_bitfield.validator_index;
+            // // Note: availability_bitfield.validator_index is the index of the validator in the paras_shared.active_validator_indices
+            // let ValidatorIndex(para_idx) = &availability_bitfield.validator_index;
 
-            if let Some(ValidatorIndex(auth_idx)) = active_validator_indices.get(*para_idx as usize)
-            {
-                // Get para_record for the same on chain votes session
-                if let Some(para_record) =
-                    records.get_mut_para_record(*auth_idx, Some(backing_votes.session))
-                {
-                    let AvailabilityBitfield(decoded_bits) = &availability_bitfield.payload;
-                    if decoded_bits.as_bits().iter().any(|x| x) {
-                        para_record.inc_availability();
-                    } else {
-                        para_record.push_unavailable_at(block_number);
-                    }
-                }
-                // Keep track of the authorities that show up in para_inherent.data.bitfields
-                authorities_present.push(*auth_idx);
-            }
+            // if let Some(ValidatorIndex(auth_idx)) = active_validator_indices.get(*para_idx as usize)
+            // {
+            //     // Get para_record for the same on chain votes session
+            //     if let Some(para_record) =
+            //         records.get_mut_para_record(*auth_idx, Some(backing_votes.session))
+            //     {
+            //         let AvailabilityBitfield(decoded_bits) = &availability_bitfield.payload;
+            //         if decoded_bits.as_bits().iter().any(|x| x) {
+            //             para_record.inc_availability();
+            //         } else {
+            //             para_record.push_unavailable_at(block_number);
+            //         }
+            //     }
+            //     // Keep track of the authorities that show up in para_inherent.data.bitfields
+            //     authorities_present.push(*auth_idx);
+            // }
         }
     }
     // Also increase unavailability to the authorities that do not show up in para_inherent.data.bitfields
@@ -1582,7 +1588,7 @@ pub async fn run_network_report(
 
     // Fetch active era total stake
     let active_era_total_stake =
-        fetch_eras_total_stake(&ah_api, ah_block_hash, &active_era_index).await?;
+        fetch_eras_total_stake(&ah_api, ah_block_hash, active_era_index).await?;
 
     // Set era/session details
     let metadata = ReportMetadata {
@@ -1630,7 +1636,8 @@ pub async fn run_network_report(
         v.is_active = authorities.contains(&stash);
 
         // Fetch own stake
-        let staking_ledger = fetch_ledger_from_controller(&ah_api, ah_block_hash, &stash).await?;
+        let staking_ledger =
+            fetch_ledger_from_controller(&ah_api, ah_block_hash, stash.clone()).await?;
         v.own_stake = staking_ledger.active;
 
         // Get performance data from all eras available
@@ -2209,7 +2216,8 @@ pub async fn cache_nomination_pools_nominees(
             let pool_stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
 
             // fetch pool nominees
-            let nominations = fetch_nominators(&api, ah_block_hash, &pool_stash_account).await?;
+            let nominations =
+                fetch_nominators(&api, ah_block_hash, pool_stash_account.clone()).await?;
 
             // deconstruct targets
             let BoundedVec(stashes) = nominations.targets;
@@ -2226,7 +2234,7 @@ pub async fn cache_nomination_pools_nominees(
                 // Identify which active validators have pool stake assigned
                 let eras_stakers_paged_addr = asset_hub_runtime::storage()
                     .staking()
-                    .eras_stakers_paged_iter2(&era_index, &stash);
+                    .eras_stakers_paged_iter2(era_index, stash.clone());
                 let mut iter = api
                     .storage()
                     .at(ah_block_hash)
@@ -2301,13 +2309,13 @@ pub async fn cache_nomination_pools_stats(
             let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
 
             let staking_ledger =
-                fetch_ledger_from_controller(&ah_api, ah_block_hash, &stash_account).await?;
+                fetch_ledger_from_controller(&ah_api, ah_block_hash, stash_account.clone()).await?;
             pool_stats.staked = staking_ledger.active;
             pool_stats.unbonding = staking_ledger.total - staking_ledger.active;
 
             // fetch pool reward account free amount
             let stash_account = nomination_pool_account(AccountType::Reward, pool_id);
-            let account_info = fetch_account_info(&rc_api, rc_block_hash, &stash_account).await?;
+            let account_info = fetch_account_info(&rc_api, rc_block_hash, stash_account).await?;
             pool_stats.reward = account_info.data.free;
 
             cache_nomination_pool_stats(&mut cache, &config, &pool_stats, pool_id, epoch_index)
@@ -2646,11 +2654,12 @@ pub async fn cache_session_stats_records(
         // create a new validator instance
         let mut profile = ValidatorProfileRecord::new(stash.clone());
         // validator controller address
-        let controller = fetch_bonded_controller_account(&ah_api, ah_block_hash, &stash).await?;
+        let controller =
+            fetch_bonded_controller_account(&ah_api, ah_block_hash, stash.clone()).await?;
         profile.controller = Some(controller.clone());
         // get own stake
         let staking_ledger =
-            fetch_ledger_from_controller(&ah_api, ah_block_hash, &controller).await?;
+            fetch_ledger_from_controller(&ah_api, ah_block_hash, controller.clone()).await?;
         profile.own_stake = staking_ledger.active;
 
         // deconstruct commisssion
@@ -2793,12 +2802,11 @@ pub async fn cache_session_stats_records(
     nss.total_issuance = total_issuance;
 
     // total staked
-    let total_staked = fetch_eras_total_stake(&ah_api, ah_block_hash, &era_index).await?;
+    let total_staked = fetch_eras_total_stake(&ah_api, ah_block_hash, era_index).await?;
     nss.total_staked = total_staked;
 
     // total rewarded from previous era
-    let last_rewarded =
-        fetch_eras_validator_reward(&ah_api, ah_block_hash, &(era_index - 1)).await?;
+    let last_rewarded = fetch_eras_validator_reward(&ah_api, ah_block_hash, era_index - 1).await?;
     nss.last_rewarded = last_rewarded;
 
     let subsets = vec![Subset::C100, Subset::NONTVP, Subset::TVP];
@@ -2893,9 +2901,9 @@ async fn collect_nominators_data(
     while let Some(Ok(storage_resp)) = iter.next().await {
         let nominator_stash = get_account_id_from_storage_key(storage_resp.key_bytes);
         let controller =
-            fetch_bonded_controller_account(&api, ah_block_hash, &nominator_stash).await?;
+            fetch_bonded_controller_account(&api, ah_block_hash, nominator_stash.clone()).await?;
 
-        let staking_ledger = fetch_ledger_from_controller(&api, ah_block_hash, &controller).await?;
+        let staking_ledger = fetch_ledger_from_controller(&api, ah_block_hash, controller).await?;
         let nominator_stake = staking_ledger.total;
 
         let BoundedVec(targets) = storage_resp.value.targets.clone();
@@ -3122,22 +3130,17 @@ async fn fetch_queued_keys(
         .ok_or_else(|| OnetError::from(format!("Queued keys not defined at block hash {hash}")))
 }
 
-/// Fetch validator points at the specified block hash
+/// Fetch validator points at the specified block hash. If the points are not found, return 0.
 async fn fetch_validator_points(
     api: &OnlineClient<PolkadotConfig>,
     hash: H256,
-    stash: &AccountId32,
+    stash: AccountId32,
 ) -> Result<Points, OnetError> {
     let addr = relay_runtime::storage()
         .asset_hub_staking_client()
-        .validator_points(stash);
+        .validator_points(stash.clone());
 
-    api.storage().at(hash).fetch(&addr).await?.ok_or_else(|| {
-        OnetError::from(format!(
-            "Validator points not defined at block hash {:?}",
-            hash
-        ))
-    })
+    Ok(api.storage().at(hash).fetch(&addr).await?.unwrap_or(0))
 }
 
 /// Fetch para validator groups at the specified block hash
@@ -3170,7 +3173,7 @@ async fn fetch_session_index(
 async fn fetch_account_info(
     api: &OnlineClient<PolkadotConfig>,
     hash: H256,
-    stash: &AccountId32,
+    stash: AccountId32,
 ) -> Result<AccountInfo<u32, AccountData<u128>>, OnetError> {
     let addr = relay_runtime::storage().system().account(stash);
 
