@@ -23,7 +23,7 @@ resolver = "2"
 
 [workspace.package]
 name = "onet"
-version = "0.38.0"
+version = "0.39.0"
 authors = ["Paulo <paulo@turboflakes.io>"]
 license = "MIT or Apache-2.0"
 repository = "https://github.com/turboflakes/one-t"
