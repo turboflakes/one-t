@@ -1256,7 +1256,7 @@ impl Validity for DiscoveryRecord {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Debug, Clone, Default)]
 pub struct BitfieldsRecord {
     #[serde(rename = "ba")]
     availability: u32,
@@ -1280,8 +1280,16 @@ impl BitfieldsRecord {
         self.availability
     }
 
+    pub fn set_availability(&mut self, availability: u32) {
+        self.availability = availability;
+    }
+
     pub fn unavailability(&self) -> u32 {
         self.unavailability
+    }
+
+    pub fn set_unavailability(&mut self, unavailability: u32) {
+        self.unavailability = unavailability;
     }
 
     pub fn unavailable(&self) -> Vec<BlockNumber> {
@@ -1295,6 +1303,66 @@ impl BitfieldsRecord {
     pub fn push_unavailable_at(&mut self, block_number: BlockNumber) {
         self.unavailability += 1;
         self.unavailable_at.push(block_number);
+    }
+}
+
+impl<'de> Deserialize<'de> for BitfieldsRecord {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // First, try to deserialize as a regular struct
+        let result = serde_json::Value::deserialize(deserializer)?;
+
+        // Create a default BitfieldsRecord
+        let mut bitfields = BitfieldsRecord::new();
+
+        if let Some(obj) = result.as_object() {
+            // Handle "ba" (availability) field
+            if let Some(ba) = obj.get("ba") {
+                if let Some(num) = ba.as_u64() {
+                    bitfields.set_availability(num as u32);
+                } else if let Some(num) = ba.as_i64() {
+                    if num >= 0 {
+                        bitfields.set_availability(num as u32);
+                    }
+                } else if let Some(num) = ba.as_f64() {
+                    if num >= 0.0 {
+                        bitfields.set_availability(num as u32);
+                    }
+                }
+            }
+
+            // Handle "bu" (unavailability) field
+            if let Some(bu) = obj.get("bu") {
+                if let Some(num) = bu.as_u64() {
+                    bitfields.set_unavailability(num as u32);
+                } else if let Some(num) = bu.as_i64() {
+                    if num >= 0 {
+                        bitfields.set_unavailability(num as u32);
+                    }
+                } else if let Some(num) = bu.as_f64() {
+                    if num >= 0.0 {
+                        bitfields.set_unavailability(num as u32);
+                    }
+                }
+            }
+
+            // Handle "uat" (unavailable_at) field
+            if let Some(uat) = obj.get("uat") {
+                if let Some(array) = uat.as_array() {
+                    let mut unavailable_at = Vec::new();
+                    for item in array {
+                        if let Some(num) = item.as_u64() {
+                            unavailable_at.push(num);
+                        }
+                    }
+                    bitfields.unavailable_at = unavailable_at;
+                }
+            }
+        }
+
+        Ok(bitfields)
     }
 }
 

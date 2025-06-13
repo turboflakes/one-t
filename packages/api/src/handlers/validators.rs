@@ -23,8 +23,8 @@ use crate::{
     helpers::respond_json,
     responses::{
         AuthorityKey, AuthorityKeyCache, CacheMap, CohortValidatorsGradesResult, CohortsResult,
-        RankingStats, ValidatorGradeResult, ValidatorProfileResult, ValidatorResult,
-        ValidatorsResult,
+        EraValidatorsGradesResult, ErasResult, RankingStats, ValidatorGradeResult,
+        ValidatorProfileResult, ValidatorResult, ValidatorsResult,
     },
 };
 use actix_web::{
@@ -1115,6 +1115,7 @@ async fn calculate_validator_grade_by_stash(
                 index.parse::<EpochIndex>().unwrap_or_default()
             }
         }
+        Index::Num(index) => (*index as u32).min(u32::MAX),
         _ => redis::cmd("GET")
             .arg(CacheKey::SessionByIndex(Index::Current))
             .query_async(&mut conn as &mut Connection)
@@ -1206,7 +1207,7 @@ async fn calculate_validator_grade_by_stash(
         .iter()
         .filter(|v| v.is_para)
         .filter_map(|v| v.para.get("bitfields"))
-        .filter_map(|value| <BitfieldsRecord as Deserialize>::deserialize(value).ok())
+        .filter_map(|value| serde_json::from_value::<BitfieldsRecord>(value.clone()).ok())
         .map(|bitfields| {
             let partial = bitfields.availability() + bitfields.unavailability();
             if partial > 0 {
@@ -1341,6 +1342,88 @@ pub async fn get_cohort_validators_grades(
 
     return respond_json(CohortValidatorsGradesResult {
         cohort: cohort_number,
+        data,
+    });
+}
+
+/// Get list of available eras
+/// TODO: Implement this function
+pub async fn get_eras() -> Result<Json<ErasResult>, ApiError> {
+    let eras = ErasResult { data: vec![] };
+    respond_json(eras)
+}
+
+/// Get all validators grades assigned to the specific cohort
+pub async fn get_era_validators_grades(
+    era: Path<u32>,
+    params: Query<Params>,
+    cache: Data<RedisPool>,
+) -> Result<Json<EraValidatorsGradesResult>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+    let era_index = era.into_inner();
+    use log::info;
+
+    let session_index: u32 = redis::cmd("HGET")
+        .arg(CacheKey::EraByIndex(Index::Num(era_index.into())))
+        .arg(String::from("synced_session"))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    // Verify how many sessions are available for the specific era
+    let era_session_index: u32 = redis::cmd("HGET")
+        .arg(CacheKey::SessionByIndex(Index::Num(session_index.into())))
+        .arg(String::from("era_session_index"))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    // Fetch latest synced session authorities
+    let authorities: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(CacheKey::AuthorityKeysBySession(session_index))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    let mut stashes: Vec<String> = Vec::new();
+    for key in authorities.iter() {
+        let stash: String = redis::cmd("HGET")
+            .arg(key)
+            .arg("address")
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+        stashes.push(stash.into());
+    }
+
+    // Update session params used to calculate validator grades with `fn calculate_validator_grade_by_stash`
+    // NOTE: `session_index` is non inclusive so we need to add 1 to it
+    let mut params = params.clone();
+    params.session = Index::Num((session_index + 1).into());
+    params.number_last_sessions = era_session_index;
+
+    // Keep track of sessions from which we calculate validator grades
+    let mut sessions: Vec<u32> = Vec::new();
+    for i in 0..era_session_index {
+        sessions.push(session_index - i);
+    }
+
+    // Calculate validator grades for each stash for the given era
+    let mut data: Vec<ValidatorGradeResult> = Vec::new();
+    for stash in stashes.iter() {
+        let mut tmp =
+            calculate_validator_grade_by_stash(stash.to_string(), params.clone(), cache.clone())
+                .await?;
+        // Note: sessions are empty by default
+        if !params.show_sessions {
+            tmp.sessions = vec![];
+        }
+        data.push(tmp);
+    }
+
+    return respond_json(EraValidatorsGradesResult {
+        era: era_index,
+        sessions: sessions,
         data,
     });
 }

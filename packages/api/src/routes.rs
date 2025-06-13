@@ -28,8 +28,9 @@ use crate::handlers::{
     pool::{get_pool, get_pools},
     sessions::{get_session_by_index, get_sessions},
     validators::{
-        get_cohort_validators_grades, get_cohorts, get_peer_by_authority, get_validator_by_stash,
-        get_validator_grade_by_stash, get_validator_profile_by_stash, get_validators,
+        get_cohort_validators_grades, get_cohorts, get_era_validators_grades, get_eras,
+        get_peer_by_authority, get_validator_by_stash, get_validator_grade_by_stash,
+        get_validator_profile_by_stash, get_validators,
     },
     ws::init,
 };
@@ -89,6 +90,12 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
                             web::get().to(get_cohort_validators_grades),
                         )
                         .route("", web::get().to(get_cohorts)),
+                )
+                // ERA routes
+                .service(
+                    web::scope("/eras")
+                        .route("/{era}/grades", web::get().to(get_era_validators_grades))
+                        .route("", web::get().to(get_eras)),
                 )
                 // PARACHAIN routes
                 .service(web::scope("/parachains").route("", web::get().to(get_parachains)))

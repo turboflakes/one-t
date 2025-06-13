@@ -868,3 +868,16 @@ pub struct CohortValidatorsGradesResult {
     pub cohort: u32,
     pub data: Vec<ValidatorGradeResult>,
 }
+
+// Eras
+#[derive(Debug, Serialize, Default)]
+pub struct ErasResult {
+    pub data: Vec<u32>,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct EraValidatorsGradesResult {
+    pub era: u32,
+    pub sessions: Vec<u32>,
+    pub data: Vec<ValidatorGradeResult>,
+}
