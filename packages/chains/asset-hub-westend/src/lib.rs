@@ -27,8 +27,9 @@ pub mod asset_hub_runtime {}
 pub use asset_hub_runtime::{
     nomination_pools::storage::types::bonded_pools::BondedPools,
     nomination_pools::storage::types::metadata::Metadata as PoolMetadata,
+    runtime_types::frame_system::AccountInfo,
+    runtime_types::pallet_balances::types::AccountData,
     runtime_types::pallet_staking_async::{ledger::StakingLedger, ActiveEraInfo, EraRewardPoints},
-    // staking::storage::types::eras_start_session_index::ErasStartSessionIndex,
     staking::storage::types::eras_total_stake::ErasTotalStake,
     staking::storage::types::nominators::Nominators,
 };
@@ -135,7 +136,7 @@ pub async fn fetch_last_pool_id(
         .fetch(&addr)
         .await?
         .ok_or_else(|| {
-            OnetError::from(format!(
+            OnetError::PoolError(format!(
                 "Last pool ID not defined at block hash {ah_block_hash:?}"
             ))
         })
@@ -156,8 +157,8 @@ pub async fn fetch_bonded_pools(
         .fetch(&addr)
         .await?
         .ok_or_else(|| {
-            OnetError::from(format!(
-                "Bonded Pools not defined at block hash {ah_block_hash:?}"
+            OnetError::PoolError(format!(
+                "Bonded Pool ID {pool_id} not defined at block hash {ah_block_hash:?}",
             ))
         })
 }
@@ -177,8 +178,8 @@ pub async fn fetch_pool_metadata(
         .fetch(&addr)
         .await?
         .ok_or_else(|| {
-            OnetError::from(format!(
-                "PoolMetadata not defined at block hash {ah_block_hash:?}"
+            OnetError::PoolError(format!(
+                "PoolMetadata ID {pool_id} not defined at block hash {ah_block_hash:?}",
             ))
         })
 }
@@ -240,4 +241,19 @@ pub async fn fetch_ledger_from_controller(
                 "Bonded controller not found at block hash {ah_block_hash:?}"
             ))
         })
+}
+
+/// Fetch account info given a stash at the specified block hash
+async fn fetch_account_info(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+    stash: AccountId32,
+) -> Result<AccountInfo<u32, AccountData<u128>>, OnetError> {
+    let addr = asset_hub_runtime::storage().system().account(stash);
+
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| OnetError::from(format!("Account info not found at block hash {hash}")))
 }

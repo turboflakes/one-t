@@ -2290,36 +2290,48 @@ pub async fn cache_nomination_pools_stats(
     let last_pool_id = fetch_last_pool_id(&ah_api, ah_block_hash).await?;
     let epoch_index = fetch_session_index(&rc_api, rc_block_hash).await?;
 
-    let mut valid_pool = Some(1);
-    while let Some(pool_id) = valid_pool {
+    let mut some_pool = Some(1);
+    while let Some(pool_id) = some_pool {
         if pool_id > last_pool_id {
-            valid_pool = None;
+            some_pool = None;
         } else {
-            let mut pool_stats = PoolStats::new();
-            pool_stats.block_number = rc_block_number;
+            // Verify if pool is valid
+            match fetch_bonded_pools(&ah_api, ah_block_hash, pool_id).await {
+                Ok(bonded) => {
+                    let mut pool_stats = PoolStats::new();
+                    pool_stats.block_number = rc_block_number;
 
-            let bonded = fetch_bonded_pools(&ah_api, ah_block_hash, pool_id).await?;
+                    pool_stats.points = bonded.points;
+                    pool_stats.member_counter = bonded.member_counter;
 
-            pool_stats.points = bonded.points;
-            pool_stats.member_counter = bonded.member_counter;
+                    // fetch pool stash account staked amount from staking pallet
+                    let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
 
-            // fetch pool stash account staked amount from staking pallet
-            let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
+                    let staking_ledger =
+                        fetch_ledger_from_controller(&ah_api, ah_block_hash, &stash_account)
+                            .await?;
+                    pool_stats.staked = staking_ledger.active;
+                    pool_stats.unbonding = staking_ledger.total - staking_ledger.active;
 
-            let staking_ledger =
-                fetch_ledger_from_controller(&ah_api, ah_block_hash, &stash_account).await?;
-            pool_stats.staked = staking_ledger.active;
-            pool_stats.unbonding = staking_ledger.total - staking_ledger.active;
+                    // fetch pool reward account free amount
+                    let stash_account = nomination_pool_account(AccountType::Reward, pool_id);
+                    let account_info =
+                        fetch_account_info(&ah_api, ah_block_hash, stash_account).await?;
+                    pool_stats.reward = account_info.data.free;
 
-            // fetch pool reward account free amount
-            let stash_account = nomination_pool_account(AccountType::Reward, pool_id);
-            let account_info = fetch_account_info(&rc_api, rc_block_hash, stash_account).await?;
-            pool_stats.reward = account_info.data.free;
+                    cache_nomination_pool_stats(
+                        &mut cache,
+                        &config,
+                        &pool_stats,
+                        pool_id,
+                        epoch_index,
+                    )
+                    .await?;
+                }
+                Err(e) => debug!("{:?} {}", {}, e),
+            }
 
-            cache_nomination_pool_stats(&mut cache, &config, &pool_stats, pool_id, epoch_index)
-                .await?;
-
-            valid_pool = Some(pool_id + 1);
+            some_pool = Some(pool_id + 1);
         }
     }
     // Log cache processed duration time
