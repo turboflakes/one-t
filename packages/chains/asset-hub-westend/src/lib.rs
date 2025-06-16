@@ -32,6 +32,7 @@ pub use asset_hub_runtime::{
     staking::storage::types::eras_total_stake::ErasTotalStake,
     staking::storage::types::nominators::Nominators,
 };
+
 use onet_errors::OnetError;
 use onet_records::EraIndex;
 use subxt::{
@@ -207,7 +208,7 @@ pub async fn fetch_era_reward_points(
 pub async fn fetch_bonded_controller_account(
     api: &OnlineClient<PolkadotConfig>,
     ah_block_hash: H256,
-    stash: AccountId32,
+    stash: &AccountId32,
 ) -> Result<AccountId32, OnetError> {
     let addr = asset_hub_runtime::storage().staking().bonded(stash.clone());
 
@@ -217,8 +218,7 @@ pub async fn fetch_bonded_controller_account(
         .await?
         .ok_or_else(|| {
             OnetError::from(format!(
-                "Bonded controller for stash {} not found at block hash {ah_block_hash:?} (asset-hub)",
-                stash
+                "Bonded controller not found at block hash {ah_block_hash:?} and era {stash}"
             ))
         })
 }
@@ -227,9 +227,9 @@ pub async fn fetch_bonded_controller_account(
 pub async fn fetch_ledger_from_controller(
     api: &OnlineClient<PolkadotConfig>,
     ah_block_hash: H256,
-    stash: AccountId32,
+    stash: &AccountId32,
 ) -> Result<StakingLedger, OnetError> {
-    let addr = asset_hub_runtime::storage().staking().ledger(stash);
+    let addr = asset_hub_runtime::storage().staking().ledger(stash.clone());
 
     api.storage()
         .at(ah_block_hash)
