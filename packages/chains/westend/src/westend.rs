@@ -3137,12 +3137,11 @@ async fn fetch_validator_points(
         .staking_ah_client()
         .validator_points(stash);
 
-    api.storage().at(hash).fetch(&addr).await?.ok_or_else(|| {
-        OnetError::from(format!(
-            "Validator points not defined at block hash {:?}",
-            hash
-        ))
-    })
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .map_or(Ok(0), |points| Ok(points))
 }
 
 /// Fetch para validator groups at the specified block hash
