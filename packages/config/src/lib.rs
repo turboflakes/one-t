@@ -329,6 +329,8 @@ pub struct Config {
     pub matrix_public_room_disabled: bool,
     #[serde(default)]
     pub matrix_bot_display_name_disabled: bool,
+    #[serde(default)]
+    pub matrix_network_report_disabled: bool,
     // api
     #[serde(default)]
     pub api_enabled: bool,

@@ -1938,7 +1938,7 @@ pub async fn try_run_network_report(
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if !config.matrix_disabled && !is_loading {
+    if !config.matrix_disabled && !config.matrix_network_report_disabled && !is_loading {
         if (epoch_index as f64 % config.matrix_network_report_epoch_rate as f64)
             == config.epoch_rate_threshold as f64
         {
