@@ -26,9 +26,9 @@ ONE-T is a [Matrix](https://matrix.org/) bot and therefore the only place to sub
 
 After joining,  hit `!subscribe validator_stash_address` to subscribe the _Validator Performance Report_ of your favourite validators. 
 
-Or try `!subscribe groups` to subscribe for the next six epochs the _Val. Groups Performance Report_. 
+Or try `!subscribe groups` to subscribe for the next six epochs the _Val. Groups Performance Report_.
 
-If you are just curious about which Parachains are validators earning more points from, hit `!subscribe parachains` to subscribe for the next six epochs the _Parachains Performance Report_. 
+If you are just curious about which Parachains are validators earning more points from, hit `!subscribe parachains` to subscribe for the next six epochs the _Parachains Performance Report_.
 
 In case you want to be aware of all commands available just write `!help`.
 
@@ -51,7 +51,7 @@ In case you want to be aware of all commands available just write `!help`.
 
 ## Polkadot // Kusama network state and Promoting TVP validators
 
-At every era ONE-T compiles a _Network Performance Report_ and publish the results in the respective Network  Public Room. 
+At every era ONE-T compiles a _Network Performance Report_ and publish the results in the respective Network  Public Room.
 
 To bring awareness to the results an additional callout is made to the [Polkadot Watercooler](https://matrix.to/#/%23polkadot-watercooler:web3.foundation) and [Kusama Watercooler](https://matrix.to/#/%23kusamawatercooler:web3.foundation) channels inviting users to join ONE-T Public rooms and lookout for the full report results.
 
@@ -93,30 +93,18 @@ Any feedback is welcome.
 
 ## Appreciation
 
- ONE-T was only made possible with the help and ideas gathered from **awesome** people in the Kusama TVP channel [(messages here)](https://matrix.to/#/!LHMaxlfxGiMVPscxNB:matrix.parity.io/$2dsYo05bh0WHb_GZOHefc6a9TY0zCBdkkDXPgzsTOKk?via=web3.foundation&via=matrix.org&via=matrix.parity.io). 
+ ONE-T was only made possible with the help and ideas gathered from **awesome** people in the Kusama TVP channel [(messages here)](https://matrix.to/#/!LHMaxlfxGiMVPscxNB:matrix.parity.io/$2dsYo05bh0WHb_GZOHefc6a9TY0zCBdkkDXPgzsTOKk?via=web3.foundation&via=matrix.org&via=matrix.parity.io).
 
  Special Thank You for their support ❤️
 
 ## About
 
-ONE-T was developed by <a href="https://turboflakes.io" target="_blank">TurboFlakes</a>.
+ONE-T was developed by <a href="https://turboflakes.io" target="_blank">Turboflakes</a>.
 
 If you like this project
-  - 🚀 Share our work 
+  - 🚀 Share our work
   - ✌️ Visit us at <a href="https://turboflakes.io" target="_blank" rel="noreferrer">turboflakes.io</a>
   - ✨ Or you could also star the Github project :)
-
-Tips are welcome
-
-- Polkadot 14Sqrs7dk6gmSiuPK7VWGbPmGr4EfESzZBcpT6U15W4ajJRf (turboflakes.io)
-- Kusama H1tAQMm3eizGcmpAhL9aA9gR844kZpQfkU7pkmMiLx9jSzE (turboflakes.io)
-
-### Stake with us!
-
-- <a href="https://www.turboflakes.io/RAIDEN" target="_blank" rel="noreferrer">turboflakes.io/RAIDEN</a>
-- <a href="https://www.turboflakes.io/COCO" target="_blank" rel="noreferrer">turboflakes.io/COCO</a>
-- <a href="https://www.turboflakes.io/MOMO" target="_blank" rel="noreferrer">turboflakes.io/MOMO</a>
-
 
 ### License
 
