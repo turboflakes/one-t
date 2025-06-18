@@ -805,7 +805,10 @@ impl Matrix {
                 let req = CreateRoomRequest {
                     name: format!("{} {} Bot (Private)", self.chain, MATRIX_BOT_NAME),
                     room_alias_name: room.room_alias_name.to_string(),
-                    topic: format!("{} Bot <> Performance report bot for the {} network with a focus on the One Thousand validator programme", MATRIX_BOT_NAME, self.chain),
+                    topic: format!(
+                        "{} Bot <> Performance reporting bot for the {} network.",
+                        MATRIX_BOT_NAME, self.chain
+                    ),
                     preset: "trusted_private_chat".to_string(),
                     invite: vec![user_id.to_string()],
                     is_direct: true,
