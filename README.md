@@ -4,7 +4,7 @@
   <img src="https://github.com/turboflakes/one-t/blob/main/assets/one-t-github-header.png?raw=true">
 </p>
 
-ONE-T is a performance report bot for the *Polkadot* and *Kusama* network with special focus on the **One** **T**housand validator programme.
+ONE-T is an indexer and performance reporting matrix bot for the *Polkadot* and *Kusama* networks with special focus on the [Decentralized Nodes programme](https://nodes.web3.foundation/) previously known as **One** **T**housand validator programme. More recently it has also become available for the Paseo network. ONE-T also provides a restful API that becomes the backbone of the current dashboard available at https://github.com/turboflakes/apps
 
 ## Why subscribe for ONE-T reports
 
@@ -24,7 +24,7 @@ To give any token holder an additional tool when researching by Validators to No
 
 ONE-T is a [Matrix](https://matrix.org/) bot and therefore the only place to subscribe for ONE-T reports is to join the Matrix public rooms.
 
-After joining,  hit `!subscribe validator_stash_address` to subscribe the _Validator Performance Report_ of your favourite validators. 
+After joining,  hit `!subscribe validator_stash_address` to subscribe the _Validator Performance Report_ of your favourite validators.
 
 Or try `!subscribe groups` to subscribe for the next six epochs the _Val. Groups Performance Report_.
 
@@ -46,6 +46,12 @@ In case you want to be aware of all commands available just write `!help`.
         <img style="width: 80px;" src="https://github.com/turboflakes/one-t/blob/main/assets/one-t-polkadot-avatar-128.png?raw=true" />
     </td>
     <td><a href="https://matrix.to/#/%23polkadot-one-t-bot:matrix.org" target="_blank">Polkadot ONE-T Bot (Public)</a></td>
+  </tr>
+  <tr>
+    <td style="width: 100px;">
+        <img style="width: 80px;" src="https://github.com/turboflakes/one-t/blob/main/assets/one-t-paseo-avatar-128.png?raw=true" />
+    </td>
+    <td><a href="https://matrix.to/#/%23paseo-one-t-bot:matrix.org" target="_blank">Paseo ONE-T Bot (Public)</a></td>
   </tr>
 </table>
 
