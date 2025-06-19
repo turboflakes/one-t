@@ -718,7 +718,7 @@ impl From<RawDataPara> for Report {
                 report.add_raw_text(format!(
                     // "<b><a href=\"https://{}.subscan.io/validator/{}\">{}</a></b>",
                     "<b><a href=\"https://apps.turboflakes.io/?chain={}&app=onet#/validator/{}?mode=history\">{}</a></b>",
-                    data.network.name.to_lowercase(),
+                    data.network.name.to_lowercase().trim_end_matches("testnet").trim_end(),
                     data.validator.stash,
                     data.validator.name
                 ));
