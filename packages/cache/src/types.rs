@@ -151,7 +151,9 @@ pub enum CacheKey {
     Network,
     FinalizedBlock(ChainKey),
     BestBlock(ChainKey),
+    // TODO: Deprecate PushedBlockByClientId after RC -> AH migration
     PushedBlockByClientId(usize),
+    PushedBlockByClientIdV2(String, usize),
     BlockByIndexStats(Index),
     BlocksBySession(Index),
     EraByIndex(Index),
@@ -185,13 +187,26 @@ pub enum CacheKey {
     NomiBoardStats,
 }
 
+impl CacheKey {
+    pub fn hash(&self) -> H256 {
+        let data = self.to_string();
+        let hash = sp_core_hashing::blake2_256(data.as_bytes());
+        H256::from(&hash)
+    }
+}
+
 impl std::fmt::Display for CacheKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Network => write!(f, "network"),
             Self::BestBlock(chain) => write!(f, "{}:best", chain),
             Self::FinalizedBlock(chain) => write!(f, "{}:finalized", chain),
-            Self::PushedBlockByClientId(client_id) => write!(f, "pushed:{}", client_id),
+            Self::PushedBlockByClientId(client_id) => {
+                write!(f, "pushed:{}", client_id)
+            }
+            Self::PushedBlockByClientIdV2(cache_key, client_id) => {
+                write!(f, "{}:pushed:{}", cache_key, client_id)
+            }
             Self::BlockByIndexStats(block_index) => write!(f, "b:{}:s", block_index),
             Self::BlocksBySession(session_index) => write!(f, "bs:{}", session_index),
             Self::EraByIndex(era_index) => write!(f, "e:{}", era_index),

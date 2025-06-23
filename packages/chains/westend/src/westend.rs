@@ -52,7 +52,7 @@ use onet_cache::{
     cache_network_stats_at_session, cache_nomination_pool_stats, cache_records,
     cache_records_at_session, cache_validator_profile, cache_validator_profile_only,
 };
-use onet_config::{Config, CONFIG, EPOCH_FILENAME};
+use onet_config::{CONFIG, EPOCH_FILENAME};
 use onet_core::{
     get_account_id_from_storage_key, get_latest_block_number_processed, get_signer_from_seed,
     get_subscribers, get_subscribers_by_epoch, write_latest_block_number_processed, Onet,

@@ -32,7 +32,7 @@ use onet_records::{
 use onet_report::Network;
 use redis::aio::Connection;
 use std::{collections::BTreeMap, result::Result, time::Instant};
-use subxt::utils::AccountId32;
+use subxt::utils::{AccountId32, H256};
 
 // Cache records at every block
 pub async fn cache_records(cache: &mut Connection, records: &Records) -> Result<(), OnetError> {
@@ -843,6 +843,34 @@ pub async fn cache_nomination_pool_stats(
         .arg(CacheKey::NominationPoolStatsByPoolAndSession(
             pool_id,
             current_epoch,
+        ))
+        .arg(config.cache_writer_prunning)
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
+}
+
+pub async fn cache_latest_pushed_block_v2(
+    cache: &mut Connection,
+    config: &Config,
+    client_id: &usize,
+    cache_key: CacheKey,
+    block_number: BlockNumber,
+) -> Result<(), OnetError> {
+    redis::pipe()
+        .atomic()
+        .cmd("SET")
+        .arg(CacheKey::PushedBlockByClientIdV2(
+            cache_key.to_string(),
+            *client_id,
+        ))
+        .arg(block_number)
+        .cmd("EXPIRE")
+        .arg(CacheKey::PushedBlockByClientIdV2(
+            cache_key.to_string(),
+            *client_id,
         ))
         .arg(config.cache_writer_prunning)
         .query_async::<_, ()>(cache)

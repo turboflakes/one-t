@@ -33,7 +33,7 @@ pub type RedisConn = Connection<RedisConnectionManager>;
 
 fn get_redis_url(config: Config) -> String {
     format!(
-        "redis://:{}@{}/{}",
+        "redis://default:{}@{}/{}",
         config.redis_password, config.redis_hostname, config.redis_database
     )
     .to_string()

@@ -195,6 +195,7 @@ fn spawn_and_restart_on_chain_events_on_error() {
 }
 
 async fn subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
+    info!("Subscribing to on-chain events");
     // initialize and load TVP stashes
     match onet.runtime() {
         SupportedRuntime::Polkadot | SupportedRuntime::Kusama => {

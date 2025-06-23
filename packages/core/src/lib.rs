@@ -407,6 +407,7 @@ impl Onet {
         );
 
         // initialize cache
+        info!("Initializing cache...");
         if let Err(e) = onet.cache_network().await {
             error!("Failed to initialize cache: {}", e);
         }
