@@ -20,8 +20,8 @@ members = [
     "packages/chains/westend",
     "packages/chains/asset-hub-westend",
     # "packages/chains/people-westend",
-    "packages/chains/asset-hub-westend-next",
-    "packages/chains/westend-next",
+    # "packages/chains/asset-hub-westend-next",
+    # "packages/chains/westend-next",
 ]
 
 resolver = "2"

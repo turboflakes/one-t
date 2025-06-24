@@ -50,7 +50,7 @@ use onet_cache::types::{CacheKey, ChainKey, Verbosity};
 use onet_cache::{
     cache_best_block, cache_board_limits_at_session, cache_finalized_block,
     cache_network_stats_at_session, cache_nomination_pool_stats, cache_records,
-    cache_records_at_session, cache_validator_profile, cache_validator_profile_only,
+    cache_records_at_new_session, cache_validator_profile, cache_validator_profile_only,
 };
 use onet_config::{Config, CONFIG, EPOCH_FILENAME};
 use onet_core::{
@@ -215,7 +215,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
     // Initialize cache
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-    cache_records_at_session(&mut cache, &records, session_index).await?;
+    cache_records_at_new_session(&mut cache, &records, session_index).await?;
     cache_records(&mut cache, &records).await?;
 
     // Initialize p2p discovery
@@ -580,7 +580,7 @@ async fn process_asset_hub_events(
                 ah_block_number,
             )?;
             // Cache records at the start of each session
-            cache_records_at_session(cache, records, ev.starting_session).await?;
+            cache_records_at_new_session(cache, records, ev.starting_session).await?;
 
             // Cache session stats records every new session with data collected
             // from the parent AH block hash

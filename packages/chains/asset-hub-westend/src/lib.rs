@@ -27,9 +27,11 @@ pub mod asset_hub_runtime {}
 pub use asset_hub_runtime::{
     nomination_pools::storage::types::bonded_pools::BondedPools,
     nomination_pools::storage::types::metadata::Metadata as PoolMetadata,
+    runtime_types::bounded_collections::bounded_vec::BoundedVec,
     runtime_types::frame_system::AccountInfo,
     runtime_types::pallet_balances::types::AccountData,
     runtime_types::pallet_staking_async::{ledger::StakingLedger, ActiveEraInfo, EraRewardPoints},
+    staking::storage::types::bonded_eras::BondedEras,
     staking::storage::types::eras_total_stake::ErasTotalStake,
     staking::storage::types::nominators::Nominators,
 };
@@ -59,6 +61,42 @@ pub async fn fetch_active_era_info(
         .ok_or_else(|| {
             OnetError::from(format!(
                 "Active era not defined at block hash {ah_block_hash:?}"
+            ))
+        })
+}
+
+/// Fetch first session from active era at the specified block hash (AH)
+pub async fn fetch_first_session_from_active_era(
+    api: &OnlineClient<PolkadotConfig>,
+    ah_block_hash: H256,
+) -> Result<u32, OnetError> {
+    let active_era = fetch_active_era_info(api, ah_block_hash).await?;
+    let BoundedVec(bonded_eras) = fetch_bonded_eras(api, ah_block_hash).await?;
+
+    for (era_index, session_index) in bonded_eras {
+        if era_index == active_era.index {
+            return Ok(session_index);
+        }
+    }
+    Err(OnetError::from(format!(
+        "First session not found for active era {active_era:?} at block hash {ah_block_hash:?}"
+    )))
+}
+
+/// Fetch bonded eras at the specified block hash (AH)
+pub async fn fetch_bonded_eras(
+    api: &OnlineClient<PolkadotConfig>,
+    ah_block_hash: H256,
+) -> Result<BondedEras, OnetError> {
+    let addr = asset_hub_runtime::storage().staking().bonded_eras();
+
+    api.storage()
+        .at(ah_block_hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| {
+            OnetError::from(format!(
+                "Bonded eras not defined at block hash {ah_block_hash:?}"
             ))
         })
 }

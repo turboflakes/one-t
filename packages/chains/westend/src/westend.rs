@@ -43,14 +43,14 @@ use onet_asset_hub_westend::{
 use onet_asset_hub_westend::{
     fetch_active_era_info, fetch_bonded_controller_account, fetch_bonded_pools,
     fetch_era_reward_points, fetch_eras_total_stake, fetch_eras_validator_reward,
-    fetch_last_pool_id, fetch_ledger_from_controller, fetch_nominators, fetch_pool_metadata,
-    AssetHubCall, NominationPoolsCall,
+    fetch_first_session_from_active_era, fetch_last_pool_id, fetch_ledger_from_controller,
+    fetch_nominators, fetch_pool_metadata, AssetHubCall, NominationPoolsCall,
 };
 use onet_cache::types::{CacheKey, ChainKey, Verbosity};
 use onet_cache::{
     cache_best_block, cache_board_limits_at_session, cache_finalized_block,
     cache_network_stats_at_session, cache_nomination_pool_stats, cache_records,
-    cache_records_at_session, cache_validator_profile, cache_validator_profile_only,
+    cache_records_at_new_session, cache_validator_profile, cache_validator_profile_only,
 };
 use onet_config::{CONFIG, EPOCH_FILENAME};
 use onet_core::{
@@ -171,7 +171,6 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     // since ParaSession starts always at the the second block of a new session
     start_block_number -= 1;
     // Load into memory the minimum initial eras defined (default=0)
-
     start_block_number -= config.minimum_initial_eras * 6 * config.blocks_per_session;
 
     // get block hash from the start block
@@ -215,7 +214,8 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 
     // Initialize cache
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-    cache_records_at_session(&mut cache, &records, session_index).await?;
+    let first_session_index = fetch_first_session_from_active_era(&ah_api, ah_block_hash).await?;
+    cache_records_at_new_session(&mut cache, &records, first_session_index).await?;
     cache_records(&mut cache, &records).await?;
 
     // Initialize p2p discovery
@@ -580,7 +580,9 @@ async fn process_asset_hub_events(
                 ah_block_number,
             )?;
             // Cache records at the start of each session
-            cache_records_at_session(cache, records, ev.starting_session).await?;
+            let first_session_index =
+                fetch_first_session_from_active_era(&ah_api, ah_block_hash).await?;
+            cache_records_at_new_session(cache, records, first_session_index).await?;
 
             // Cache session stats records every new session with data collected
             // from the parent AH block hash
@@ -2190,7 +2192,7 @@ pub async fn cache_nomination_pools_nominees(
 ) -> Result<(), OnetError> {
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
-    let api = onet.client().clone();
+    let rc_api = onet.client().clone();
     let ah_api = onet.asset_hub_client().clone();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
@@ -2200,7 +2202,7 @@ pub async fn cache_nomination_pools_nominees(
     let active_era_info = fetch_active_era_info(&ah_api, ah_block_hash).await?;
     let era_index = active_era_info.index;
 
-    let epoch_index = fetch_session_index(&ah_api, ah_block_hash).await?;
+    let epoch_index = fetch_session_index(&rc_api, rc_block_hash).await?;
 
     let mut valid_pool = Some(1);
     while let Some(pool_id) = valid_pool {
@@ -2213,7 +2215,7 @@ pub async fn cache_nomination_pools_nominees(
 
             // fetch pool nominees
             let nominations =
-                fetch_nominators(&api, ah_block_hash, pool_stash_account.clone()).await?;
+                fetch_nominators(&ah_api, ah_block_hash, pool_stash_account.clone()).await?;
 
             // deconstruct targets
             let BoundedVec(stashes) = nominations.targets;
@@ -2231,7 +2233,7 @@ pub async fn cache_nomination_pools_nominees(
                 let eras_stakers_paged_addr = asset_hub_runtime::storage()
                     .staking()
                     .eras_stakers_paged_iter2(era_index, stash.clone());
-                let mut iter = api
+                let mut iter = ah_api
                     .storage()
                     .at(ah_block_hash)
                     .iter(eras_stakers_paged_addr)

@@ -388,10 +388,10 @@ async fn cache_parachain_stats(
 }
 
 // Cache records at every new session
-pub async fn cache_records_at_session(
+pub async fn cache_records_at_new_session(
     cache: &mut Connection,
     records: &Records,
-    start_session_index: EpochIndex,
+    first_session_index: EpochIndex,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if !config.cache_writer_enabled {
@@ -401,9 +401,9 @@ pub async fn cache_records_at_session(
     let start = Instant::now();
 
     // --- Cache SessionByIndex -> `current` or `epoch_index` (to be able to search history)
-    cache_session_by_index(cache, &config, records, start_session_index).await?;
+    cache_session_by_index(cache, &config, records, first_session_index).await?;
 
-    process_authority_records_at_session(cache, &config, records).await?;
+    process_records(cache, &config, records).await?;
 
     // Log sesssion cache processed duration time
     info!(
@@ -415,7 +415,7 @@ pub async fn cache_records_at_session(
     Ok(())
 }
 
-async fn process_authority_records_at_session(
+async fn process_records(
     cache: &mut Connection,
     config: &Config,
     records: &Records,
@@ -425,13 +425,13 @@ async fn process_authority_records_at_session(
     };
 
     for authority_idx in authorities {
-        process_authority_at_session(cache, config, records, authority_idx).await?;
+        process_authority_idx(cache, config, records, authority_idx).await?;
     }
 
     Ok(())
 }
 
-async fn process_authority_at_session(
+async fn process_authority_idx(
     cache: &mut Connection,
     config: &Config,
     records: &Records,
@@ -584,7 +584,7 @@ async fn cache_session_by_index(
     cache: &mut Connection,
     config: &Config,
     records: &Records,
-    start_session_index: u32,
+    first_session_index: u32,
 ) -> Result<(), OnetError> {
     let Some(start_block) = records.start_block(None) else {
         return Ok(());
@@ -596,7 +596,7 @@ async fn cache_session_by_index(
 
     // era session index
     let current_epoch = records.current_epoch();
-    let era_session_index = 1 + current_epoch - start_session_index;
+    let era_session_index = 1 + current_epoch - first_session_index;
 
     let mut data: BTreeMap<String, String> = BTreeMap::new();
     data.insert(String::from("era"), records.current_era().to_string());
