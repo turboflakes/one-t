@@ -49,8 +49,9 @@ use onet_asset_hub_westend::{
 use onet_cache::types::{CacheKey, ChainKey, Verbosity};
 use onet_cache::{
     cache_best_block, cache_board_limits_at_session, cache_finalized_block,
-    cache_network_stats_at_session, cache_nomination_pool_stats, cache_records,
-    cache_records_at_new_session, cache_validator_profile, cache_validator_profile_only,
+    cache_network_stats_at_session, cache_nomination_pool, cache_nomination_pool_nominees,
+    cache_nomination_pool_stats, cache_records, cache_records_at_new_session,
+    cache_validator_profile, cache_validator_profile_only,
 };
 use onet_config::{CONFIG, EPOCH_FILENAME};
 use onet_core::{
@@ -70,8 +71,8 @@ use onet_pools::{
 
 use onet_records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, DiscoveryRecord, EpochIndex, EpochKey, EraIndex,
-    NetworkSessionStats, ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records,
-    SessionStats, Subscribers, Subset, SubsetStats, ValidatorProfileRecord,
+    NetworkSessionStats, ParaId, ParaRecord, ParaStats, Points, Records, Subscribers, Subset,
+    SubsetStats, ValidatorProfileRecord,
 };
 use onet_report::{
     group_by_points, position, Callout, Metadata as ReportMetadata, Network, RawData, RawDataGroup,
@@ -88,16 +89,13 @@ use std::{
     result::Result,
     str::FromStr,
     thread, time,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use frame_metadata::RuntimeMetadataPrefixed;
 use subxt::{
     backend::legacy::LegacyRpcMethods,
-    config::{
-        substrate::{Digest, DigestItem},
-        Header,
-    },
+    config::substrate::{Digest, DigestItem},
     ext::{frame_metadata, subxt_core::Metadata},
     tx::TxStatus,
     utils::{AccountId32, H256},
@@ -117,7 +115,7 @@ use relay_runtime::{
     historical::events::RootStored,
     historical::events::RootsPruned,
     para_inclusion::events::CandidateIncluded,
-    para_inclusion::storage::types::v1::V1 as CoreInfo,
+    // para_inclusion::storage::types::v1::V1 as CoreInfo,
     para_inherent::calls::types::Enter,
     para_inherent::storage::types::on_chain_votes::OnChainVotes,
     para_scheduler::storage::types::session_start_block::SessionStartBlock,
@@ -133,7 +131,7 @@ use relay_runtime::{
         polkadot_primitives::v8::DisputeStatement,
         polkadot_primitives::v8::ValidatorIndex,
         polkadot_primitives::v8::ValidityAttestation,
-        polkadot_runtime_parachains::scheduler::common::Assignment,
+        // polkadot_runtime_parachains::scheduler::common::Assignment,
         // polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
         sp_authority_discovery::app::Public,
         // sp_consensus_babe::digests::PreDigest,
@@ -142,8 +140,8 @@ use relay_runtime::{
     session::events::NewSession,
     session::storage::types::queued_keys::QueuedKeys,
     session::storage::types::validators::Validators as ValidatorSet,
-    staking_ah_client::events::CouldNotMergeAndDropped,
-    staking_ah_client::events::SetTooSmallAndDropped,
+    // staking_ah_client::events::CouldNotMergeAndDropped,
+    // staking_ah_client::events::SetTooSmallAndDropped,
     staking_ah_client::events::ValidatorSetReceived,
     system::events::ExtrinsicFailed,
 };
@@ -537,9 +535,6 @@ async fn process_new_session_event(
     )
     .await?;
 
-    // // Cache nomination pools every new session
-    // try_run_cache_nomination_pools(rc_block_number, rc_block_hash).await?;
-
     if !is_loading {
         // Cache p2p discovery
         try_run_cache_discovery_records(&records, rc_block_hash).await?;
@@ -595,6 +590,11 @@ async fn process_asset_hub_events(
                 is_loading,
             )
             .await?;
+
+            // Cache nomination pools every new session
+            try_run_cache_nomination_pools(rc_block_number, rc_block_hash, ah_block_hash).await?;
+
+            // Run matrix reports every new session
             try_run_matrix_reports(records, subscribers, previous_epoch_era_index, is_loading)
                 .await?;
         } else if let Some(ev) = event.as_event::<PagedElectionProceeded>()? {
@@ -2184,95 +2184,80 @@ pub async fn try_run_cache_nomination_pools_stats(
     Ok(())
 }
 
-// TODO: move cache_nomination_pools_nominees into cache package
-pub async fn cache_nomination_pools_nominees(
+pub async fn cache_nomination_pools(
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
     ah_block_hash: H256,
 ) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
     let rc_api = onet.client().clone();
     let ah_api = onet.asset_hub_client().clone();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
-    // fetch last pool id
     let last_pool_id = fetch_last_pool_id(&ah_api, ah_block_hash).await?;
-
-    let active_era_info = fetch_active_era_info(&ah_api, ah_block_hash).await?;
-    let era_index = active_era_info.index;
-
     let epoch_index = fetch_session_index(&rc_api, rc_block_hash).await?;
 
-    let mut valid_pool = Some(1);
-    while let Some(pool_id) = valid_pool {
+    let mut some_pool = Some(1);
+    while let Some(pool_id) = some_pool {
         if pool_id > last_pool_id {
-            valid_pool = None;
+            some_pool = None;
         } else {
-            let mut pool_nominees = PoolNominees::new();
-            pool_nominees.block_number = rc_block_number;
-            let pool_stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
+            // Verify if pool is valid
+            match fetch_bonded_pools(&ah_api, ah_block_hash, pool_id).await {
+                Ok(bonded) => {
+                    let metadata = fetch_pool_metadata(&ah_api, ah_block_hash, pool_id).await?;
+                    let BoundedVec(metadata) = metadata;
+                    let metadata = bytes_to_str(metadata);
+                    let mut pool = Pool::with_id_and_metadata(pool_id, metadata.clone());
 
-            // fetch pool nominees
-            let nominations =
-                fetch_nominators(&ah_api, ah_block_hash, pool_stash_account.clone()).await?;
+                    let state = match bonded.state {
+                        PoolState::Blocked => onet_pools::PoolState::Blocked,
+                        PoolState::Destroying => onet_pools::PoolState::Destroying,
+                        _ => onet_pools::PoolState::Open,
+                    };
+                    pool.state = state;
 
-            // deconstruct targets
-            let BoundedVec(stashes) = nominations.targets;
+                    // assign roles
+                    let mut depositor = Account::with_address(bonded.roles.depositor.clone());
+                    depositor.identity = get_identity(&onet, &bonded.roles.depositor, None).await?;
+                    let root = if let Some(root) = bonded.roles.root {
+                        let mut root_acc = Account::with_address(root.clone());
+                        root_acc.identity = get_identity(&onet, &root, None).await?;
+                        Some(root_acc)
+                    } else {
+                        None
+                    };
+                    let nominator = if let Some(acc) = bonded.roles.nominator {
+                        let mut nominator = Account::with_address(acc.clone());
+                        nominator.identity = get_identity(&onet, &acc, None).await?;
+                        Some(nominator)
+                    } else {
+                        None
+                    };
+                    let state_toggler = if let Some(acc) = bonded.roles.bouncer {
+                        let mut state_toggler = Account::with_address(acc.clone());
+                        state_toggler.identity = get_identity(&onet, &acc, None).await?;
+                        Some(state_toggler)
+                    } else {
+                        None
+                    };
 
-            // DEPRECATE calculate APR
-            // pool_nominees.apr =
-            //     calculate_apr_from_stashes(&onet, stashes.clone(), block_hash).await?;
+                    pool.roles = Some(Roles::with(depositor, root, nominator, state_toggler));
+                    pool.block_number = rc_block_number;
 
-            pool_nominees.nominees = stashes.clone();
-
-            let mut active = Vec::<ActiveNominee>::new();
-            // check active nominees
-            for stash in stashes {
-                // Identify which active validators have pool stake assigned
-                let eras_stakers_paged_addr = asset_hub_runtime::storage()
-                    .staking()
-                    .eras_stakers_paged_iter2(era_index, stash.clone());
-                let mut iter = ah_api
-                    .storage()
-                    .at(ah_block_hash)
-                    .iter(eras_stakers_paged_addr)
-                    .await?;
-
-                while let Some(Ok(storage_kv)) = iter.next().await {
-                    let BoundedExposurePage(exposure) = storage_kv.value;
-                    if let Some(individual) = exposure
-                        .others
-                        .iter()
-                        .find(|x| x.who == pool_stash_account.clone())
-                    {
-                        active.push(ActiveNominee::with(stash.clone(), individual.value));
-                    }
+                    cache_nomination_pool(&mut cache, &config, &pool, pool_id, epoch_index).await?;
                 }
+                Err(e) => debug!("{:?} {}", {}, e),
             }
-            pool_nominees.active = active;
 
-            // serialize and cache pool
-            let serialized = serde_json::to_string(&pool_nominees)?;
-            redis::cmd("SET")
-                .arg(CacheKey::NominationPoolNomineesByPoolAndSession(
-                    pool_id,
-                    epoch_index,
-                ))
-                .arg(serialized)
-                .query_async::<_, ()>(&mut cache as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
-
-            valid_pool = Some(pool_id + 1);
+            some_pool = Some(pool_id + 1);
         }
     }
+
     // Log cache processed duration time
-    info!(
-        "Pools nominees #{} cached ({:?})",
-        epoch_index,
-        start.elapsed()
-    );
+    info!("Pools #{} cached ({:?})", epoch_index, start.elapsed());
 
     Ok(())
 }
@@ -2346,90 +2331,92 @@ pub async fn cache_nomination_pools_stats(
     Ok(())
 }
 
-pub async fn cache_nomination_pools(
+pub async fn cache_nomination_pools_nominees(
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
     ah_block_hash: H256,
 ) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
     let rc_api = onet.client().clone();
     let ah_api = onet.asset_hub_client().clone();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
+    // fetch last pool id
     let last_pool_id = fetch_last_pool_id(&ah_api, ah_block_hash).await?;
+
+    let active_era_info = fetch_active_era_info(&ah_api, ah_block_hash).await?;
+    let era_index = active_era_info.index;
+
     let epoch_index = fetch_session_index(&rc_api, rc_block_hash).await?;
 
-    let mut valid_pool = Some(1);
-    while let Some(pool_id) = valid_pool {
+    let mut some_pool = Some(1);
+    while let Some(pool_id) = some_pool {
         if pool_id > last_pool_id {
-            valid_pool = None;
+            some_pool = None;
         } else {
-            let metadata = fetch_pool_metadata(&ah_api, ah_block_hash, pool_id).await?;
-            let BoundedVec(metadata) = metadata;
-            let metadata = bytes_to_str(metadata);
-            let mut pool = Pool::with_id_and_metadata(pool_id, metadata.clone());
+            let mut pool_nominees = PoolNominees::new();
+            pool_nominees.block_number = rc_block_number;
+            let pool_stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
 
-            let bonded = fetch_bonded_pools(&ah_api, ah_block_hash, pool_id).await?;
+            // fetch pool nominees
+            let nominations =
+                fetch_nominators(&ah_api, ah_block_hash, pool_stash_account.clone()).await?;
 
-            let state = match bonded.state {
-                PoolState::Blocked => onet_pools::PoolState::Blocked,
-                PoolState::Destroying => onet_pools::PoolState::Destroying,
-                _ => onet_pools::PoolState::Open,
-            };
-            pool.state = state;
+            // deconstruct targets
+            let BoundedVec(stashes) = nominations.targets;
 
-            // assign roles
-            let mut depositor = Account::with_address(bonded.roles.depositor.clone());
-            depositor.identity = get_identity(&onet, &bonded.roles.depositor, None).await?;
-            let root = if let Some(root) = bonded.roles.root {
-                let mut root_acc = Account::with_address(root.clone());
-                root_acc.identity = get_identity(&onet, &root, None).await?;
-                Some(root_acc)
-            } else {
-                None
-            };
-            let nominator = if let Some(acc) = bonded.roles.nominator {
-                let mut nominator = Account::with_address(acc.clone());
-                nominator.identity = get_identity(&onet, &acc, None).await?;
-                Some(nominator)
-            } else {
-                None
-            };
-            let state_toggler = if let Some(acc) = bonded.roles.bouncer {
-                let mut state_toggler = Account::with_address(acc.clone());
-                state_toggler.identity = get_identity(&onet, &acc, None).await?;
-                Some(state_toggler)
-            } else {
-                None
-            };
+            // DEPRECATE calculate APR
+            // pool_nominees.apr =
+            //     calculate_apr_from_stashes(&onet, stashes.clone(), block_hash).await?;
 
-            pool.roles = Some(Roles::with(depositor, root, nominator, state_toggler));
-            pool.block_number = rc_block_number;
+            pool_nominees.nominees = stashes.clone();
 
-            // serialize and cache pool
-            let serialized = serde_json::to_string(&pool)?;
-            redis::cmd("SET")
-                .arg(CacheKey::NominationPoolRecord(pool_id))
-                .arg(serialized)
-                .query_async::<_, ()>(&mut cache as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
+            let mut active = Vec::<ActiveNominee>::new();
+            // check active nominees
+            for stash in stashes {
+                // Identify which active validators have pool stake assigned
+                let eras_stakers_paged_addr = asset_hub_runtime::storage()
+                    .staking()
+                    .eras_stakers_paged_iter2(era_index, stash.clone());
+                let mut iter = ah_api
+                    .storage()
+                    .at(ah_block_hash)
+                    .iter(eras_stakers_paged_addr)
+                    .await?;
+
+                while let Some(Ok(storage_kv)) = iter.next().await {
+                    let BoundedExposurePage(exposure) = storage_kv.value;
+                    if let Some(individual) = exposure
+                        .others
+                        .iter()
+                        .find(|x| x.who == pool_stash_account.clone())
+                    {
+                        active.push(ActiveNominee::with(stash.clone(), individual.value));
+                    }
+                }
+            }
+            pool_nominees.active = active;
+
+            cache_nomination_pool_nominees(
+                &mut cache,
+                &config,
+                &pool_nominees,
+                pool_id,
+                epoch_index,
+            )
+            .await?;
+
+            some_pool = Some(pool_id + 1);
         }
-        // cache pool_id into a sorted set by session
-        redis::cmd("ZADD")
-            .arg(CacheKey::NominationPoolIdsBySession(epoch_index))
-            .arg(0)
-            .arg(pool_id)
-            .query_async::<_, ()>(&mut cache as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?;
-
-        valid_pool = Some(pool_id + 1);
     }
-
     // Log cache processed duration time
-    info!("Pools #{} cached ({:?})", epoch_index, start.elapsed());
+    info!(
+        "Pools nominees #{} cached ({:?})",
+        epoch_index,
+        start.elapsed()
+    );
 
     Ok(())
 }
