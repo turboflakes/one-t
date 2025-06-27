@@ -28,7 +28,7 @@ use crate::{
 };
 use actix::prelude::*;
 use onet_cache::{
-    cache_latest_pushed_block,
+    cache_latest_pushed_block, cache_latest_pushed_block_v2,
     provider::{create_or_await_pool, get_conn, RedisPool},
     types::{CacheKey, ChainKey, Index, Verbosity},
 };
@@ -124,28 +124,38 @@ impl Channel {
                     Topic::FinalizedBlock(number_previous_sessions) => {
                         let future = async {
                             if let Ok(mut conn) = get_conn(&act.cache).await {
+
+                                // 1. Process Relay Chain finalized blocks
+                                let chain_key = ChainKey::RC;
+                                let cache_key = CacheKey::FinalizedBlock(chain_key.clone());
                                 if let Ok(finalized_block_number) = redis::cmd("GET")
-                                    .arg(CacheKey::FinalizedBlock(ChainKey::RC))
-                                    .query_async::<Connection, BlockNumber>(&mut conn)
+                                    .arg(CacheKey::FinalizedBlock(chain_key.clone()))
+                                    .query_async::<Connection,BlockNumber>(&mut conn)
                                     .await
                                 {
-                                    if let Ok(pushed_block_number) = redis::cmd("GET")
-                                        .arg(CacheKey::PushedBlockByClientId(*client_id))
-                                        .query_async::<Connection, BlockNumber>(&mut conn)
+                                    if let Ok(Some(pushed_block_number)) = redis::cmd("GET")
+                                        .arg(CacheKey::PushedBlockByClientIdV2(cache_key.to_string(), *client_id))
+                                        .query_async::<Connection, Option<BlockNumber>>(&mut conn)
                                         .await
                                     {
-                                        // Note: if latest pushed block is different thant the finalized block oin cache
-                                        // just send all finalized blocks not pushed to clinets yet.
-                                        if pushed_block_number != finalized_block_number {
+                                        // Note: if latest pushed block is different than the finalized block in the cache
+                                        // just send all finalized blocks not pushed to clients yet.
+                                        if finalized_block_number != pushed_block_number {
                                             let mut data: Vec<BlockResult> = Vec::new();
 
                                             let mut latest_block_number_pushed: Option<
                                                 BlockNumber,
                                             > = Some(pushed_block_number);
 
+                                            info!("finalized_block_number {:?}, pushed_block_number {:?}", finalized_block_number, pushed_block_number);
+
                                             while let Some(pushed_block_number) =
                                                 latest_block_number_pushed
                                             {
+
+                                                // info!("finalized_block_number {:?}, pushed_block_number {:?}", finalized_block_number, pushed_block_number);
+
+
                                                 if finalized_block_number == pushed_block_number {
                                                     latest_block_number_pushed = None;
                                                 } else {
@@ -172,6 +182,8 @@ impl Channel {
                                                             String::from("stats"),
                                                             serialized_data,
                                                         );
+
+                                                        info!("Sending finalized blocks to clients {:?}", block_data);
 
                                                         //
                                                         data.push(block_data.into());
@@ -219,11 +231,13 @@ impl Channel {
                                                 act.publish_message(&serialized, 0);
                                             }
 
+                                            info!("cache_latest_pushed_block_v2 {}", finalized_block_number);
                                             // cache latest pushed block
-                                            if let Err(e) = cache_latest_pushed_block(
+                                            if let Err(e) = cache_latest_pushed_block_v2(
                                                 &mut conn,
                                                 &config,
                                                 client_id,
+                                                cache_key.clone(),
                                                 finalized_block_number,
                                             )
                                             .await
@@ -234,7 +248,9 @@ impl Channel {
                                                 );
                                             }
                                         }
-                                    } else {
+                                    }
+                                    else {
+                                        info!("first time just push to clients the last finalized block {}", finalized_block_number);
                                         // first time just push to clients the last finalized block
                                         if let Ok(serialized_data) = redis::cmd("GET")
                                             .arg(CacheKey::BlockByIndexStats(Index::Num(
@@ -243,6 +259,7 @@ impl Channel {
                                             .query_async::<Connection, String>(&mut conn)
                                             .await
                                         {
+                                            info!("Block data retrieved from Redis {:?}", serialized_data);
                                             let mut block_data = CacheMap::new();
                                             block_data.insert(
                                                 String::from("block_number"),
@@ -262,12 +279,69 @@ impl Channel {
                                             let serialized = serde_json::to_string(&resp).unwrap();
                                             act.publish_message(&serialized, 0);
 
+                                            info!("cache_latest_pushed_block_v2 {}", finalized_block_number);
                                             // cache latest pushed block
-                                            if let Err(e) = cache_latest_pushed_block(
+                                            if let Err(e) = cache_latest_pushed_block_v2(
                                                 &mut conn,
                                                 &config,
                                                 client_id,
+                                                cache_key.clone(),
                                                 finalized_block_number,
+                                            )
+                                            .await
+                                            {
+                                                warn!(
+                                                    "Cache PushedBlock failed with error: {:?}",
+                                                    e
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 2. Process Asset Hub finalized blocks
+                                let chain_key = ChainKey::AH;
+                                let cache_key = CacheKey::FinalizedBlock(chain_key.clone());
+                                if let Ok(Some(block_number)) = redis::cmd("GET")
+                                    .arg(CacheKey::FinalizedBlock(chain_key.clone()))
+                                    .query_async::<Connection, Option<BlockNumber>>(&mut conn)
+                                    .await
+                                {
+                                    if let Ok(pushed_block_number)= redis::cmd("GET")
+                                        .arg(CacheKey::PushedBlockByClientIdV2(cache_key.to_string(), *client_id))
+                                        .query_async::<Connection, Option<BlockNumber>>(&mut conn)
+                                        .await
+                                    {
+                                        // Note: Check if it has not been sent to client already.
+                                        if Some(block_number) != pushed_block_number  {
+                                            let mut block_data = CacheMap::new();
+                                            block_data.insert(
+                                                String::from("chain_key"),
+                                                chain_key.to_string(),
+                                            );
+                                            block_data.insert(
+                                                String::from("block_number"),
+                                                block_number.to_string(),
+                                            );
+                                            block_data.insert(
+                                                String::from("is_finalized"),
+                                                (true).to_string(),
+                                            );
+
+                                            let resp = WsResponseMessage {
+                                                r#type: String::from("block"),
+                                                result: BlockResult::from(block_data),
+                                            };
+                                            let serialized = serde_json::to_string(&resp).unwrap();
+                                            act.publish_message(&serialized, 0);
+
+                                            // cache latest pushed block
+                                            if let Err(e) = cache_latest_pushed_block_v2(
+                                                &mut conn,
+                                                &config,
+                                                client_id,
+                                                cache_key.clone(),
+                                                block_number,
                                             )
                                             .await
                                             {
@@ -287,31 +361,58 @@ impl Channel {
                         let future = async {
                             if let Ok(mut conn) = get_conn(&act.cache).await {
                                 for chain_key in [ChainKey::RC, ChainKey::AH] {
-                                    if let Ok(block_number) = redis::cmd("GET")
+                                    let cache_key = CacheKey::BestBlock(chain_key.clone());
+                                    if let Ok(Some(block_number)) = redis::cmd("GET")
                                         .arg(CacheKey::BestBlock(chain_key.clone()))
-                                        .query_async::<Connection, BlockNumber>(&mut conn)
+                                        .query_async::<Connection, Option<BlockNumber>>(&mut conn)
                                         .await
                                     {
-                                        let mut block_data = CacheMap::new();
-                                        block_data.insert(
-                                            String::from("chain_key"),
-                                            chain_key.to_string(),
-                                        );
-                                        block_data.insert(
-                                            String::from("block_number"),
-                                            block_number.to_string(),
-                                        );
-                                        block_data.insert(
-                                            String::from("is_finalized"),
-                                            "false".to_string(),
-                                        );
+                                        if let Ok(pushed_block_number) = redis::cmd("GET")
+                                            .arg(CacheKey::PushedBlockByClientIdV2(cache_key.to_string(), *client_id))
+                                            .query_async::<Connection, Option<BlockNumber>>(&mut conn)
+                                            .await
+                                        {
+                                            // Note: Check if it has not been sent to client already.
+                                            if Some(block_number) != pushed_block_number  {
 
-                                        let resp = WsResponseMessage {
-                                            r#type: String::from("block"),
-                                            result: BlockResult::from(block_data),
-                                        };
-                                        let serialized = serde_json::to_string(&resp).unwrap();
-                                        act.publish_message(&serialized, 0);
+                                                let mut block_data = CacheMap::new();
+                                                block_data.insert(
+                                                    String::from("chain_key"),
+                                                    chain_key.to_string(),
+                                                );
+                                                block_data.insert(
+                                                    String::from("block_number"),
+                                                    block_number.to_string(),
+                                                );
+                                                block_data.insert(
+                                                    String::from("is_finalized"),
+                                                    "false".to_string(),
+                                                );
+
+                                                let resp = WsResponseMessage {
+                                                    r#type: String::from("block"),
+                                                    result: BlockResult::from(block_data),
+                                                };
+                                                let serialized = serde_json::to_string(&resp).unwrap();
+                                                act.publish_message(&serialized, 0);
+
+                                                // cache latest pushed block
+                                                if let Err(e) = cache_latest_pushed_block_v2(
+                                                    &mut conn,
+                                                    &config,
+                                                    client_id,
+                                                    cache_key.clone(),
+                                                    block_number,
+                                                )
+                                                .await
+                                                {
+                                                    warn!(
+                                                        "Cache PushedBlock failed with error: {:?}",
+                                                        e
+                                                    );
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }

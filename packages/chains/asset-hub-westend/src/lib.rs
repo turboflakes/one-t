@@ -21,32 +21,21 @@
 
 #[subxt::subxt(
     runtime_metadata_path = "artifacts/metadata/asset_hub_westend_metadata.scale",
-    derive_for_all_types = "PartialEq, Clone",
-    substitute_type(
-        path = "sp_staking::ExposurePage<A, B>",
-        with = "crate::custom_types::ExposurePage<A, B>"
-    ),
-    substitute_type(
-        path = "sp_staking::IndividualExposure<A>",
-        with = "crate::custom_types::IndividualExposure<A>"
-    ),
-    substitute_type(
-        path = "sp_staking::PagedExposureMetadata<A>",
-        with = "crate::custom_types::PagedExposureMetadata<A>"
-    )
+    derive_for_all_types = "PartialEq, Clone"
 )]
 pub mod asset_hub_runtime {}
 pub use asset_hub_runtime::{
     nomination_pools::storage::types::bonded_pools::BondedPools,
     nomination_pools::storage::types::metadata::Metadata as PoolMetadata,
+    runtime_types::bounded_collections::bounded_vec::BoundedVec,
+    runtime_types::frame_system::AccountInfo,
+    runtime_types::pallet_balances::types::AccountData,
     runtime_types::pallet_staking_async::{ledger::StakingLedger, ActiveEraInfo, EraRewardPoints},
-    // staking::storage::types::eras_start_session_index::ErasStartSessionIndex,
+    staking::storage::types::bonded_eras::BondedEras,
     staking::storage::types::eras_total_stake::ErasTotalStake,
     staking::storage::types::nominators::Nominators,
 };
-pub mod custom_types;
 
-use crate::custom_types::PagedExposureMetadata;
 use onet_errors::OnetError;
 use onet_records::EraIndex;
 use subxt::{
@@ -76,11 +65,47 @@ pub async fn fetch_active_era_info(
         })
 }
 
+/// Fetch first session from active era at the specified block hash (AH)
+pub async fn fetch_first_session_from_active_era(
+    api: &OnlineClient<PolkadotConfig>,
+    ah_block_hash: H256,
+) -> Result<u32, OnetError> {
+    let active_era = fetch_active_era_info(api, ah_block_hash).await?;
+    let BoundedVec(bonded_eras) = fetch_bonded_eras(api, ah_block_hash).await?;
+
+    for (era_index, session_index) in bonded_eras {
+        if era_index == active_era.index {
+            return Ok(session_index);
+        }
+    }
+    Err(OnetError::from(format!(
+        "First session not found for active era {active_era:?} at block hash {ah_block_hash:?}"
+    )))
+}
+
+/// Fetch bonded eras at the specified block hash (AH)
+pub async fn fetch_bonded_eras(
+    api: &OnlineClient<PolkadotConfig>,
+    ah_block_hash: H256,
+) -> Result<BondedEras, OnetError> {
+    let addr = asset_hub_runtime::storage().staking().bonded_eras();
+
+    api.storage()
+        .at(ah_block_hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| {
+            OnetError::from(format!(
+                "Bonded eras not defined at block hash {ah_block_hash:?}"
+            ))
+        })
+}
+
 /// Fetch eras total stake at the specified block hash (AH)
 pub async fn fetch_eras_total_stake(
     api: &OnlineClient<PolkadotConfig>,
     ah_block_hash: H256,
-    era: &EraIndex,
+    era: EraIndex,
 ) -> Result<ErasTotalStake, OnetError> {
     let addr = asset_hub_runtime::storage().staking().eras_total_stake(era);
 
@@ -99,7 +124,7 @@ pub async fn fetch_eras_total_stake(
 pub async fn fetch_eras_validator_reward(
     api: &OnlineClient<PolkadotConfig>,
     ah_block_hash: H256,
-    era: &EraIndex,
+    era: EraIndex,
 ) -> Result<ErasTotalStake, OnetError> {
     let addr = asset_hub_runtime::storage()
         .staking()
@@ -120,7 +145,7 @@ pub async fn fetch_eras_validator_reward(
 pub async fn fetch_nominators(
     api: &OnlineClient<PolkadotConfig>,
     ah_block_hash: H256,
-    stash: &AccountId32,
+    stash: AccountId32,
 ) -> Result<Nominators, OnetError> {
     let addr = asset_hub_runtime::storage().staking().nominators(stash);
 
@@ -149,7 +174,7 @@ pub async fn fetch_last_pool_id(
         .fetch(&addr)
         .await?
         .ok_or_else(|| {
-            OnetError::from(format!(
+            OnetError::PoolError(format!(
                 "Last pool ID not defined at block hash {ah_block_hash:?}"
             ))
         })
@@ -163,15 +188,15 @@ pub async fn fetch_bonded_pools(
 ) -> Result<BondedPools, OnetError> {
     let addr = asset_hub_runtime::storage()
         .nomination_pools()
-        .bonded_pools(&pool_id);
+        .bonded_pools(pool_id);
 
     api.storage()
         .at(ah_block_hash)
         .fetch(&addr)
         .await?
         .ok_or_else(|| {
-            OnetError::from(format!(
-                "Bonded Pools not defined at block hash {ah_block_hash:?}"
+            OnetError::PoolError(format!(
+                "Bonded Pool ID {pool_id} not defined at block hash {ah_block_hash:?}",
             ))
         })
 }
@@ -184,15 +209,15 @@ pub async fn fetch_pool_metadata(
 ) -> Result<PoolMetadata, OnetError> {
     let addr = asset_hub_runtime::storage()
         .nomination_pools()
-        .metadata(&pool_id);
+        .metadata(pool_id);
 
     api.storage()
         .at(ah_block_hash)
         .fetch(&addr)
         .await?
         .ok_or_else(|| {
-            OnetError::from(format!(
-                "PoolMetadata not defined at block hash {ah_block_hash:?}"
+            OnetError::PoolError(format!(
+                "PoolMetadata ID {pool_id} not defined at block hash {ah_block_hash:?}",
             ))
         })
 }
@@ -205,7 +230,7 @@ pub async fn fetch_era_reward_points(
 ) -> Result<EraRewardPoints<AccountId32>, OnetError> {
     let addr = asset_hub_runtime::storage()
         .staking()
-        .eras_reward_points(&era);
+        .eras_reward_points(era);
 
     api.storage()
         .at(ah_block_hash)
@@ -224,7 +249,7 @@ pub async fn fetch_bonded_controller_account(
     ah_block_hash: H256,
     stash: &AccountId32,
 ) -> Result<AccountId32, OnetError> {
-    let addr = asset_hub_runtime::storage().staking().bonded(stash);
+    let addr = asset_hub_runtime::storage().staking().bonded(stash.clone());
 
     api.storage()
         .at(ah_block_hash)
@@ -243,7 +268,7 @@ pub async fn fetch_ledger_from_controller(
     ah_block_hash: H256,
     stash: &AccountId32,
 ) -> Result<StakingLedger, OnetError> {
-    let addr = asset_hub_runtime::storage().staking().ledger(stash);
+    let addr = asset_hub_runtime::storage().staking().ledger(stash.clone());
 
     api.storage()
         .at(ah_block_hash)
@@ -254,4 +279,19 @@ pub async fn fetch_ledger_from_controller(
                 "Bonded controller not found at block hash {ah_block_hash:?}"
             ))
         })
+}
+
+/// Fetch account info given a stash at the specified block hash
+async fn fetch_account_info(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+    stash: AccountId32,
+) -> Result<AccountInfo<u32, AccountData<u128>>, OnetError> {
+    let addr = asset_hub_runtime::storage().system().account(stash);
+
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| OnetError::from(format!("Account info not found at block hash {hash}")))
 }
