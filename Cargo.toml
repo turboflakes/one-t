@@ -28,7 +28,7 @@ resolver = "2"
 
 [workspace.package]
 name = "onet"
-version = "0.35.0"
+version = "0.39.0"
 authors = ["Paulo <paulo@turboflakes.io>"]
 license = "MIT or Apache-2.0"
 repository = "https://github.com/turboflakes/one-t"
@@ -85,7 +85,6 @@ subxt-signer = { git = "https://github.com/paritytech/subxt", branch = "master",
 subxt-metadata = { git = "https://github.com/paritytech/subxt", branch = "master", features = [
     "std",
 ] }
-
 sp-core = "36.1.0"
 sp-core-hashing = "16.0.0"
 #

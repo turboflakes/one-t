@@ -63,6 +63,7 @@ use subxt::{
         substrate::{Digest, DigestItem},
         Header,
     },
+    ext::{frame_metadata::RuntimeMetadataPrefixed, subxt_core::Metadata as RuntimeMetadata},
     tx::TxStatus,
     utils::{AccountId32, H256},
 };
@@ -238,7 +239,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                             &mut subscribers,
                             &mut records,
                             block_number,
-                            block.hash(),
+                            finalized_block_hash,
                             is_loading,
                         )
                         .await?;
@@ -334,10 +335,16 @@ pub async fn process_finalized_block(
         .chain_get_block_hash(Some((block_number - 1).into()))
         .await?;
 
-    let block_metadata = onet.rpc().state_get_metadata(block_hash_metadata).await?;
+    let parent_block_metadata_bytes = onet
+        .rpc()
+        .state_get_metadata(block_hash_metadata)
+        .await?
+        .into_raw();
+    let parent_block_metadata: RuntimeMetadata =
+        RuntimeMetadataPrefixed::decode(&mut &parent_block_metadata_bytes[..])?.try_into()?;
 
     // Assign block_metadata to the api
-    api.set_metadata(block_metadata);
+    api.set_metadata(parent_block_metadata.clone());
 
     // Fetch events
     let events = api.events().at(block_hash).await?;
