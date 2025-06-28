@@ -739,7 +739,9 @@ pub async fn get_validators(
             // Normalize avg_para_points
             let avg_para_points: Vec<u32> = aggregator_vec
                 .iter()
-                .filter(|(_, (_, para_epochs, _, _, _, _, _, _, _))| *para_epochs >= 1)
+                .filter(|(_, (_, para_epochs, _, ev, iv, mv, _, _, _))| {
+                    *para_epochs >= 1 && (ev + iv + mv) > 0
+                })
                 .map(|(_, (_, para_epochs, para_points, _, _, _, _, _, _))| {
                     para_points / para_epochs
                 })
@@ -752,7 +754,9 @@ pub async fn get_validators(
             //
             aggregator_vec
                 .iter_mut()
-                .filter(|(_, (_, para_epochs, _, _, _, _, _, _, _))| *para_epochs >= 1)
+                .filter(|(_, (_, para_epochs, _, ev, iv, mv, _, _, _))| {
+                    *para_epochs >= 1 && (ev + iv + mv) > 0
+                })
                 .for_each(
                     |(stash, (_, para_epochs, para_points, ev, iv, mv, ba, bu, s))| {
                         let mvr = *mv as f64 / (*ev + *iv + *mv) as f64;
