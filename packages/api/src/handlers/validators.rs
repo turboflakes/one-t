@@ -1364,7 +1364,6 @@ pub async fn get_era_validators_grades(
 ) -> Result<Json<EraValidatorsGradesResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
     let era_index = era.into_inner();
-    use log::info;
 
     let session_index: u32 = redis::cmd("HGET")
         .arg(CacheKey::EraByIndex(Index::Num(era_index.into())))

@@ -371,7 +371,7 @@ async fn generate_board_scores(
                     board_hash,
                 ))
                 .arg(config.cache_writer_prunning)
-                .query_async(&mut conn as &mut Connection)
+                .query_async::<_, ()>(&mut conn as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
         }
@@ -398,7 +398,7 @@ async fn generate_board_scores(
             board_hash,
         ))
         .arg(config.cache_writer_prunning)
-        .query_async(&mut conn as &mut Connection)
+        .query_async::<_, ()>(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
 

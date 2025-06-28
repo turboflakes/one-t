@@ -113,7 +113,7 @@ use crate::custom_types::PreDigest;
 use relay_runtime::{
     grandpa::events::NewAuthorities,
     historical::events::RootStored,
-    historical::events::RootsPruned,
+    // historical::events::RootsPruned,
     para_inclusion::events::CandidateIncluded,
     // para_inclusion::storage::types::v1::V1 as CoreInfo,
     para_inherent::calls::types::Enter,
@@ -338,7 +338,6 @@ pub async fn process_finalized_block(
         rc_rpc,
         ah_api,
         ah_rpc,
-        parent_metadata,
         current_metadata,
     } = setup_processing_context(onet, rc_block_number).await?;
 
@@ -419,7 +418,6 @@ struct BlockProcessingContext {
     rc_rpc: LegacyRpcMethods<PolkadotConfig>,
     ah_api: OnlineClient<PolkadotConfig>,
     ah_rpc: LegacyRpcMethods<PolkadotConfig>,
-    parent_metadata: Metadata,
     current_metadata: Metadata,
 }
 
@@ -451,7 +449,6 @@ async fn setup_processing_context(
         rc_rpc,
         ah_api,
         ah_rpc,
-        parent_metadata,
         current_metadata,
     })
 }
@@ -3146,7 +3143,7 @@ async fn fetch_validator_points(
 }
 
 /// Fetch para validator groups at the specified block hash
-async fn fetch_para_validator_groups(
+async fn _fetch_para_validator_groups(
     api: &OnlineClient<PolkadotConfig>,
     hash: H256,
 ) -> Result<ValidatorGroups, OnetError> {
@@ -3245,7 +3242,7 @@ async fn fetch_on_chain_votes(
 }
 
 /// Fetch last runtime upgrade on chain votes at the specified block hash
-async fn fetch_last_runtime_upgrade(
+async fn _fetch_last_runtime_upgrade(
     api: &OnlineClient<PolkadotConfig>,
     hash: H256,
 ) -> Result<LastRuntimeUpgradeInfo, OnetError> {
