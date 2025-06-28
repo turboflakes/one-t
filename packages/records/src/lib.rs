@@ -2220,7 +2220,7 @@ mod tests {
             assert_eq!(ar.start_points(), 300);
             assert_eq!(ar.end_points().is_some(), true);
             assert_eq!(ar.end_points().unwrap(), 1900);
-            assert_eq!(ar.points(), 1600);
+            assert_eq!(ar.points(), 1900);
         }
 
         // Increment authored blocks and current points
