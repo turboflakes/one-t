@@ -487,10 +487,6 @@ async fn process_relay_chain_events(
                     is_loading,
                 )
                 .await?;
-
-                // Cache pool stats every 10 minutes
-                try_run_cache_nomination_pools_stats(rc_block_number, rc_block_hash, ah_block_hash)
-                    .await?;
             }
         } else if let Some(ev) = event.as_event::<NewSession>()? {
             info!("RC event {:?}", ev);
@@ -589,7 +585,8 @@ async fn process_asset_hub_events(
             .await?;
 
             // Cache nomination pools every new session
-            try_run_cache_nomination_pools(rc_block_number, rc_block_hash, ah_block_hash).await?;
+            try_run_cache_nomination_pools(ev.starting_session, ah_block_number, ah_block_hash)
+                .await?;
 
             // Run matrix reports every new session
             try_run_matrix_reports(records, subscribers, previous_epoch_era_index, is_loading)
@@ -615,9 +612,12 @@ async fn process_asset_hub_events(
         // || pallet == "MultiBlockUnsigned"
     }
 
-    // cache finalized block
-    let chain_key = ChainKey::AH;
-    cache_finalized_block(cache, chain_key, ah_block_number.into()).await?;
+    // Cache pool stats every 10 minutes
+    try_run_cache_nomination_pools_stats(records.current_epoch(), ah_block_number, ah_block_hash)
+        .await?;
+
+    // Cache finalized block
+    cache_finalized_block(cache, ChainKey::AH, ah_block_number.into()).await?;
 
     Ok(())
 }
@@ -2122,15 +2122,15 @@ fn define_second_pool_call(
 // }
 
 pub async fn try_run_cache_nomination_pools(
-    rc_block_number: BlockNumber,
-    rc_block_hash: H256,
+    epoch_index: EpochIndex,
+    ah_block_number: BlockNumber,
     ah_block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if config.cache_writer_enabled && config.pools_enabled {
         async_std::task::spawn(async move {
             if let Err(e) =
-                cache_nomination_pools(rc_block_number, rc_block_hash, ah_block_hash).await
+                cache_nomination_pools(epoch_index, ah_block_number, ah_block_hash).await
             {
                 error!("cache_nomination_pools error: {:?}", e);
             }
@@ -2138,7 +2138,7 @@ pub async fn try_run_cache_nomination_pools(
 
         async_std::task::spawn(async move {
             if let Err(e) =
-                cache_nomination_pools_stats(rc_block_number, rc_block_hash, ah_block_hash).await
+                cache_nomination_pools_stats(epoch_index, ah_block_number, ah_block_hash).await
             {
                 error!("cache_nomination_pools_stats error: {:?}", e);
             }
@@ -2149,7 +2149,7 @@ pub async fn try_run_cache_nomination_pools(
         // we calculate the APR every new session for now
         async_std::task::spawn(async move {
             if let Err(e) =
-                cache_nomination_pools_nominees(rc_block_number, rc_block_hash, ah_block_hash).await
+                cache_nomination_pools_nominees(epoch_index, ah_block_number, ah_block_hash).await
             {
                 error!("cache_nomination_pools_stats error: {:?}", e);
             }
@@ -2159,8 +2159,8 @@ pub async fn try_run_cache_nomination_pools(
 }
 
 pub async fn try_run_cache_nomination_pools_stats(
-    rc_block_number: BlockNumber,
-    rc_block_hash: H256,
+    epoch_index: EpochIndex,
+    ah_block_number: BlockNumber,
     ah_block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
@@ -2169,10 +2169,10 @@ pub async fn try_run_cache_nomination_pools_stats(
     }
 
     // collect nomination stats every minute
-    if (rc_block_number as f64 % 10.0_f64) == 0.0_f64 {
+    if (ah_block_number as f64 % 10.0_f64) == 0.0_f64 {
         async_std::task::spawn(async move {
             if let Err(e) =
-                cache_nomination_pools_stats(rc_block_number, rc_block_hash, ah_block_hash).await
+                cache_nomination_pools_stats(epoch_index, ah_block_number, ah_block_hash).await
             {
                 error!("cache_nomination_pools_stats error: {:?}", e);
             }
@@ -2182,19 +2182,17 @@ pub async fn try_run_cache_nomination_pools_stats(
 }
 
 pub async fn cache_nomination_pools(
-    rc_block_number: BlockNumber,
-    rc_block_hash: H256,
+    epoch_index: EpochIndex,
+    ah_block_number: BlockNumber,
     ah_block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
-    let rc_api = onet.client().clone();
     let ah_api = onet.asset_hub_client().clone();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
     let last_pool_id = fetch_last_pool_id(&ah_api, ah_block_hash).await?;
-    let epoch_index = fetch_session_index(&rc_api, rc_block_hash).await?;
 
     let mut some_pool = Some(1);
     while let Some(pool_id) = some_pool {
@@ -2242,7 +2240,7 @@ pub async fn cache_nomination_pools(
                     };
 
                     pool.roles = Some(Roles::with(depositor, root, nominator, state_toggler));
-                    pool.block_number = rc_block_number;
+                    pool.block_number = ah_block_number;
 
                     cache_nomination_pool(&mut cache, &config, &pool, pool_id, epoch_index).await?;
                 }
@@ -2254,25 +2252,27 @@ pub async fn cache_nomination_pools(
     }
 
     // Log cache processed duration time
-    info!("Pools #{} cached ({:?})", epoch_index, start.elapsed());
+    info!(
+        "AH Pools status cached #{} ({:?})",
+        ah_block_number,
+        start.elapsed()
+    );
 
     Ok(())
 }
 
 pub async fn cache_nomination_pools_stats(
-    rc_block_number: BlockNumber,
-    rc_block_hash: H256,
+    epoch_index: EpochIndex,
+    ah_block_number: BlockNumber,
     ah_block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
-    let rc_api = onet.client().clone();
     let ah_api = onet.asset_hub_client().clone();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
     let last_pool_id = fetch_last_pool_id(&ah_api, ah_block_hash).await?;
-    let epoch_index = fetch_session_index(&rc_api, rc_block_hash).await?;
 
     let mut some_pool = Some(1);
     while let Some(pool_id) = some_pool {
@@ -2283,7 +2283,7 @@ pub async fn cache_nomination_pools_stats(
             match fetch_bonded_pools(&ah_api, ah_block_hash, pool_id).await {
                 Ok(bonded) => {
                     let mut pool_stats = PoolStats::new();
-                    pool_stats.block_number = rc_block_number;
+                    pool_stats.block_number = ah_block_number;
 
                     pool_stats.points = bonded.points;
                     pool_stats.member_counter = bonded.member_counter;
@@ -2320,8 +2320,8 @@ pub async fn cache_nomination_pools_stats(
     }
     // Log cache processed duration time
     info!(
-        "Pools stats #{} cached ({:?})",
-        epoch_index,
+        "AH Pools stats cached #{} ({:?})",
+        ah_block_number,
         start.elapsed()
     );
 
@@ -2329,14 +2329,13 @@ pub async fn cache_nomination_pools_stats(
 }
 
 pub async fn cache_nomination_pools_nominees(
-    rc_block_number: BlockNumber,
-    rc_block_hash: H256,
+    epoch_index: EpochIndex,
+    ah_block_number: BlockNumber,
     ah_block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
-    let rc_api = onet.client().clone();
     let ah_api = onet.asset_hub_client().clone();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
@@ -2346,72 +2345,76 @@ pub async fn cache_nomination_pools_nominees(
     let active_era_info = fetch_active_era_info(&ah_api, ah_block_hash).await?;
     let era_index = active_era_info.index;
 
-    let epoch_index = fetch_session_index(&rc_api, rc_block_hash).await?;
-
     let mut some_pool = Some(1);
     while let Some(pool_id) = some_pool {
         if pool_id > last_pool_id {
             some_pool = None;
         } else {
-            let mut pool_nominees = PoolNominees::new();
-            pool_nominees.block_number = rc_block_number;
-            let pool_stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
+            // Verify if pool is valid
+            match fetch_bonded_pools(&ah_api, ah_block_hash, pool_id).await {
+                Ok(_) => {
+                    let mut pool_nominees = PoolNominees::new();
+                    pool_nominees.block_number = ah_block_number;
+                    let pool_stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
 
-            // fetch pool nominees
-            let nominations =
-                fetch_nominators(&ah_api, ah_block_hash, pool_stash_account.clone()).await?;
+                    // fetch pool nominees
+                    let nominations =
+                        fetch_nominators(&ah_api, ah_block_hash, pool_stash_account.clone())
+                            .await?;
 
-            // deconstruct targets
-            let BoundedVec(stashes) = nominations.targets;
+                    // deconstruct targets
+                    let BoundedVec(stashes) = nominations.targets;
 
-            // DEPRECATE calculate APR
-            // pool_nominees.apr =
-            //     calculate_apr_from_stashes(&onet, stashes.clone(), block_hash).await?;
+                    // DEPRECATE calculate APR
+                    // pool_nominees.apr =
+                    //     calculate_apr_from_stashes(&onet, stashes.clone(), block_hash).await?;
 
-            pool_nominees.nominees = stashes.clone();
+                    pool_nominees.nominees = stashes.clone();
 
-            let mut active = Vec::<ActiveNominee>::new();
-            // check active nominees
-            for stash in stashes {
-                // Identify which active validators have pool stake assigned
-                let eras_stakers_paged_addr = asset_hub_runtime::storage()
-                    .staking()
-                    .eras_stakers_paged_iter2(era_index, stash.clone());
-                let mut iter = ah_api
-                    .storage()
-                    .at(ah_block_hash)
-                    .iter(eras_stakers_paged_addr)
-                    .await?;
+                    let mut active = Vec::<ActiveNominee>::new();
+                    // check active nominees
+                    for stash in stashes {
+                        // Identify which active validators have pool stake assigned
+                        let eras_stakers_paged_addr = asset_hub_runtime::storage()
+                            .staking()
+                            .eras_stakers_paged_iter2(era_index, stash.clone());
+                        let mut iter = ah_api
+                            .storage()
+                            .at(ah_block_hash)
+                            .iter(eras_stakers_paged_addr)
+                            .await?;
 
-                while let Some(Ok(storage_kv)) = iter.next().await {
-                    let BoundedExposurePage(exposure) = storage_kv.value;
-                    if let Some(individual) = exposure
-                        .others
-                        .iter()
-                        .find(|x| x.who == pool_stash_account.clone())
-                    {
-                        active.push(ActiveNominee::with(stash.clone(), individual.value));
+                        while let Some(Ok(storage_kv)) = iter.next().await {
+                            let BoundedExposurePage(exposure) = storage_kv.value;
+                            if let Some(individual) = exposure
+                                .others
+                                .iter()
+                                .find(|x| x.who == pool_stash_account.clone())
+                            {
+                                active.push(ActiveNominee::with(stash.clone(), individual.value));
+                            }
+                        }
                     }
+                    pool_nominees.active = active;
+
+                    cache_nomination_pool_nominees(
+                        &mut cache,
+                        &config,
+                        &pool_nominees,
+                        pool_id,
+                        epoch_index,
+                    )
+                    .await?;
                 }
+                Err(e) => debug!("{:?} {}", {}, e),
             }
-            pool_nominees.active = active;
-
-            cache_nomination_pool_nominees(
-                &mut cache,
-                &config,
-                &pool_nominees,
-                pool_id,
-                epoch_index,
-            )
-            .await?;
-
             some_pool = Some(pool_id + 1);
         }
     }
     // Log cache processed duration time
     info!(
-        "Pools nominees #{} cached ({:?})",
-        epoch_index,
+        "AH Pools nominees cached #{} ({:?})",
+        ah_block_number,
         start.elapsed()
     );
 
