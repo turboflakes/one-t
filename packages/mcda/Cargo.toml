@@ -8,12 +8,10 @@ description.workspace = true
 edition.workspace = true
 
 [dependencies]
-onet-cache = { path = "../cache" }
 onet-errors = { path = "../errors" }
 onet-records = { path = "../records" }
 
-redis = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 subxt = { workspace = true }
-sp-core-hashing = "16.0.0"
+sp-core-hashing = { workspace = true }

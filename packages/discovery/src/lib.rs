@@ -21,7 +21,7 @@
 //
 use log::info;
 use multiaddr::{Multiaddr, Protocol};
-use onet_cache::{CacheKey, Verbosity};
+use onet_cache::types::{CacheKey, Verbosity};
 use onet_config::CONFIG;
 use onet_core::Onet;
 use onet_errors::{CacheError, OnetError};
@@ -161,7 +161,7 @@ pub async fn try_fetch_discovery_data(
                             Verbosity::Discovery,
                         ))
                         .arg(config.cache_writer_prunning)
-                        .query_async(&mut cache as &mut Connection)
+                        .query_async::<_, ()>(&mut cache as &mut Connection)
                         .await
                         .map_err(CacheError::RedisCMDError)?;
 

@@ -26,7 +26,10 @@ use crate::{
 };
 use actix_web::web::{Data, Json, Path, Query};
 use log::warn;
-use onet_cache::{get_conn, CacheKey, Index, RedisPool};
+use onet_cache::{
+    provider::{get_conn, RedisPool},
+    types::{CacheKey, ChainKey, Index},
+};
 use onet_errors::{ApiError, CacheError};
 use onet_records::{BlockNumber, EpochIndex};
 use redis::aio::Connection;
@@ -39,6 +42,8 @@ pub struct Params {
     // show_stats indicates whether session stats should be retrieved or not, default false
     #[serde(default)]
     show_stats: bool,
+    #[serde(default)]
+    chain_key: ChainKey,
 }
 
 fn default_index() -> Index {
@@ -116,12 +121,15 @@ pub async fn get_finalized_block(
 ) -> Result<Json<BlockResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
+    let chain_key: ChainKey = params.chain_key.clone().into();
+
     if let Ok(block_number) = redis::cmd("GET")
-        .arg(CacheKey::FinalizedBlock)
+        .arg(CacheKey::FinalizedBlock(chain_key.clone()))
         .query_async::<Connection, BlockNumber>(&mut conn)
         .await
     {
         let mut data = CacheMap::new();
+        data.insert(String::from("chain_key"), chain_key.to_string());
         data.insert(String::from("block_number"), block_number.to_string());
         data.insert(String::from("is_finalized"), (true).to_string());
 
@@ -145,18 +153,21 @@ pub async fn get_finalized_block(
 
 /// Get best block
 pub async fn get_best_block(
-    _params: Query<Params>,
+    params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<BlockResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
+    let chain_key: ChainKey = params.chain_key.clone().into();
+
     if let Ok(block_number) = redis::cmd("GET")
-        .arg(CacheKey::BestBlock)
+        .arg(CacheKey::BestBlock(chain_key.clone()))
         .query_async::<Connection, BlockNumber>(&mut conn)
         .await
     {
         let mut data = CacheMap::new();
-        data.insert(String::from("block_number"), block_number.to_string());
+        data.insert(String::from("chain_key"), chain_key.to_string());
+        data.insert(String::from(r"block_number"), block_number.to_string());
         data.insert(String::from("is_finalized"), (false).to_string());
         return respond_json(data.into());
     }

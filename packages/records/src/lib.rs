@@ -65,10 +65,14 @@ pub type FlaggedEpochs = Vec<EpochIndex>;
 pub type SS58 = String;
 pub type DisputeKind = String;
 pub type AuthorityDiscoveryKey = [u8; 32];
+pub type BlockNumberTuple = (BlockNumber, BlockNumber);
 
 // Keys to be easily used in BTreeMap
+// DEPRECATE as EpochKey(pub EraIndex, pub EpochIndex)
+// #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+// pub struct EpochKey(pub EraIndex, pub EpochIndex);
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub struct EpochKey(pub EraIndex, pub EpochIndex);
+pub struct EpochKey(pub EpochIndex);
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct RecordKey(EpochKey, AuthorityIndex);
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -252,6 +256,7 @@ pub struct Records {
     first_epoch: EpochIndex,
     eras: HashMap<EpochIndex, EraIndex>,
     blocks: HashMap<BlockKey, BlockNumber>,
+    ah_blocks: HashMap<BlockKey, BlockNumberTuple>,
     authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
     addresses: HashMap<AddressKey, AuthorityIndex>,
     authority_records: HashMap<RecordKey, AuthorityRecord>,
@@ -273,7 +278,7 @@ impl Records {
     ) -> Self {
         let mut blocks = HashMap::new();
         blocks.insert(
-            BlockKey(EpochKey(current_era, current_epoch), BlockKind::Start),
+            BlockKey(EpochKey(current_epoch), BlockKind::Start),
             start_block,
         );
         let mut eras = HashMap::new();
@@ -282,8 +287,9 @@ impl Records {
             current_era,
             current_epoch,
             first_epoch: current_epoch,
-            eras,
+            eras: HashMap::new(),
             blocks,
+            ah_blocks: HashMap::new(),
             authorities: HashMap::new(),
             addresses: HashMap::new(),
             authority_records: HashMap::new(),
@@ -331,7 +337,7 @@ impl Records {
         if let Some(epoch_key) = epoch_key {
             return self.blocks.get(&BlockKey(epoch_key, BlockKind::Start));
         } else {
-            let epoch_key = EpochKey(self.current_era, self.current_epoch);
+            let epoch_key = EpochKey(self.current_epoch);
             return self.blocks.get(&BlockKey(epoch_key, BlockKind::Start));
         }
     }
@@ -340,65 +346,84 @@ impl Records {
         if let Some(epoch_key) = epoch_key {
             return self.blocks.get(&BlockKey(epoch_key, BlockKind::End));
         } else {
-            let epoch_key = EpochKey(self.current_era, self.current_epoch);
+            let epoch_key = EpochKey(self.current_epoch);
             return self.blocks.get(&BlockKey(epoch_key, BlockKind::End));
         }
     }
 
     // deprecated: use finalized_block
-    pub fn current_block(&self) -> Option<&BlockNumber> {
-        let block = self.end_block(Some(EpochKey(self.current_era, self.current_epoch)));
+    pub fn _current_block(&self) -> Option<&BlockNumber> {
+        let block = self.end_block(Some(EpochKey(self.current_epoch)));
         if block.is_none() {
-            return self.start_block(Some(EpochKey(self.current_era, self.current_epoch)));
+            return self.start_block(Some(EpochKey(self.current_epoch)));
         }
         block
     }
 
     pub fn finalized_block(&self) -> Option<&BlockNumber> {
-        let block = self.end_block(Some(EpochKey(self.current_era, self.current_epoch)));
+        let block = self.end_block(Some(EpochKey(self.current_epoch)));
         if block.is_none() {
-            return self.start_block(Some(EpochKey(self.current_era, self.current_epoch)));
+            return self.start_block(Some(EpochKey(self.current_epoch)));
         }
         block
     }
 
     pub fn best_block(&self) -> Option<&BlockNumber> {
-        let epoch_key = EpochKey(self.current_era, self.current_epoch);
+        let epoch_key = EpochKey(self.current_epoch);
         return self.blocks.get(&BlockKey(epoch_key, BlockKind::Best));
+    }
+
+    pub fn set_new_epoch(&mut self, epoch: EpochIndex) {
+        self.current_epoch = epoch;
+        info!("New RC epoch {} started.", epoch);
     }
 
     pub fn start_new_epoch(&mut self, era: EraIndex, epoch: EpochIndex) {
         self.current_era = era;
         self.current_epoch = epoch;
         self.eras.insert(epoch, era);
-        info!("New epoch {} at era {} started.", epoch, era);
+        info!("New AH session {} at era {} started.", epoch, era);
     }
 
-    pub fn set_current_block_number(&mut self, block_number: BlockNumber) {
+    pub fn set_relay_chain_block_number(&mut self, block_number: BlockNumber) {
         // insert start block only if it doesn't already exist
         self.blocks
-            .entry(BlockKey(
-                EpochKey(self.current_era, self.current_epoch),
-                BlockKind::Start,
-            ))
+            .entry(BlockKey(EpochKey(self.current_epoch), BlockKind::Start))
             .or_insert(block_number);
         // update end block
         self.blocks.insert(
-            BlockKey(
-                EpochKey(self.current_era, self.current_epoch),
-                BlockKind::End,
-            ),
+            BlockKey(EpochKey(self.current_epoch), BlockKind::End),
             block_number,
         );
     }
 
-    pub fn set_best_block_number(&mut self, block_number: BlockNumber) {
+    pub fn set_relay_chain_best_block_number(&mut self, block_number: BlockNumber) {
         self.blocks.insert(
-            BlockKey(
-                EpochKey(self.current_era, self.current_epoch),
-                BlockKind::Best,
-            ),
+            BlockKey(EpochKey(self.current_epoch), BlockKind::Best),
             block_number,
+        );
+    }
+
+    pub fn set_asset_hub_block_number(
+        &mut self,
+        ah_block_number: BlockNumber,
+        rc_block_number: BlockNumber,
+    ) {
+        // insert start block only if it doesn't already exist
+        self.ah_blocks
+            .entry(BlockKey(EpochKey(self.current_epoch), BlockKind::Start))
+            .or_insert((ah_block_number, rc_block_number));
+        // update end block
+        self.ah_blocks.insert(
+            BlockKey(EpochKey(self.current_epoch), BlockKind::End),
+            (ah_block_number, rc_block_number),
+        );
+    }
+
+    pub fn set_asset_hub_best_block_number(&mut self, ah_block_number: BlockNumber) {
+        self.ah_blocks.insert(
+            BlockKey(EpochKey(self.current_epoch), BlockKind::Best),
+            (ah_block_number, 0),
         );
     }
 
@@ -436,34 +461,32 @@ impl Records {
 
         let mut epoch_index = self.current_epoch() - number_of_epochs;
         while epoch_index < self.current_epoch() {
-            if let Some(era_index) = self.eras.get(&epoch_index) {
-                let key = EpochKey(*era_index, epoch_index);
-                if let Some(auth_idx) = self
-                    .addresses
-                    .get(&AddressKey(key.clone(), address.to_string()))
+            let key = EpochKey(epoch_index);
+            if let Some(auth_idx) = self
+                .addresses
+                .get(&AddressKey(key.clone(), address.to_string()))
+            {
+                is_active = true;
+                if let Some(para_record) = self
+                    .para_records
+                    .get(&RecordKey(key.clone(), auth_idx.clone()))
                 {
-                    is_active = true;
-                    if let Some(para_record) = self
-                        .para_records
-                        .get(&RecordKey(key.clone(), auth_idx.clone()))
-                    {
-                        para_epochs += 1;
-                        let tv = para_record.total_votes();
-                        let mv = para_record.total_missed_votes();
-                        let mvr = mv as f64 / (tv + mv) as f64;
-                        let ta = para_record.total_availability();
-                        let tu = para_record.total_unavailability();
-                        let bur = tu as f64 / (ta + tu) as f64;
-                        // Identify failed and exceptional epochs
-                        let grade = grade(mvr, bur);
-                        if grade == Grade::F {
-                            flagged_epochs += 1;
-                        } else if grade == Grade::Ap {
-                            exceptional_epochs += 1;
-                        }
-                        total_votes += tv;
-                        missed_votes += mv;
+                    para_epochs += 1;
+                    let tv = para_record.total_votes();
+                    let mv = para_record.total_missed_votes();
+                    let mvr = mv as f64 / (tv + mv) as f64;
+                    let ta = para_record.total_availability();
+                    let tu = para_record.total_unavailability();
+                    let bur = tu as f64 / (ta + tu) as f64;
+                    // Identify failed and exceptional epochs
+                    let grade = grade(mvr, bur);
+                    if grade == Grade::F {
+                        flagged_epochs += 1;
+                    } else if grade == Grade::Ap {
+                        exceptional_epochs += 1;
                     }
+                    total_votes += tv;
+                    missed_votes += mv;
                 }
             }
             epoch_index += 1;
@@ -512,44 +535,42 @@ impl Records {
 
         let mut epoch_index = self.current_epoch() - self.total_full_epochs();
         while epoch_index < self.current_epoch() {
-            if let Some(era_index) = self.eras.get(&epoch_index) {
-                let key = EpochKey(*era_index, epoch_index);
-                if let Some(auth_idx) = self
-                    .addresses
-                    .get(&AddressKey(key.clone(), address.to_string()))
+            let key = EpochKey(epoch_index);
+            if let Some(auth_idx) = self
+                .addresses
+                .get(&AddressKey(key.clone(), address.to_string()))
+            {
+                active_epochs += 1;
+                if let Some(authority_record) = self
+                    .authority_records
+                    .get(&RecordKey(key.clone(), auth_idx.clone()))
                 {
-                    active_epochs += 1;
-                    if let Some(authority_record) = self
-                        .authority_records
+                    authored_blocks += authority_record.total_authored_blocks();
+                    para_points += authority_record.para_points();
+                    // Get para data
+                    if let Some(para_record) = self
+                        .para_records
                         .get(&RecordKey(key.clone(), auth_idx.clone()))
                     {
-                        authored_blocks += authority_record.total_authored_blocks();
-                        para_points += authority_record.para_points();
-                        // Get para data
-                        if let Some(para_record) = self
-                            .para_records
-                            .get(&RecordKey(key.clone(), auth_idx.clone()))
-                        {
-                            para_epochs += 1;
-                            explicit_votes += para_record.total_explicit_votes();
-                            implicit_votes += para_record.total_implicit_votes();
-                            missed_votes += para_record.total_missed_votes();
-                            bitfields_availability += para_record.total_availability();
-                            bitfields_unavailability += para_record.total_unavailability();
-                            core_assignments += para_record.total_core_assignments();
+                        para_epochs += 1;
+                        explicit_votes += para_record.total_explicit_votes();
+                        implicit_votes += para_record.total_implicit_votes();
+                        missed_votes += para_record.total_missed_votes();
+                        bitfields_availability += para_record.total_availability();
+                        bitfields_unavailability += para_record.total_unavailability();
+                        core_assignments += para_record.total_core_assignments();
 
-                            if let Some(ratio) = para_record.missed_votes_ratio() {
-                                pattern.push(Glyph::from_mvr(ratio));
-                            } else {
-                                pattern.push(Glyph::ActivePVidle);
-                            }
+                        if let Some(ratio) = para_record.missed_votes_ratio() {
+                            pattern.push(Glyph::from_mvr(ratio));
                         } else {
-                            pattern.push(Glyph::Active);
+                            pattern.push(Glyph::ActivePVidle);
                         }
+                    } else {
+                        pattern.push(Glyph::Active);
                     }
-                } else {
-                    pattern.push(Glyph::Waiting);
                 }
+            } else {
+                pattern.push(Glyph::Waiting);
             }
             epoch_index += 1;
         }
@@ -573,13 +594,8 @@ impl Records {
         }
     }
 
-    pub fn is_active_at(
-        &self,
-        address: &AccountId32,
-        era_index: EraIndex,
-        epoch_index: EpochIndex,
-    ) -> bool {
-        let key = EpochKey(era_index, epoch_index);
+    pub fn is_active_at(&self, address: &AccountId32, epoch_index: EpochIndex) -> bool {
+        let key = EpochKey(epoch_index);
         self.addresses
             .get(&AddressKey(key.clone(), address.to_string()))
             .is_some()
@@ -737,23 +753,17 @@ impl Records {
             authorities.insert(authority_index);
         } else {
             self.authorities.insert(
-                EpochKey(self.current_era, self.current_epoch),
+                EpochKey(self.current_epoch),
                 HashSet::from([authority_index]),
             );
         }
 
         // Map address to the authority_index for the current epoch
-        let address_key = AddressKey(
-            EpochKey(self.current_era, self.current_epoch),
-            address.to_string(),
-        );
+        let address_key = AddressKey(EpochKey(self.current_epoch), address.to_string());
         self.addresses.entry(address_key).or_insert(authority_index);
 
         // Map authority_index to the AuthorityRecord for the current epoch
-        let record_key = RecordKey(
-            EpochKey(self.current_era, self.current_epoch),
-            authority_index,
-        );
+        let record_key = RecordKey(EpochKey(self.current_epoch), authority_index);
         self.authority_records
             .entry(record_key.clone())
             .or_insert(authority_record);
@@ -765,7 +775,7 @@ impl Records {
                 para_authorities.insert(authority_index);
             } else {
                 self.para_authorities.insert(
-                    EpochKey(self.current_era, self.current_epoch),
+                    EpochKey(self.current_epoch),
                     HashSet::from([authority_index]),
                 );
             }
@@ -782,7 +792,7 @@ impl Records {
     ) {
         // Map authority_discovery_keys to the record_key
         let public_key = PublicKey(
-            EpochKey(self.current_era, self.current_epoch),
+            EpochKey(self.current_epoch),
             discovery_record.authority_discovery_key(),
         );
         self.authority_discovery_keys
@@ -790,10 +800,7 @@ impl Records {
             .or_insert(authority_index);
 
         // Map authority_index to the PeerToPeerRecord for the current epoch
-        let record_key = RecordKey(
-            EpochKey(self.current_era, self.current_epoch),
-            authority_index,
-        );
+        let record_key = RecordKey(EpochKey(self.current_epoch), authority_index);
         self.discovery_records
             .entry(record_key.clone())
             .or_insert(discovery_record);
@@ -803,7 +810,7 @@ impl Records {
         let key = if let Some(key) = key {
             key
         } else {
-            EpochKey(self.current_era, self.current_epoch)
+            EpochKey(self.current_epoch)
         };
         if let Some(authorities) = self.authorities.get(&key) {
             Some(authorities.iter().map(|a| *a).collect())
@@ -816,7 +823,7 @@ impl Records {
         let key = if let Some(key) = key {
             key
         } else {
-            EpochKey(self.current_era, self.current_epoch)
+            EpochKey(self.current_epoch)
         };
         if let Some(para_authorities) = self.para_authorities.get(&key) {
             Some(para_authorities.iter().map(|a| *a).collect())
@@ -832,7 +839,7 @@ impl Records {
         if let Some(key) = key {
             self.authorities.get_mut(&key)
         } else {
-            let key = EpochKey(self.current_era, self.current_epoch);
+            let key = EpochKey(self.current_epoch);
             self.authorities.get_mut(&key)
         }
     }
@@ -843,13 +850,9 @@ impl Records {
         epoch_index: Option<EpochIndex>,
     ) -> Option<&mut AuthorityRecord> {
         let epoch_key = if let Some(epoch_idx) = epoch_index {
-            if let Some(&era_idx) = self.get_era_index(epoch_index) {
-                EpochKey(era_idx, epoch_idx)
-            } else {
-                EpochKey(self.current_era, self.current_epoch)
-            }
+            EpochKey(epoch_idx)
         } else {
-            EpochKey(self.current_era, self.current_epoch)
+            EpochKey(self.current_epoch)
         };
         self.authority_records.get_mut(&RecordKey(epoch_key, index))
     }
@@ -861,7 +864,7 @@ impl Records {
         if let Some(key) = key {
             self.para_authorities.get_mut(&key)
         } else {
-            let key = EpochKey(self.current_era, self.current_epoch);
+            let key = EpochKey(self.current_epoch);
             self.para_authorities.get_mut(&key)
         }
     }
@@ -872,13 +875,9 @@ impl Records {
         epoch_index: Option<EpochIndex>,
     ) -> Option<&mut ParaRecord> {
         let epoch_key = if let Some(epoch_idx) = epoch_index {
-            if let Some(&era_idx) = self.get_era_index(epoch_index) {
-                EpochKey(era_idx, epoch_idx)
-            } else {
-                EpochKey(self.current_era, self.current_epoch)
-            }
+            EpochKey(epoch_idx)
         } else {
-            EpochKey(self.current_era, self.current_epoch)
+            EpochKey(self.current_epoch)
         };
 
         self.para_records.get_mut(&RecordKey(epoch_key, index))
@@ -892,7 +891,7 @@ impl Records {
         let epoch_key = if let Some(key) = key {
             key
         } else {
-            EpochKey(self.current_era, self.current_epoch)
+            EpochKey(self.current_epoch)
         };
 
         self.authority_records.get(&RecordKey(epoch_key, index))
@@ -906,7 +905,7 @@ impl Records {
         let epoch_key = if let Some(key) = key {
             key
         } else {
-            EpochKey(self.current_era, self.current_epoch)
+            EpochKey(self.current_epoch)
         };
 
         self.para_records.get(&RecordKey(epoch_key, index))
@@ -920,7 +919,7 @@ impl Records {
         let epoch_key = if let Some(key) = key {
             key
         } else {
-            EpochKey(self.current_era, self.current_epoch)
+            EpochKey(self.current_epoch)
         };
 
         if let Some(authority_index) = self
@@ -934,6 +933,28 @@ impl Records {
         }
     }
 
+    pub fn get_mut_authority_record_with_address(
+        &mut self,
+        address: &AccountId32,
+        key: Option<EpochKey>,
+    ) -> Option<&mut AuthorityRecord> {
+        let epoch_key = if let Some(key) = key {
+            key
+        } else {
+            EpochKey(self.current_epoch)
+        };
+
+        if let Some(authority_index) = self
+            .addresses
+            .get(&AddressKey(epoch_key.clone(), address.to_string()))
+        {
+            self.authority_records
+                .get_mut(&RecordKey(epoch_key, *authority_index))
+        } else {
+            None
+        }
+    }
+
     pub fn get_discovery_record(
         &self,
         index: AuthorityIndex,
@@ -942,7 +963,7 @@ impl Records {
         let epoch_key = if let Some(key) = key {
             key
         } else {
-            EpochKey(self.current_era, self.current_epoch)
+            EpochKey(self.current_epoch)
         };
 
         self.discovery_records.get(&RecordKey(epoch_key, index))
@@ -956,7 +977,7 @@ impl Records {
         let epoch_key = if let Some(key) = key {
             key
         } else {
-            EpochKey(self.current_era, self.current_epoch)
+            EpochKey(self.current_epoch)
         };
 
         if let Some(authority_index) = self.authority_discovery_keys.get(&PublicKey(
@@ -978,7 +999,7 @@ impl Records {
         let epoch_key = if let Some(key) = key {
             key
         } else {
-            EpochKey(self.current_era, self.current_epoch)
+            EpochKey(self.current_epoch)
         };
 
         if let Some(authority_index) = self
@@ -995,6 +1016,7 @@ impl Records {
     pub fn remove(&mut self, epoch_key: EpochKey) {
         // Maps that need to be cleaned up
         // blocks: HashMap<BlockKey, BlockNumber>,
+        // ah_blocks: HashMap<BlockKey, BlockNumberTupple>,
         // authorities: HashMap<EpochKey, HashSet<AuthorityIndex>>,
         // addresses: HashMap<AddressKey, AuthorityIndex>,
         // authority_records: HashMap<RecordKey, AuthorityRecord>,
@@ -1004,7 +1026,7 @@ impl Records {
         // discovery_records: HashMap<RecordKey, DiscoveryRecord>,
 
         let mut counter = 0;
-        // Remove blocks map
+        // Remove RC blocks
         if self
             .blocks
             .remove(&BlockKey(epoch_key.clone(), BlockKind::Start))
@@ -1014,6 +1036,21 @@ impl Records {
         }
         if self
             .blocks
+            .remove(&BlockKey(epoch_key.clone(), BlockKind::End))
+            .is_some()
+        {
+            counter += 1;
+        }
+        // Remove AH blocks
+        if self
+            .ah_blocks
+            .remove(&BlockKey(epoch_key.clone(), BlockKind::Start))
+            .is_some()
+        {
+            counter += 1;
+        }
+        if self
+            .ah_blocks
             .remove(&BlockKey(epoch_key.clone(), BlockKind::End))
             .is_some()
         {
@@ -1146,8 +1183,8 @@ impl AuthorityRecord {
 
     pub fn points(&self) -> Points {
         if let Some(end_points) = self.end_points {
-            if end_points > self.start_points {
-                end_points - self.start_points
+            if end_points >= self.start_points {
+                end_points
             } else {
                 0
             }
@@ -1762,7 +1799,7 @@ impl Subscribers {
     }
 
     pub fn subscribe(&mut self, account: AccountId32, user_id: UserID, param: Option<Param>) {
-        let key = EpochKey(self.current_era, self.current_epoch);
+        let key = EpochKey(self.current_epoch);
         if let Some(s) = self.subscribers.get_mut(&key) {
             s.push((account.clone(), user_id.to_string(), param.clone()));
         } else {
@@ -1784,7 +1821,7 @@ impl Subscribers {
         if let Some(key) = key {
             self.subscribers.get(&key)
         } else {
-            let key = EpochKey(self.current_era, self.current_epoch);
+            let key = EpochKey(self.current_epoch);
             self.subscribers.get(&key)
         }
     }
@@ -2116,10 +2153,10 @@ mod tests {
             AccountId32::from_str("DSov56qpKEc32ZjhCN1qTPmTYW3tM65wmsXVkrrtXV3ywpV").unwrap();
         subscribers.subscribe(account, "@subscriber:matrix.org".to_string(), None);
         assert_eq!(subscribers.get(None).is_some(), true);
-        assert_eq!(subscribers.get(Some(EpochKey(era, epoch))).is_some(), true);
-        assert_eq!(subscribers.get(Some(EpochKey(era, 30))).is_none(), true);
+        assert_eq!(subscribers.get(Some(EpochKey(epoch))).is_some(), true);
+        assert_eq!(subscribers.get(Some(EpochKey(30))).is_none(), true);
         assert_eq!(
-            subscribers.get(Some(EpochKey(era, epoch))),
+            subscribers.get(Some(EpochKey(epoch))),
             Some(&vec![(
                 AccountId32::from_str("DSov56qpKEc32ZjhCN1qTPmTYW3tM65wmsXVkrrtXV3ywpV").unwrap(),
                 "@subscriber:matrix.org".to_string(),
@@ -2167,15 +2204,10 @@ mod tests {
 
         assert_eq!(records.get_authorities(None).is_some(), true);
         assert_eq!(
-            records
-                .get_authorities(Some(EpochKey(era, epoch)))
-                .is_some(),
+            records.get_authorities(Some(EpochKey(epoch))).is_some(),
             true
         );
-        assert_eq!(
-            records.get_authorities(Some(EpochKey(era, 0))).is_none(),
-            true
-        );
+        assert_eq!(records.get_authorities(Some(EpochKey(0))).is_none(), true);
 
         if let Some(authorities) = records.get_authorities(None) {
             assert_eq!(*authorities, vec![authority_idx]);

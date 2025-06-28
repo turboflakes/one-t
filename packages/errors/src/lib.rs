@@ -25,6 +25,7 @@ use derive_more::Display;
 use reqwest;
 use serde::{Deserialize, Serialize};
 use std::{str::Utf8Error, string::String};
+use subxt_metadata::TryFromError as MetadataTryFromError;
 use thiserror::Error;
 
 /// On specific error messages
@@ -42,11 +43,12 @@ pub enum OnetError {
     CodecError(#[from] codec::Error),
     #[error("Utf8 error: {0}")]
     Utf8Error(#[from] Utf8Error),
+    /// Error working with metadata.
     #[error("Metadata error: {0}")]
     MetadataError(#[from] subxt::error::MetadataError),
     /// Error decoding metadata.
     #[error("Metadata Decoding error: {0}")]
-    MetadataDecoding(#[from] subxt_metadata::TryFromError),
+    MetadataDecoding(#[from] MetadataTryFromError),
     #[error("Matrix error: {0}")]
     MatrixError(String),
     #[error("Subscription finished")]
@@ -61,8 +63,8 @@ pub enum OnetError {
     IOError(#[from] std::io::Error),
     #[error("Nomination pool error: {0}")]
     PoolError(String),
-    #[error("P2PError error: {0}")]
-    P2PError(#[from] Box<dyn std::error::Error + Send + 'static>),
+    #[error("Box error: {0}")]
+    BoxError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
     #[error("Other error: {0}")]
     Other(String),
 }
@@ -87,6 +89,10 @@ impl From<OnetError> for String {
         format!("{}", error).to_string()
     }
 }
+
+// Implement Send and Sync for OnetError
+// unsafe impl Send for OnetError {}
+// unsafe impl Sync for OnetError {}
 
 /// Onet specific error messages
 #[derive(Error, Debug)]

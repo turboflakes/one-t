@@ -10,7 +10,9 @@ edition.workspace = true
 [dependencies]
 onet-config = { path = "../config" }
 onet-records = { path = "../records" }
+onet-report = { path = "../report" }
 onet-pools = { path = "../pools" }
+onet-mcda = { path = "../mcda" }
 onet-errors = { path = "../errors" }
 
 actix-web = { workspace = true }
@@ -18,5 +20,7 @@ log = { workspace = true }
 mobc = { workspace = true }
 mobc-redis = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 subxt = { workspace = true }
 redis = { workspace = true }
+sp-core-hashing = { workspace = true }

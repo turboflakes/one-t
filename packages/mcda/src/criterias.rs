@@ -20,10 +20,6 @@
 // SOFTWARE.
 
 use crate::scores::base_decimals;
-use onet_cache::{get_conn, CacheKey, RedisPool, Trait};
-use onet_errors::{CacheError, OnetError};
-use onet_records::EpochIndex;
-use redis::aio::Connection;
 use serde::{Deserialize, Serialize};
 use subxt::utils::H256;
 
@@ -191,92 +187,6 @@ impl From<String> for CriteriaLimits {
     fn from(serialized_data: String) -> Self {
         serde_json::from_str(&serialized_data).unwrap_or_default()
     }
-}
-
-async fn calculate_min_limit(
-    cache: &RedisPool,
-    session_index: EpochIndex,
-    attribute: Trait,
-) -> Result<u64, OnetError> {
-    let mut conn = get_conn(&cache).await?;
-    let v: Vec<(String, u64)> = redis::cmd("ZRANGE")
-        .arg(CacheKey::NomiBoardBySessionAndTrait(
-            session_index,
-            attribute,
-        ))
-        .arg("-inf")
-        .arg("+inf")
-        .arg("BYSCORE")
-        .arg("LIMIT")
-        .arg("0")
-        .arg("1")
-        .arg("WITHSCORES")
-        .query_async(&mut conn as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?;
-    if v.len() == 0 {
-        return Ok(0);
-    }
-    Ok(v[0].1)
-}
-
-async fn calculate_max_limit(
-    cache: &RedisPool,
-    session_index: EpochIndex,
-    attribute: Trait,
-) -> Result<u64, OnetError> {
-    let mut conn = get_conn(&cache).await?;
-    let v: Vec<(String, u64)> = redis::cmd("ZRANGE")
-        .arg(CacheKey::NomiBoardBySessionAndTrait(
-            session_index,
-            attribute,
-        ))
-        .arg("+inf")
-        .arg("-inf")
-        .arg("BYSCORE")
-        .arg("REV")
-        .arg("LIMIT")
-        .arg("0")
-        .arg("1")
-        .arg("WITHSCORES")
-        .query_async(&mut conn as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?;
-    if v.len() == 0 {
-        return Ok(0);
-    }
-    Ok(v[0].1)
-}
-
-async fn calculate_min_max_interval(
-    cache: &RedisPool,
-    session_index: EpochIndex,
-    attribute: Trait,
-) -> Result<Interval, OnetError> {
-    let max = calculate_max_limit(&cache.clone(), session_index, attribute.clone()).await?;
-    let min = calculate_min_limit(&cache.clone(), session_index, attribute).await?;
-    Ok(Interval { min, max })
-}
-
-pub async fn build_limits_from_session(
-    cache: &RedisPool,
-    session_index: EpochIndex,
-) -> Result<CriteriaLimits, OnetError> {
-    let own_stake_interval =
-        calculate_min_max_interval(&cache.clone(), session_index, Trait::OwnStake).await?;
-
-    let nominators_stake_interval =
-        calculate_min_max_interval(&cache.clone(), session_index, Trait::NominatorsStake).await?;
-
-    let nominators_counter_interval =
-        calculate_min_max_interval(&cache.clone(), session_index, Trait::NominatorsCounter).await?;
-
-    Ok(CriteriaLimits {
-        own_stake: own_stake_interval,
-        nominators_stake: nominators_stake_interval,
-        nominators_counter: nominators_counter_interval,
-        ..Default::default()
-    })
 }
 
 pub fn criterias_hash(weights: &Weights, intervals: &Intervals, filters: &Filters) -> H256 {

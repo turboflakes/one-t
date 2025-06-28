@@ -49,7 +49,7 @@ struct Response {
     selected: Vec<Validator>,
     nominators: Vec<String>,
     #[serde(skip_serializing)]
-    statuses: BTreeMap<Status, String>,
+    _statuses: BTreeMap<Status, String>,
     term: Term,
 }
 

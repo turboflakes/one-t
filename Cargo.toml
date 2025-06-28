@@ -14,9 +14,14 @@ members = [
     "packages/report",
     "packages/chains",
     "packages/matrix",
-    "packages/chains/kusama",
-    "packages/chains/polkadot",
-    "packages/chains/paseo",
+    # "packages/chains/kusama",
+    # "packages/chains/polkadot",
+    # "packages/chains/paseo",
+    "packages/chains/westend",
+    "packages/chains/asset-hub-westend",
+    # "packages/chains/people-westend",
+    # "packages/chains/asset-hub-westend-next",
+    # "packages/chains/westend-next",
 ]
 
 resolver = "2"
@@ -61,25 +66,37 @@ mobc-redis = { version = "0.7", default-features = false, features = [
     "async-std-comp",
 ] }
 ctrlc = { version = "3.0", features = ["termination"] }
-
+codec = { package = "parity-scale-codec", version = "3.7.4", default-features = false, features = [
+    "derive",
+] }
+scale-encode = { version = "0.10.0", default-features = false }
+scale-decode = { version = "0.16.0", default-features = false }
 # Subxt crates:
-subxt-metadata = { version = "0.42.1", features = ["std"] }
-sp-core = "35.0.0"
+# subxt = { version = "0.42.1", features = ["native", "reconnecting-rpc-client"] }
+# subxt-signer = { version = "0.42.1", features = ["subxt"] }
+# subxt-metadata = { version = "0.42.1", features = ["std"] }
+subxt = { git = "https://github.com/paritytech/subxt", branch = "master", features = [
+    "native",
+    "reconnecting-rpc-client",
+] }
+subxt-signer = { git = "https://github.com/paritytech/subxt", branch = "master", features = [
+    "subxt",
+] }
+subxt-metadata = { git = "https://github.com/paritytech/subxt", branch = "master", features = [
+    "std",
+] }
+sp-core = "36.1.0"
 sp-core-hashing = "16.0.0"
 #
 async-std = { version = "1.11.0", features = ["attributes", "tokio1"] }
 env_logger = "0.9.0"
 futures = "0.3.13"
-codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = [
-    "derive",
-    "full",
-    "bit-vec",
-] }
 hex = "0.4.3"
+frame-metadata = { version = "23.0.0", default-features = false, features = [
+    "unstable",
+] }
 # p2p-explorer
 multiaddr = "0.18.1"
 libp2p = "0.52.0"
 subp2p-explorer-cli = { git = "https://github.com/turboflakes/subp2p-explorer", branch = "main" }
 resolver = "2"
-subxt = { version = "0.42.1", features = ["native", "reconnecting-rpc-client"] }
-subxt-signer = { version = "0.42.1", features = ["subxt"] }

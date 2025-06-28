@@ -17,6 +17,6 @@ url = { workspace = true }
 actix-web = { workspace = true }
 mobc = { workspace = true }
 mobc-redis = { workspace = true }
+codec = { workspace = true }
 subxt = { workspace = true }
 subxt-metadata = { workspace = true }
-codec = { workspace = true }

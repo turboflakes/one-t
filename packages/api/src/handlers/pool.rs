@@ -23,7 +23,10 @@ use crate::handlers::params::Params;
 use crate::helpers::respond_json;
 use crate::responses::{PoolResult, PoolsResult};
 use actix_web::web::{Data, Json, Path, Query};
-use onet_cache::{get_conn, CacheKey, Index, RedisPool};
+use onet_cache::{
+    provider::{get_conn, RedisPool},
+    types::{CacheKey, Index},
+};
 use onet_errors::{ApiError, CacheError};
 use onet_pools::{Pool, PoolId, PoolNominees, PoolNomineesStats};
 use onet_records::EpochIndex;
