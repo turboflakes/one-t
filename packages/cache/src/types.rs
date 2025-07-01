@@ -170,6 +170,7 @@ pub enum CacheKey {
     ValidatorProfileByAccount(AccountId32),
     // Events
     Event(ChainKey, Index),
+    EventsByEra(Index),
     // NominationPools
     NominationPoolRecord(PoolId),
     NominationPoolIdsBySession(EpochIndex),
@@ -241,6 +242,9 @@ impl std::fmt::Display for CacheKey {
             }
             Self::Event(chain, block_index) => {
                 write!(f, "ev:{}:{}", chain, block_index)
+            }
+            Self::EventsByEra(era_index) => {
+                write!(f, "evs:{}", era_index)
             }
             Self::NominationPoolRecord(pool_id) => {
                 write!(f, "np:{}", pool_id)
