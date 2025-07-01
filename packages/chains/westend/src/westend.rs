@@ -39,7 +39,6 @@ use onet_asset_hub_westend::{
         staking_rc_client::events::SessionReportReceived,
     },
 };
-
 use onet_asset_hub_westend::{
     fetch_active_era_info, fetch_bonded_controller_account, fetch_bonded_pools,
     fetch_era_reward_points, fetch_eras_total_stake, fetch_eras_validator_reward,
@@ -61,6 +60,7 @@ use onet_core::{
 use onet_discovery::try_fetch_discovery_data;
 use onet_dn::try_fetch_stashes_from_remote_url;
 use onet_errors::{CacheError, OnetError};
+use onet_events::Event;
 use onet_matrix::FileInfo;
 use onet_mcda::scores::base_decimals;
 use onet_people_westend::{bytes_to_str, get_display_name, get_identity};
@@ -137,7 +137,10 @@ use relay_runtime::{
         // sp_consensus_babe::digests::PreDigest,
     },
     session::events::new_session::SessionIndex,
+    session::events::NewQueued,
     session::events::NewSession,
+    session::events::ValidatorDisabled,
+    session::events::ValidatorReenabled,
     session::storage::types::queued_keys::QueuedKeys,
     session::storage::types::validators::Validators as ValidatorSet,
     // staking_ah_client::events::CouldNotMergeAndDropped,
@@ -468,8 +471,9 @@ async fn process_relay_chain_events(
     let config = CONFIG.clone();
     let events = rc_api.events().at(rc_block_hash).await?;
 
-    for event in events.iter() {
+    for (i, event) in events.iter().enumerate() {
         let event = event?;
+
         if let Some(ev) = event.as_event::<CandidateIncluded>()? {
             if ev.0.descriptor.para_id == Id(config.asset_hub_para_id) {
                 let ah_block_hash = ev.0.descriptor.para_head;
@@ -490,6 +494,7 @@ async fn process_relay_chain_events(
             }
         } else if let Some(ev) = event.as_event::<NewSession>()? {
             info!("RC event {:?}", ev);
+
             process_new_session_event(
                 &rc_api,
                 records,

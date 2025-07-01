@@ -14,12 +14,14 @@ onet-config = { path = "../../config" }
 onet-discovery = { path = "../../discovery" }
 onet-dn = { path = "../../dn" }
 onet-errors = { path = "../../errors" }
+onet-events = { path = "../../events" }
 onet-matrix = { path = "../../matrix" }
 onet-core = { path = "../../core" }
 onet-mcda = { path = "../../mcda" }
 onet-pools = { path = "../../pools" }
 onet-records = { path = "../../records" }
 onet-report = { path = "../../report" }
+
 onet-people-westend = { path = "../../chains/people-westend" }
 onet-asset-hub-westend = { path = "../../chains/asset-hub-westend" }
 

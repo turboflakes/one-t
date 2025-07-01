@@ -19,22 +19,47 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod cache;
-pub mod events;
-pub mod limits;
-pub mod nomination_pools;
-pub mod provider;
-pub mod types;
+use onet_records::{BlockNumber, Validity};
+use serde::{Deserialize, Serialize};
 
-pub use cache::{
-    cache_best_block, cache_board_limits_at_session, cache_finalized_block,
-    cache_latest_pushed_block, cache_latest_pushed_block_v2, cache_network_stats_at_session,
-    cache_records, cache_records_at_new_session, cache_validator_profile,
-    cache_validator_profile_only,
-};
+pub type EventIndex = u32;
 
-pub use nomination_pools::{
-    cache_nomination_pool, cache_nomination_pool_nominees, cache_nomination_pool_stats,
-};
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct EventId(BlockNumber, EventIndex);
 
-pub use events::cache_event;
+impl std::fmt::Display for EventId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}-{}", self.0, self.1)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Event {
+    pub id: EventId,
+    pub block_number: BlockNumber,
+    pub index: EventIndex,
+    pub pallet: String,
+    pub name: String,
+    pub data: Vec<u8>,
+    pub topics: Vec<String>,
+}
+
+impl Event {
+    pub fn new(block_number: BlockNumber, index: EventIndex, pallet: String, name: String) -> Self {
+        Self {
+            id: EventId(block_number, index),
+            pallet,
+            name,
+            block_number,
+            index,
+            data: Vec::new(),
+            topics: Vec::new(),
+        }
+    }
+}
+
+impl Validity for Event {
+    fn is_empty(&self) -> bool {
+        self.block_number == 0
+    }
+}
