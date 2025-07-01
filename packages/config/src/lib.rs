@@ -123,6 +123,12 @@ fn default_matrix_bot_user() -> String {
     "@some-bot-handle:matrix.org".to_string()
 }
 
+/// provides default value for matrix_reader_rate if ONET_MATRIX_READER_RATE env var is not set
+/// NOTE: unit is seconds
+fn default_matrix_reader_rate() -> u64 {
+    30
+}
+
 /// provides default value for callout_epoch_rate if ONET_EPOCH_RATE_THRESHOLD env var is not set
 fn default_epoch_rate_threshold() -> u32 {
     0
@@ -319,6 +325,8 @@ pub struct Config {
     pub matrix_callout_epoch_rate: u32,
     #[serde(default = "default_matrix_network_report_epoch_rate")]
     pub matrix_network_report_epoch_rate: u32,
+    #[serde(default = "default_matrix_reader_rate")]
+    pub matrix_reader_rate: u64,
     #[serde(default = "default_matrix_bot_user")]
     pub matrix_bot_user: String,
     #[serde(default)]
@@ -625,6 +633,15 @@ fn get_config() -> Config {
         env::set_var(
             "ONET_MATRIX_NETWORK_REPORT_EPOCH_RATE",
             matrix_network_report_epoch_rate,
+        );
+    }
+
+    if let Some(matrix_reader_rate) =
+        matches.value_of("matrix-reader-rate")
+    {
+        env::set_var(
+            "ONET_MATRIX_READER_RATE",
+            matrix_reader_rate,
         );
     }
 
