@@ -476,6 +476,7 @@ impl Matrix {
     }
 
     pub async fn lazy_load_and_process_commands(&self) -> Result<(), MatrixError> {
+        let config = CONFIG.clone();
         // get members for joined members for the public room
         let members = self.get_members_from_room(&self.public_room_id).await?;
         info!(
@@ -494,7 +495,7 @@ impl Matrix {
 
         while let Some(sync_token) = self.get_next_or_sync().await? {
             // TODO: Remove members that eventually leave public room without the need of restarting the service
-
+            info!("Sync latest room messages: {}", sync_token);
             // ### Look for new members that join public room ###
             if let Some(new_members) = self
                 .get_members_from_room_and_token(&self.public_room_id)
@@ -527,7 +528,7 @@ impl Matrix {
                 self.process_commands_into_room(commands, &self.public_room_id)
                     .await?;
             }
-            thread::sleep(time::Duration::from_secs(6));
+            thread::sleep(time::Duration::from_secs(config.matrix_reader_rate));
         }
         Ok(())
     }
@@ -971,7 +972,6 @@ impl Matrix {
                     "{}{}.{}",
                     config.data_path, MATRIX_NEXT_TOKEN_FILENAME, room_id
                 );
-                debug!("next_token_filename: {}", next_token_filename);
 
                 // If token is None try to read from cached file
                 let from_token = match from_token {
