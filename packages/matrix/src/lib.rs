@@ -977,17 +977,17 @@ impl Matrix {
                 let from_token = match from_token {
                     Some(token) => {
                         if is_next_token_valid(&token) {
-                            None
-                        } else {
                             Some(token)
+                        } else {
+                            None
                         }
                     }
                     None => match fs::read_to_string(&next_token_filename) {
                         Ok(token) => {
                             if is_next_token_valid(&token) {
-                                None
-                            } else {
                                 Some(token)
+                            } else {
+                                None
                             }
                         }
                         _ => None,
