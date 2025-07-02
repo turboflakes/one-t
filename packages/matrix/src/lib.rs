@@ -975,9 +975,21 @@ impl Matrix {
 
                 // If token is None try to read from cached file
                 let from_token = match from_token {
-                    Some(token) => Some(token),
+                    Some(token) => {
+                        if is_next_token_valid(&token) {
+                            None
+                        } else {
+                            Some(token)
+                        }
+                    }
                     None => match fs::read_to_string(&next_token_filename) {
-                        Ok(token) => Some(token),
+                        Ok(token) => {
+                            if is_next_token_valid(&token) {
+                                None
+                            } else {
+                                Some(token)
+                            }
+                        }
                         _ => None,
                     },
                 };
@@ -1609,6 +1621,10 @@ impl Matrix {
     //         None => Err(MatrixError::Other("access_token not defined".to_string())),
     //     }
     // }
+}
+
+fn is_next_token_valid(token: &str) -> bool {
+    !token.is_empty() && token != "^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@"
 }
 
 #[cfg(test)]
