@@ -93,8 +93,10 @@ fn start() {
         // Authenticate matrix and spawn lazy load commands
         spawn_and_restart_matrix_lazy_load_on_error();
 
-        // Subscribe on-chain events
-        spawn_and_restart_on_chain_events_on_error();
+        if !config.matrix_only {
+            // Subscribe on-chain events
+            spawn_and_restart_on_chain_events_on_error();
+        }
 
         // wait for SIGINT, SIGTERM, SIGHUP
         ctrlc_rx

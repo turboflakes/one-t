@@ -334,6 +334,8 @@ pub struct Config {
     #[serde(default)]
     pub matrix_disabled: bool,
     #[serde(default)]
+    pub matrix_only: bool,
+    #[serde(default)]
     pub matrix_public_room_disabled: bool,
     #[serde(default)]
     pub matrix_bot_display_name_disabled: bool,
@@ -600,6 +602,10 @@ fn get_config() -> Config {
         env::set_var("ONET_MATRIX_DISABLED", "true");
     }
 
+    if matches.is_present("only-matrix") {
+        env::set_var("ONET_MATRIX_ONLY", "true");
+    }
+
     if matches.is_present("disable-public-matrix-room") {
         env::set_var("ONET_MATRIX_PUBLIC_ROOM_DISABLED", "true");
     }
@@ -636,13 +642,8 @@ fn get_config() -> Config {
         );
     }
 
-    if let Some(matrix_reader_rate) =
-        matches.value_of("matrix-reader-rate")
-    {
-        env::set_var(
-            "ONET_MATRIX_READER_RATE",
-            matrix_reader_rate,
-        );
+    if let Some(matrix_reader_rate) = matches.value_of("matrix-reader-rate") {
+        env::set_var("ONET_MATRIX_READER_RATE", matrix_reader_rate);
     }
 
     if let Some(matrix_bot_user) = matches.value_of("matrix-bot-user") {

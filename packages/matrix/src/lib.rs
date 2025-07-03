@@ -489,7 +489,10 @@ impl Matrix {
         for member in members.iter() {
             if let Some(private_room) = self.get_or_create_private_room(member).await? {
                 private_rooms.insert(private_room.room_id.to_string());
-                info!("Private room {} ready.", private_room);
+                info!(
+                    "Private room {} ({}) ready.",
+                    private_room, private_room.room_id
+                );
             }
         }
 
@@ -993,6 +996,9 @@ impl Matrix {
                         _ => None,
                     },
                 };
+                if config.matrix_only {
+                    info!("Token {:?} loaded for room {} ", from_token, room_id);
+                }
 
                 //
                 let client = self.client.clone();
