@@ -1743,13 +1743,24 @@ pub async fn run_val_perf_report(
                     // Send report only if para records available
                     let report = Report::from(data);
 
-                    onet.matrix()
+                    // NOTE: Silently log warning if failed to send message;
+                    // This is to guarantee that subsequent messages are tried to be sent and not lost.
+                    match onet
+                        .matrix()
                         .send_private_message(
                             user_id,
                             &report.message(),
                             Some(&report.formatted_message()),
                         )
-                        .await?;
+                        .await
+                    {
+                        Ok(_) => (),
+                        Err(e) => {
+                            warn!("Failed to send message for user {}: {}", user_id, e);
+                            warn!("Failed message: {}", report.message());
+                        }
+                    }
+
                     // NOTE: To not overflow matrix with messages just send maximum 2 per second
                     thread::sleep(time::Duration::from_millis(500));
                 }
