@@ -1122,18 +1122,22 @@ impl Matrix {
                             Ok(Some(commands))
                         }
                         _ => {
+                            warn!("Error fetching commands for room {}", room_id);
                             warn!("next_token_filename: {}", next_token_filename);
                             warn!("filter: {:?}", filter);
                             warn!("matrix_url: {}", url);
                             let response = res.json::<ErrorResponse>().await?;
-                            Err(MatrixError::Other(response.error))
+                            warn!("error_response : {:?}", response);
+                            Ok(None)
                         }
                     },
                     Err(e) => {
+                        warn!("Error fetching commands for room {}", room_id);
                         warn!("next_token_filename: {}", next_token_filename);
                         warn!("filter: {:?}", filter);
                         warn!("matrix_url: {}", url.to_string());
-                        Err(MatrixError::ReqwestError(e))
+                        warn!("error: {:?}", e);
+                        Ok(None)
                     }
                 }
             }
