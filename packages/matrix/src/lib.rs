@@ -489,7 +489,10 @@ impl Matrix {
         for member in members.iter() {
             if let Some(private_room) = self.get_or_create_private_room(member).await? {
                 private_rooms.insert(private_room.room_id.to_string());
-                info!("Private room {} ready.", private_room);
+                info!(
+                    "Private room {} ({}) ready.",
+                    private_room, private_room.room_id
+                );
             }
         }
 
@@ -975,12 +978,27 @@ impl Matrix {
 
                 // If token is None try to read from cached file
                 let from_token = match from_token {
-                    Some(token) => Some(token),
+                    Some(token) => {
+                        if is_next_token_valid(&token) {
+                            Some(token)
+                        } else {
+                            None
+                        }
+                    }
                     None => match fs::read_to_string(&next_token_filename) {
-                        Ok(token) => Some(token),
+                        Ok(token) => {
+                            if is_next_token_valid(&token) {
+                                Some(token)
+                            } else {
+                                None
+                            }
+                        }
                         _ => None,
                     },
                 };
+                if config.matrix_only {
+                    info!("Token {:?} loaded for room {} ", from_token, room_id);
+                }
 
                 //
                 let client = self.client.clone();
@@ -1104,18 +1122,22 @@ impl Matrix {
                             Ok(Some(commands))
                         }
                         _ => {
+                            warn!("Error fetching commands for room {}", room_id);
                             warn!("next_token_filename: {}", next_token_filename);
                             warn!("filter: {:?}", filter);
                             warn!("matrix_url: {}", url);
                             let response = res.json::<ErrorResponse>().await?;
-                            Err(MatrixError::Other(response.error))
+                            warn!("error_response : {:?}", response);
+                            Ok(None)
                         }
                     },
                     Err(e) => {
+                        warn!("Error fetching commands for room {}", room_id);
                         warn!("next_token_filename: {}", next_token_filename);
                         warn!("filter: {:?}", filter);
                         warn!("matrix_url: {}", url.to_string());
-                        Err(MatrixError::ReqwestError(e))
+                        warn!("error: {:?}", e);
+                        Ok(None)
                     }
                 }
             }
@@ -1609,6 +1631,10 @@ impl Matrix {
     //         None => Err(MatrixError::Other("access_token not defined".to_string())),
     //     }
     // }
+}
+
+fn is_next_token_valid(token: &str) -> bool {
+    !token.is_empty() && token != "^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@"
 }
 
 #[cfg(test)]

@@ -8,4 +8,4 @@ Cargo.lock
 .tvp*
 .epoch*
 .nominator*
-bump-version.sh
+bump-version*
