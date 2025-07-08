@@ -245,9 +245,16 @@ fn default_discovery_timeout() -> u64 {
 }
 
 /// provides default value for discobery_epoch_rate if ONET_DISCOVERY_EPOCH_RATE env var is not set
-/// value is given in sessions
+/// recommended value is 1 for every session on Polkadot and 2 for every 2 sessions on Kusama
 fn default_discovery_epoch_rate() -> u64 {
     1
+}
+
+/// provides default value for discovery_history_attempts if ONET_DISCOVERY_HISTORY_ATTEMPTS env var is not set
+/// recommended value is 2 on Polkadot and 3 on Kusama
+/// the value represents how many times on the previous epochs the API checks if discovery has been cached
+fn default_discovery_history_attempts() -> u64 {
+    2
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -386,6 +393,8 @@ pub struct Config {
     pub discovery_timeout: u64,
     #[serde(default = "default_discovery_epoch_rate")]
     pub discovery_epoch_rate: u64,
+    #[serde(default = "default_discovery_history_attempts")]
+    pub discovery_history_attempts: u64,
     #[serde(default)]
     pub discovery_bootnodes: Vec<String>,
     #[serde(default)]

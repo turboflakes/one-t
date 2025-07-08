@@ -61,7 +61,6 @@ use std::{
 use subxt::{
     config::{
         substrate::{Digest, DigestItem},
-        Header,
     },
     ext::{frame_metadata::RuntimeMetadataPrefixed, subxt_core::Metadata as RuntimeMetadata},
     tx::TxStatus,
