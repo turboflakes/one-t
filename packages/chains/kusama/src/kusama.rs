@@ -625,8 +625,12 @@ pub async fn try_run_cache_discovery_records(
     block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.discovery_enabled {
+    let current_epoch: f64 = records.current_epoch().into();
+
+    // Note: only trigger discovery process if enabled and at the rate defined in config
+    if config.discovery_enabled && (current_epoch % config.discovery_epoch_rate as f64 == 0.0) {
         let records_cloned = records.clone();
+
         async_std::task::spawn(async move {
             if let Err(e) = try_fetch_discovery_data(&records_cloned, block_hash).await {
                 error!("try_fetch_discovery_data error: {:?}", e);

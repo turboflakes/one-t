@@ -238,9 +238,16 @@ fn default_dn_url() -> String {
     "https://nodes.web3.foundation/api/cohort/1".into()
 }
 
-/// sets the timeout used by p2p-explorer
-fn default_p2p_timeout_seconds() -> u64 {
+/// provides default value for discovery_timeout if ONET_DISCOVERY_TIMEOUT env var is not set
+/// value is given in seconds (value used by p2p-explorer crate)
+fn default_discovery_timeout() -> u64 {
     240
+}
+
+/// provides default value for discobery_epoch_rate if ONET_DISCOVERY_EPOCH_RATE env var is not set
+/// value is given in sessions
+fn default_discovery_epoch_rate() -> u64 {
+    1
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -375,8 +382,10 @@ pub struct Config {
     // discovery p2p configuration
     #[serde(default)]
     pub discovery_enabled: bool,
-    #[serde(default = "default_p2p_timeout_seconds")]
+    #[serde(default = "default_discovery_timeout")]
     pub discovery_timeout: u64,
+    #[serde(default = "default_discovery_epoch_rate")]
+    pub discovery_epoch_rate: u64,
     #[serde(default)]
     pub discovery_bootnodes: Vec<String>,
     #[serde(default)]
