@@ -635,19 +635,26 @@ impl Channel {
                                     {
                                         auth.extend(tmp);
                                     }
-                                    // Additional extend with discovery data
-                                    if let Ok(mut discovery) = redis::cmd("HGETALL")
-                                        .arg(CacheKey::AuthorityRecordVerbose(
-                                            key.to_string(),
-                                            Verbosity::Discovery,
-                                        ))
-                                        .query_async::<Connection, CacheMap>(conn)
-                                        .await
-                                    {
-                                        // NOTE: discovery.ips is not needed to be available, so let's skip it.
-                                        discovery.remove("ips");
-                                        auth.extend(discovery);
-                                    }
+                                    // NOTE: discovery data is only updated once very X sessions
+                                    // until there is a strong reason to update this data over socket
+                                    // it will remain commented out
+                                    //
+                                    // let attempts = config
+                                    //     .discovery_epoch_rate
+                                    //     * config.discovery_history_attempts;
+                                    // if let Ok(discovery) =
+                                    //     get_discovery_data(
+                                    //         key,
+                                    //         &mut conn,
+                                    //         attempts.try_into().unwrap(),
+                                    //         None,
+                                    //     )
+                                    //     .await
+                                    // {
+                                    //     if !discovery.is_empty() {
+                                    //         auth.extend(discovery);
+                                    //     }
+                                    // }
                                     data.push(auth.into());
                                 }
                             }
