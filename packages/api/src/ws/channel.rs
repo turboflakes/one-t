@@ -26,14 +26,12 @@ use crate::{
     },
     ws::server::{Message, Remove, Server, WsResponseMessage},
 };
+use actix::prelude::*;
+use futures::executor::block_on;
+use log::{info, warn};
 use onet_cache::{create_or_await_pool, get_conn, CacheKey, Index, RedisPool, Verbosity};
 use onet_config::CONFIG;
 use onet_records::{BlockNumber, EpochIndex, SS58};
-
-use actix::prelude::*;
-
-use futures::executor::block_on;
-use log::{info, warn};
 use redis::aio::Connection;
 use std::{collections::HashMap, str::FromStr, time::Duration};
 use subxt::utils::AccountId32;
@@ -508,23 +506,27 @@ impl Channel {
                                                         {
                                                             auth.extend(tmp);
                                                         }
-                                                            // Additional extend with discovery data
-                                                            if let Ok(mut discovery) = redis::cmd(
-                                                                "HGETALL",
-                                                            )
-                                                            .arg(CacheKey::AuthorityRecordVerbose(
-                                                                key.to_string(),
-                                                                Verbosity::Discovery,
-                                                            ))
-                                                            .query_async::<Connection, CacheMap>(
-                                                                &mut conn,
-                                                            )
-                                                            .await
-                                                            {
-                                                                // NOTE: discovery.ips is not needed to be available, so let's skip it.
-                                                                discovery.remove("ips");
-                                                                auth.extend(discovery);
-                                                            }
+                                                            // NOTE: discovery data is only updated once very X sessions
+                                                            // until there is a strong reason to update this data over socket
+                                                            // it will remain commented out
+                                                            //
+                                                            // let attempts = config
+                                                            //     .discovery_epoch_rate
+                                                            //     * config.discovery_history_attempts;
+                                                            // if let Ok(discovery) =
+                                                            //     get_discovery_data(
+                                                            //         key,
+                                                            //         &mut conn,
+                                                            //         attempts.try_into().unwrap(),
+                                                            //         None,
+                                                            //     )
+                                                            //     .await
+                                                            // {
+                                                            //     if !discovery.is_empty() {
+                                                            //         auth.extend(discovery);
+                                                            //     }
+                                                            // }
+
                                                             data.push(auth.into());
                                                         }
                                                     }

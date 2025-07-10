@@ -37,7 +37,7 @@ use onet_config::CONFIG;
 use onet_dn::try_fetch_stashes_from_remote_url;
 use onet_errors::{ApiError, CacheError};
 use onet_pools::{PoolId, PoolNominees};
-use onet_records::{grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset, Validity};
+use onet_records::{grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset};
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
@@ -337,7 +337,7 @@ use onet_errors::OnetError;
 ///
 /// # Returns
 /// * `Result<BTreeMap<String, String>, OnetError>` - Discovery data or empty map if not found
-async fn get_discovery_data(
+pub async fn get_discovery_data(
     original_key: &str,
     conn: &mut Connection,
     attempts: usize,
