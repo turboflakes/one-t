@@ -1259,6 +1259,8 @@ pub struct DiscoveryRecord {
     node_version: String,
     #[serde(rename = "nn")]
     node_name: String,
+    #[serde(rename = "bn", default)]
+    block_number: Option<BlockNumber>,
 }
 
 impl DiscoveryRecord {
@@ -1284,6 +1286,14 @@ impl DiscoveryRecord {
 
     pub fn set_node_name(&mut self, name: String) {
         self.node_name = name;
+    }
+
+    pub fn set_block_number(&mut self, block_number: BlockNumber) {
+        self.block_number = Some(block_number);
+    }
+
+    pub fn is_version_available(&self) -> bool {
+        !self.node_version.is_empty()
     }
 }
 

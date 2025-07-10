@@ -238,19 +238,33 @@ fn default_dn_url() -> String {
     "https://nodes.web3.foundation/api/cohort/1".into()
 }
 
-/// sets the timeout used by p2p-explorer
-fn default_p2p_timeout_seconds() -> u64 {
+/// provides default value for discovery_timeout if ONET_DISCOVERY_TIMEOUT env var is not set
+/// value is given in seconds (value used by p2p-explorer crate)
+fn default_discovery_timeout() -> u64 {
     240
 }
 
-/// sets the timeout used by p2p-explorer
+/// sets default para_id for asset hub chain
 fn default_asset_hub_para_id() -> u32 {
     1000
 }
 
-/// sets the timeout used by p2p-explorer
+/// sets default para_id for people chain
 fn default_people_para_id() -> u32 {
     1004
+}
+
+/// provides default value for discobery_epoch_rate if ONET_DISCOVERY_EPOCH_RATE env var is not set
+/// recommended value is 1 for every session on Polkadot and 2 for every 2 sessions on Kusama
+fn default_discovery_epoch_rate() -> u64 {
+    1
+}
+
+/// provides default value for discovery_history_attempts if ONET_DISCOVERY_HISTORY_ATTEMPTS env var is not set
+/// recommended value is 2 on Polkadot and 3 on Kusama
+/// the value represents how many times on the previous epochs the API checks if discovery has been cached
+fn default_discovery_history_attempts() -> u64 {
+    2
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -391,8 +405,12 @@ pub struct Config {
     // discovery p2p configuration
     #[serde(default)]
     pub discovery_enabled: bool,
-    #[serde(default = "default_p2p_timeout_seconds")]
+    #[serde(default = "default_discovery_timeout")]
     pub discovery_timeout: u64,
+    #[serde(default = "default_discovery_epoch_rate")]
+    pub discovery_epoch_rate: u64,
+    #[serde(default = "default_discovery_history_attempts")]
+    pub discovery_history_attempts: u64,
     #[serde(default)]
     pub discovery_bootnodes: Vec<String>,
     #[serde(default)]

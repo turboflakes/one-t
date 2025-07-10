@@ -65,6 +65,10 @@ pub enum OnetError {
     PoolError(String),
     #[error("Box error: {0}")]
     BoxError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
+    #[error("AccountId32 parsing error")]
+    AccountId32Error,
+    // TODO: Make FromSs58Error public in subxt
+    // AccountId32Error(#[from] subxt::ext::subxt_core::utils::account_id::FromSs58Error),
     #[error("Other error: {0}")]
     Other(String),
 }

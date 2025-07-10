@@ -40,12 +40,14 @@ use onet_config::CONFIG;
 use onet_dn::try_fetch_stashes_from_remote_url;
 use onet_errors::{ApiError, CacheError};
 use onet_pools::{PoolId, PoolNominees};
-use onet_records::{grade, BitfieldsRecord, EpochIndex, Grade, Subset};
+use onet_records::{grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset};
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
-use std::{collections::BTreeMap, str::FromStr};
-use std::{convert::TryInto, iter::FromIterator};
+use std::{
+    collections::BTreeMap, convert::TryInto, iter::FromIterator,
+    str::FromStr,
+};
 use subxt::utils::AccountId32;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
@@ -287,30 +289,11 @@ async fn get_session_authorities(
         }
 
         if show_discovery {
-            let discovery = get_discovery_from_cache(key, &mut conn).await?;
-            if discovery.is_empty() {
-                // NOTE: try to get discovery data from the previous session
-                let mut ak = AuthorityKey::from(key.to_string());
-                ak.epoch_index = ak.epoch_index - 1;
-                let discovery = get_discovery_from_cache(&ak.to_string(), &mut conn).await?;
-                if discovery.is_empty() {
-                    // NOTE: try to get discovery data from the previous session and previous era
-                    let mut ak = AuthorityKey::from(key.to_string());
-                    ak.era_index = ak.era_index - 1;
-                    ak.epoch_index = ak.epoch_index - 1;
-                    let discovery = get_discovery_from_cache(&ak.to_string(), &mut conn).await?;
-                    if discovery.is_empty() {
-                        warn!(
-                            "Discovery data not found for authority key: {}",
-                            key.to_string()
-                        );
-                    } else {
-                        auth.extend(discovery);
-                    }
-                } else {
-                    auth.extend(discovery);
-                }
-            } else {
+            let config = CONFIG.clone();
+            let attempts = config.discovery_epoch_rate * config.discovery_history_attempts;
+            let discovery =
+                get_discovery_data(key, &mut conn, attempts.try_into().unwrap(), None).await?;
+            if !discovery.is_empty() {
                 auth.extend(discovery);
             }
         }
@@ -345,23 +328,123 @@ async fn get_session_authorities(
     })
 }
 
+use onet_errors::OnetError;
+
+/// Recursively fetches discovery data from cache
+///
+/// # Arguments
+/// * `original_key` - The original authority key to look up
+/// * `conn` - Redis connection
+/// * `attempts` - Number of session attempts to try
+/// * `current_key` - Current key being checked
+///
+/// # Returns
+/// * `Result<BTreeMap<String, String>, OnetError>` - Discovery data or empty map if not found
+async fn get_discovery_data(
+    original_key: &str,
+    conn: &mut Connection,
+    attempts: usize,
+    current_key: Option<AuthorityKey>,
+) -> Result<BTreeMap<String, String>, OnetError> {
+    // Use the provided key or parse the original on first call
+    let current_key = match current_key {
+        Some(key) => key,
+        None => AuthorityKey::from(original_key.to_string()),
+    };
+
+    // Try to get discovery data for the current key
+    let discovery = get_discovery_from_cache(&current_key.to_string(), conn).await?;
+
+    // Get the serialized discovery data
+    let serialized = discovery
+        .get("discovery")
+        .unwrap_or(&"{}".to_string())
+        .to_string();
+    let dr: DiscoveryRecord = serde_json::from_str(&serialized).unwrap_or_default();
+
+    // If we found a version available in discovery data, return it
+    if dr.is_version_available() {
+        return Ok(discovery);
+    }
+
+    // If we've reached the maximum attempts, just log and return an empty map
+    if attempts == 0 {
+
+        // Fetch the stash from original key
+        let key =  AuthorityKey::from(original_key.to_string());
+        let stash = get_address_from_authority_key(&key, conn).await?;
+
+        warn!(
+            "Discovery data not found for stash: {} key: {}",
+            stash,
+            original_key
+        );
+        return Ok(BTreeMap::new());
+    }
+    // Fetch the stash from authority key
+    let stash = get_address_from_authority_key(&current_key, conn).await?;
+
+    // Try previous session
+    let next_key = get_authority_key_from_stash_and_epoch(&stash, current_key.epoch_index - 1, conn).await?;
+
+    // Recursive call with the new key and one less attempt
+    Box::pin(get_discovery_data(
+        original_key,
+        conn,
+        attempts - 1,
+        Some(next_key),
+    ))
+    .await
+}
+
 async fn get_discovery_from_cache(
     key: &str,
     conn: &mut Connection,
 ) -> Result<CacheMap, CacheError> {
-    let mut discovery: CacheMap = redis::cmd("HGETALL")
-        .arg(CacheKey::AuthorityRecordVerbose(
-            key.to_string(),
-            Verbosity::Discovery,
-        ))
+    let key = CacheKey::AuthorityRecordVerbose(key.to_string(), Verbosity::Discovery);
+    let discovery: CacheMap = redis::cmd("HGETALL")
+        .arg(key)
         .query_async(conn)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-    // NOTE: discovery.ips is not needed to be available, so let's skip it.
-    discovery.remove("ips");
+    Ok(discovery)
+}
 
-    return Ok(discovery);
+async fn get_address_from_authority_key(
+    key: &AuthorityKey,
+    conn: &mut Connection,
+) -> Result<AccountId32, OnetError> {
+
+    let address: String = redis::cmd("HGET")
+        .arg(key.to_string())
+        .arg("address")
+        .query_async(conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    let acc = AccountId32::from_str(&address).map_err(|_| OnetError::AccountId32Error)?;
+
+    Ok(acc)
+}
+
+async fn get_authority_key_from_stash_and_epoch(
+    account_id: &AccountId32,
+    epoch_index: EpochIndex,
+    conn: &mut Connection,
+) -> Result<AuthorityKey, CacheError> {
+    let key = CacheKey::AuthorityKeyByAccountAndSession(
+        account_id.clone(),
+        epoch_index,
+    );
+
+    let data: AuthorityKeyCache = redis::cmd("HGETALL")
+        .arg(key.clone())
+        .query_async(conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(data.into())
 }
 
 /// Get validator by AuthorityKey
@@ -407,9 +490,19 @@ async fn get_validator_by_authority_key(
     }
 
     if show_discovery {
-        let discovery: CacheMap =
-            get_discovery_from_cache(&auth_key.to_string(), &mut conn).await?;
-        data.extend(discovery);
+        let config = CONFIG.clone();
+        let attempts = config.discovery_epoch_rate * config.discovery_history_attempts;
+        let discovery = get_discovery_data(
+            &auth_key.to_string(),
+            &mut conn,
+            attempts.try_into().unwrap(),
+            None,
+        )
+        .await?;
+
+        if !discovery.is_empty() {
+            data.extend(discovery);
+        }
     }
 
     if show_profile {
