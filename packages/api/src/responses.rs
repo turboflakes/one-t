@@ -688,7 +688,9 @@ impl From<CacheMap> for ValidatorResult {
             .get("discovery")
             .unwrap_or(&"{}".to_string())
             .to_string();
-        let discovery: DiscoveryRecord = serde_json::from_str(&serialized).unwrap_or_default();
+        let mut discovery: DiscoveryRecord = serde_json::from_str(&serialized).unwrap_or_default();
+        // NOTE: `discovery.ips` are currently not being used, so lets ignore them
+        discovery.set_ips(Vec::new());
 
         // profile
         let serialized = data.get("profile").unwrap_or(&"{}".to_string()).to_string();
