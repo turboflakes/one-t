@@ -37,12 +37,12 @@ use onet_config::CONFIG;
 use onet_dn::try_fetch_stashes_from_remote_url;
 use onet_errors::{ApiError, CacheError};
 use onet_pools::{PoolId, PoolNominees};
-use onet_records::{grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset};
+use onet_records::{grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset, Validity};
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
 use std::{
-    collections::BTreeMap, convert::TryInto, iter::FromIterator,
+    collections::BTreeMap, convert::TryInto, future::Future, iter::FromIterator, pin::Pin,
     str::FromStr,
 };
 use subxt::utils::AccountId32;
@@ -366,32 +366,48 @@ async fn get_discovery_data(
 
     // If we've reached the maximum attempts, just log and return an empty map
     if attempts == 0 {
-
         // Fetch the stash from original key
-        let key =  AuthorityKey::from(original_key.to_string());
-        let stash = get_address_from_authority_key(&key, conn).await?;
+        let key = AuthorityKey::from(original_key.to_string());
+        match get_address_from_authority_key(&key, conn).await {
+            Ok(stash) => {
+                warn!(
+                    "Discovery data not found for stash: {} key: {}",
+                    stash, original_key
+                );
+            }
+            Err(_) => {
+                warn!("Failed to fetch stash for key: {}", original_key);
+            }
+        }
 
-        warn!(
-            "Discovery data not found for stash: {} key: {}",
-            stash,
-            original_key
-        );
         return Ok(BTreeMap::new());
     }
+
     // Fetch the stash from authority key
-    let stash = get_address_from_authority_key(&current_key, conn).await?;
+    match get_address_from_authority_key(&current_key, conn).await {
+        Ok(stash) => {
+            // Try previous session
+            let next_key =
+                get_authority_key_from_stash_and_epoch(&stash, current_key.epoch_index - 1, conn)
+                    .await?;
 
-    // Try previous session
-    let next_key = get_authority_key_from_stash_and_epoch(&stash, current_key.epoch_index - 1, conn).await?;
-
-    // Recursive call with the new key and one less attempt
-    Box::pin(get_discovery_data(
-        original_key,
-        conn,
-        attempts - 1,
-        Some(next_key),
-    ))
-    .await
+            // Recursive call with the new key and one less attempt
+            return Box::pin(get_discovery_data(
+                original_key,
+                conn,
+                attempts - 1,
+                Some(next_key),
+            ))
+            .await;
+        }
+        Err(_) => {
+            warn!(
+                "Failed to fetch stash for key: {} and break the loop",
+                current_key
+            );
+            return Ok(BTreeMap::new());
+        }
+    }
 }
 
 async fn get_discovery_from_cache(
@@ -412,7 +428,6 @@ async fn get_address_from_authority_key(
     key: &AuthorityKey,
     conn: &mut Connection,
 ) -> Result<AccountId32, OnetError> {
-
     let address: String = redis::cmd("HGET")
         .arg(key.to_string())
         .arg("address")
@@ -430,10 +445,7 @@ async fn get_authority_key_from_stash_and_epoch(
     epoch_index: EpochIndex,
     conn: &mut Connection,
 ) -> Result<AuthorityKey, CacheError> {
-    let key = CacheKey::AuthorityKeyByAccountAndSession(
-        account_id.clone(),
-        epoch_index,
-    );
+    let key = CacheKey::AuthorityKeyByAccountAndSession(account_id.clone(), epoch_index);
 
     let data: AuthorityKeyCache = redis::cmd("HGETALL")
         .arg(key.clone())
