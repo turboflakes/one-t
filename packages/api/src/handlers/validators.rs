@@ -37,12 +37,12 @@ use onet_config::CONFIG;
 use onet_dn::try_fetch_stashes_from_remote_url;
 use onet_errors::{ApiError, CacheError};
 use onet_pools::{PoolId, PoolNominees};
-use onet_records::{grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset, Validity};
+use onet_records::{grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset};
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
 use std::{
-    collections::BTreeMap, convert::TryInto, future::Future, iter::FromIterator, pin::Pin,
+    collections::BTreeMap, convert::TryInto, iter::FromIterator,
     str::FromStr,
 };
 use subxt::utils::AccountId32;
