@@ -128,6 +128,10 @@ pub async fn try_fetch_discovery_data(
                 if let Some(discovery_record) = records.get_discovery_record(*authority_idx, None) {
                     let mut data = discovery_record.clone();
 
+                    if let Some(block_number) = records.finalized_block() {
+                        data.set_block_number(*block_number);
+                    }
+
                     if let Some(ips) =
                         authority_ips_map.get(&discovery_record.authority_discovery_key())
                     {

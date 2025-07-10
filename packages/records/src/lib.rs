@@ -1251,6 +1251,10 @@ impl DiscoveryRecord {
         self.node_name = name;
     }
 
+    pub fn set_block_number(&mut self, block_number: BlockNumber) {
+        self.block_number = Some(block_number);
+    }
+
     pub fn is_version_available(&self) -> bool {
         !self.node_version.is_empty()
     }
