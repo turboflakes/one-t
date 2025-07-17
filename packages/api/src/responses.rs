@@ -867,7 +867,7 @@ pub struct CohortsResult {
 
 #[derive(Debug, Serialize, Default)]
 pub struct CohortValidatorsGradesResult {
-    pub cohort: u32,
+    pub cohort: String,
     pub data: Vec<ValidatorGradeResult>,
 }
 

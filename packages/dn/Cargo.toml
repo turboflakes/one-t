@@ -12,6 +12,7 @@ onet-config = { path = "../config" }
 onet-errors = { path = "../errors" }
 
 log = { workspace = true }
+regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 subxt = { workspace = true }

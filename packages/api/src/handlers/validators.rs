@@ -1424,14 +1424,17 @@ pub async fn get_cohorts() -> Result<Json<CohortsResult>, ApiError> {
 
 /// Get all validators grades assigned to the specific cohort
 pub async fn get_cohort_validators_grades(
-    cohort: Path<u32>,
+    cohort: Path<String>,
     params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<CohortValidatorsGradesResult>, ApiError> {
-    let cohort_number = cohort.into_inner();
+    let cohort = cohort.into_inner();
 
     let stashes: Vec<AccountId32> =
-        try_fetch_stashes_from_remote_url(false, Some(cohort_number)).await?;
+        try_fetch_stashes_from_remote_url(false, Some(cohort.clone())).await?;
+
+    use log::info;
+    info!("Fetched {} stashes", stashes.len());
 
     let mut data: Vec<ValidatorGradeResult> = Vec::new();
     for stash in stashes.iter() {
@@ -1445,10 +1448,7 @@ pub async fn get_cohort_validators_grades(
         data.push(tmp);
     }
 
-    return respond_json(CohortValidatorsGradesResult {
-        cohort: cohort_number,
-        data,
-    });
+    return respond_json(CohortValidatorsGradesResult { cohort, data });
 }
 
 /// Get list of available eras
