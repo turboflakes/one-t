@@ -9,7 +9,6 @@ edition.workspace = true
 
 [dependencies]
 onet-records = { path = "../records" }
-onet-cache = { path = "../records" }
 
 codec = { workspace = true }
 serde = { workspace = true }

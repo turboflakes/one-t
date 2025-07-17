@@ -33,6 +33,11 @@ impl std::fmt::Display for EventId {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum Topics {
+    AsyncStaking,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Event {
     pub id: EventId,
@@ -41,7 +46,7 @@ pub struct Event {
     pub pallet: String,
     pub name: String,
     pub data: Vec<u8>,
-    pub topics: Vec<String>,
+    pub topics: Vec<Topics>,
 }
 
 impl Event {

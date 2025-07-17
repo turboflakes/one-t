@@ -25,6 +25,7 @@ use onet_config::Config;
 use onet_errors::{CacheError, OnetError};
 use onet_pools::{Pool, PoolId, PoolNominees, PoolStats};
 use onet_records::{BlockNumber, EpochIndex};
+use onet_events::{Event};
 
 use redis::aio::Connection;
 use std::result::Result;
@@ -41,8 +42,7 @@ pub async fn cache_event(
     config: &Config,
     chain_key: ChainKey,
     block_number: BlockNumber,
-    data: String,
-    current_epoch: EpochIndex,
+    event: &Event,
 ) -> Result<(), OnetError> {
     // let serialized = serde_json::to_string(&pool)?;
     // redis::pipe()
