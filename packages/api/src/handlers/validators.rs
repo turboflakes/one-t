@@ -20,12 +20,13 @@
 // SOFTWARE.
 
 use crate::{
-    helpers::respond_json,
     handlers::boards::handlers::get_validator_stashes_by_session,
+    helpers::respond_json,
     responses::{
-        AuthorityKey, AuthorityKeyCache, CacheMap, CohortValidatorsGradesResult, CohortsResult,CohortValidatorsChangedResult,
-        EraValidatorsGradesResult, ErasResult, RankingStats, ValidatorGradeResult,
-        ValidatorProfileResult, ValidatorResult, ValidatorsResult,
+        AuthorityKey, AuthorityKeyCache, CacheMap, CohortValidatorsChangedResult,
+        CohortValidatorsGradesResult, CohortsResult, EraValidatorsGradesResult, ErasResult,
+        RankingStats, ValidatorGradeResult, ValidatorProfileResult, ValidatorResult,
+        ValidatorsResult,
     },
 };
 use actix_web::{
@@ -38,14 +39,13 @@ use onet_config::CONFIG;
 use onet_dn::try_fetch_stashes_from_remote_url;
 use onet_errors::{ApiError, CacheError};
 use onet_pools::{PoolId, PoolNominees};
-use onet_records::{grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset, ValidatorProfileRecord};
+use onet_records::{
+    grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset, ValidatorProfileRecord,
+};
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
-use std::{
-    collections::BTreeMap, convert::TryInto,  iter::FromIterator,
-    str::FromStr,
-};
+use std::{collections::BTreeMap, convert::TryInto, iter::FromIterator, str::FromStr};
 use subxt::utils::AccountId32;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
@@ -1582,9 +1582,7 @@ pub async fn update_cohort_validators_by_session(
 
             counter += 1;
         }
-
     }
-
 
     respond_json(CohortValidatorsChangedResult {
         cohort,
