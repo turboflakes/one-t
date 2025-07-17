@@ -368,7 +368,7 @@ async fn generate_board_scores(
                     board_hash,
                 ))
                 .arg(config.cache_writer_prunning)
-                .query_async(&mut conn as &mut Connection)
+                .query_async::<_, ()>(&mut conn as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
         }
@@ -395,7 +395,7 @@ async fn generate_board_scores(
             board_hash,
         ))
         .arg(config.cache_writer_prunning)
-        .query_async(&mut conn as &mut Connection)
+        .query_async::<_, ()>(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -428,7 +428,7 @@ async fn is_session_data_available(
     Ok(exists)
 }
 
-async fn get_validator_stashes_by_session(
+pub async fn get_validator_stashes_by_session(
     session_index: EpochIndex,
     cache: Data<RedisPool>,
 ) -> Result<Vec<String>, ApiError> {

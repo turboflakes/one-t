@@ -883,3 +883,10 @@ pub struct EraValidatorsGradesResult {
     pub sessions: Vec<u32>,
     pub data: Vec<ValidatorGradeResult>,
 }
+
+#[derive(Debug, Serialize, Default)]
+pub struct CohortValidatorsChangedResult {
+    pub cohort: String,
+    pub session: EpochIndex,
+    pub updated_counter: u32,
+}

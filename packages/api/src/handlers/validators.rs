@@ -21,8 +21,9 @@
 
 use crate::{
     helpers::respond_json,
+    handlers::boards::handlers::get_validator_stashes_by_session,
     responses::{
-        AuthorityKey, AuthorityKeyCache, CacheMap, CohortValidatorsGradesResult, CohortsResult,
+        AuthorityKey, AuthorityKeyCache, CacheMap, CohortValidatorsGradesResult, CohortsResult,CohortValidatorsChangedResult,
         EraValidatorsGradesResult, ErasResult, RankingStats, ValidatorGradeResult,
         ValidatorProfileResult, ValidatorResult, ValidatorsResult,
     },
@@ -37,12 +38,12 @@ use onet_config::CONFIG;
 use onet_dn::try_fetch_stashes_from_remote_url;
 use onet_errors::{ApiError, CacheError};
 use onet_pools::{PoolId, PoolNominees};
-use onet_records::{grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset};
+use onet_records::{grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset, ValidatorProfileRecord};
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
 use std::{
-    collections::BTreeMap, convert::TryInto, future::Future, iter::FromIterator, pin::Pin,
+    collections::BTreeMap, convert::TryInto,  iter::FromIterator,
     str::FromStr,
 };
 use subxt::utils::AccountId32;
@@ -1530,4 +1531,64 @@ pub async fn get_era_validators_grades(
         sessions: sessions,
         data,
     });
+}
+
+pub async fn update_cohort_validators_by_session(
+    path: Path<(String, EpochIndex)>,
+    cache: Data<RedisPool>,
+) -> Result<Json<CohortValidatorsChangedResult>, ApiError> {
+    let config = CONFIG.clone();
+    let mut conn = get_conn(&cache).await?;
+    let (cohort, session_index) = path.into_inner();
+
+    // load all session stashes
+    let stashes = get_validator_stashes_by_session(session_index, cache.clone()).await?;
+    let dn_stashes: Vec<AccountId32> =
+        try_fetch_stashes_from_remote_url(false, Some(cohort.clone())).await?;
+
+    let mut counter = 0;
+    for stash in stashes {
+        let stash = AccountId32::from_str(&*stash.to_string()).map_err(|e| {
+            ApiError::BadRequest(format!(
+                "Invalid account: {:?} error: {e:?}",
+                &*stash.to_string()
+            ))
+        })?;
+        if let Ok(serialized) = redis::cmd("GET")
+            .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+            .query_async::<Connection, String>(&mut conn as &mut Connection)
+            .await
+        {
+            let mut v = ValidatorProfileRecord::from(serialized);
+
+            if dn_stashes.contains(&stash) {
+                v.subset = Subset::TVP
+            } else if v.subset == Subset::TVP {
+                v.subset = Subset::NONTVP;
+            }
+
+            let serialized = serde_json::to_string(&v)?;
+            redis::pipe()
+                .atomic()
+                .cmd("SET")
+                .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+                .arg(serialized)
+                .cmd("EXPIRE")
+                .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+                .arg(config.cache_writer_prunning)
+                .query_async::<_, ()>(&mut conn as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+
+            counter += 1;
+        }
+
+    }
+
+
+    respond_json(CohortValidatorsChangedResult {
+        cohort,
+        session: session_index,
+        updated_counter: counter,
+    })
 }

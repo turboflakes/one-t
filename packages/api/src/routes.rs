@@ -30,7 +30,7 @@ use crate::handlers::{
     validators::{
         get_cohort_validators_grades, get_cohorts, get_era_validators_grades, get_eras,
         get_peer_by_authority, get_validator_by_stash, get_validator_grade_by_stash,
-        get_validator_profile_by_stash, get_validators,
+        get_validator_profile_by_stash, get_validators,update_cohort_validators_by_session
     },
     ws::init,
 };
@@ -88,6 +88,10 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
                         .route(
                             "/{cohort}/grades",
                             web::get().to(get_cohort_validators_grades),
+                        )
+                        .route(
+                            "/{cohort}/session/{session}",
+                            web::put().to(update_cohort_validators_by_session),
                         )
                         .route("", web::get().to(get_cohorts)),
                 )
