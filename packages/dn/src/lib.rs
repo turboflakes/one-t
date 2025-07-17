@@ -1,6 +1,7 @@
 use log::{info, warn};
 use onet_config::CONFIG;
 use onet_errors::OnetError;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -53,10 +54,12 @@ struct Response {
     term: Term,
 }
 
-/// Fetch stashes from 1kv endpoint https://nodes.web3.foundation/api/cohort/1/polkadot/
+/// Fetch stashes from 1kv endpoint
+/// eg. https://nodes.web3.foundation/api/cohort/1/polkadot/
+/// eg. https://nodes.web3.foundation/api/cohort/2-1/polkadot/
 pub async fn try_fetch_stashes_from_remote_url(
     is_loading: bool,
-    cohort: Option<u32>,
+    cohort: Option<String>,
 ) -> Result<Vec<AccountId32>, OnetError> {
     let config = CONFIG.clone();
 
@@ -66,13 +69,14 @@ pub async fn try_fetch_stashes_from_remote_url(
             .dn_url
             .to_lowercase()
             .split('/')
+            .filter(|s| !s.is_empty())
             .last()
-            .and_then(|s| s.parse().ok())
-            .expect("Failed to parse cohort number")
+            .expect("Failed to parse cohort from config.dn_url")
+            .to_string()
     });
 
     // Construct filename for caching
-    let filename = construct_cache_filename(cohort);
+    let filename = construct_cache_filename(cohort.clone());
 
     // Construct URL
     let url = construct_url(cohort)?;
@@ -88,28 +92,33 @@ pub async fn try_fetch_stashes_from_remote_url(
     Ok(parse_stashes(validators))
 }
 
-fn construct_cache_filename(cohort: u32) -> String {
+fn construct_cache_filename(cohort: impl AsRef<str>) -> String {
     let config = CONFIG.clone();
     format!(
         "{}{}_{}_cohort_{}",
         config.data_path,
         DN_VALIDATORS_FILENAME,
         config.chain_name.to_lowercase(),
-        cohort
+        cohort.as_ref()
     )
 }
 
-fn construct_url(cohort: u32) -> Result<Url, OnetError> {
+fn construct_url(cohort: impl AsRef<str>) -> Result<Url, OnetError> {
     let config = CONFIG.clone();
     let dn_url = config.dn_url.to_lowercase();
-    let base_url = dn_url
-        .trim_end_matches(|c: char| c.is_digit(10))
-        .trim_end_matches('/');
+
+    // Use regex to trim cohort patterns like /1/ or /2-1/ from the end of URL
+    let re = Regex::new(r"/\d+(-\d+)?(/?)$").expect("Failed to create regex");
+    let base_url = re
+        .replace(&dn_url, "")
+        .to_string()
+        .trim_end_matches('/')
+        .to_string();
 
     let url = format!(
         "{}/{}/{}/",
         base_url,
-        cohort,
+        cohort.as_ref(),
         config.chain_name.to_lowercase()
     );
 

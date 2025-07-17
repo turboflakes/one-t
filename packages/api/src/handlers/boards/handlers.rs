@@ -431,7 +431,7 @@ async fn is_session_data_available(
     Ok(exists)
 }
 
-async fn get_validator_stashes_by_session(
+pub async fn get_validator_stashes_by_session(
     session_index: EpochIndex,
     cache: Data<RedisPool>,
 ) -> Result<Vec<String>, ApiError> {
