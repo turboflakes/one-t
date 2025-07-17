@@ -14,6 +14,7 @@ onet-report = { path = "../report" }
 onet-pools = { path = "../pools" }
 onet-mcda = { path = "../mcda" }
 onet-errors = { path = "../errors" }
+onet-events = { path = "../events" }
 
 actix-web = { workspace = true }
 log = { workspace = true }

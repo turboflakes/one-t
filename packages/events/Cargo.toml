@@ -1,0 +1,15 @@
+[package]
+name = "onet-events"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description.workspace = true
+edition.workspace = true
+
+[dependencies]
+onet-records = { path = "../records" }
+
+codec = { workspace = true }
+serde = { workspace = true }
+subxt = { workspace = true }

@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 pub mod cache;
+pub mod events;
 pub mod limits;
 pub mod nomination_pools;
 pub mod provider;
@@ -35,3 +36,5 @@ pub use cache::{
 pub use nomination_pools::{
     cache_nomination_pool, cache_nomination_pool_nominees, cache_nomination_pool_stats,
 };
+
+pub use events::cache_event;

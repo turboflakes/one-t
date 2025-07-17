@@ -39,7 +39,6 @@ use onet_asset_hub_westend::{
         staking_rc_client::events::SessionReportReceived,
     },
 };
-
 use onet_asset_hub_westend::{
     fetch_active_era_info, fetch_bonded_controller_account, fetch_bonded_pools,
     fetch_era_reward_points, fetch_eras_total_stake, fetch_eras_validator_reward,
@@ -61,6 +60,7 @@ use onet_core::{
 use onet_discovery::try_fetch_discovery_data;
 use onet_dn::try_fetch_stashes_from_remote_url;
 use onet_errors::{CacheError, OnetError};
+use onet_events::{Event, Topics as EventTopics};
 use onet_matrix::FileInfo;
 use onet_mcda::scores::base_decimals;
 use onet_people_westend::{bytes_to_str, get_display_name, get_identity};
@@ -93,9 +93,11 @@ use std::{
 };
 
 use frame_metadata::RuntimeMetadataPrefixed;
+use serde_json::Value;
 use subxt::{
     backend::legacy::LegacyRpcMethods,
     config::substrate::{Digest, DigestItem},
+    events::EventDetails,
     ext::{frame_metadata, subxt_core::Metadata},
     tx::TxStatus,
     utils::{AccountId32, H256},
@@ -137,7 +139,10 @@ use relay_runtime::{
         // sp_consensus_babe::digests::PreDigest,
     },
     session::events::new_session::SessionIndex,
+    session::events::NewQueued,
     session::events::NewSession,
+    session::events::ValidatorDisabled,
+    session::events::ValidatorReenabled,
     session::storage::types::queued_keys::QueuedKeys,
     session::storage::types::validators::Validators as ValidatorSet,
     // staking_ah_client::events::CouldNotMergeAndDropped,
@@ -468,8 +473,9 @@ async fn process_relay_chain_events(
     let config = CONFIG.clone();
     let events = rc_api.events().at(rc_block_hash).await?;
 
-    for event in events.iter() {
+    for (i, event) in events.iter().enumerate() {
         let event = event?;
+
         if let Some(ev) = event.as_event::<CandidateIncluded>()? {
             if ev.0.descriptor.para_id == Id(config.asset_hub_para_id) {
                 let ah_block_hash = ev.0.descriptor.para_head;
@@ -490,6 +496,7 @@ async fn process_relay_chain_events(
             }
         } else if let Some(ev) = event.as_event::<NewSession>()? {
             info!("RC event {:?}", ev);
+
             process_new_session_event(
                 &rc_api,
                 records,
@@ -605,11 +612,8 @@ async fn process_asset_hub_events(
         } else if let Some(ev) = event.as_event::<OffenceReceived>()? {
             info!("AH event {:?}", ev);
         }
-        // TODO: Handle multi_block events
-        //  if pallet == "MultiBlock"
-        // || pallet == "MultiBlockVerifier"
-        // || pallet == "MultiBlockSigned"
-        // || pallet == "MultiBlockUnsigned"
+
+        try_run_cache_event(cache, event, ChainKey::AH, ah_block_number).await?;
     }
 
     // Cache pool stats every 10 minutes
@@ -618,6 +622,52 @@ async fn process_asset_hub_events(
 
     // Cache finalized block
     cache_finalized_block(cache, ChainKey::AH, ah_block_number.into()).await?;
+
+    Ok(())
+}
+
+pub async fn try_run_cache_event(
+    cache: &mut Connection,
+    event: EventDetails<PolkadotConfig>,
+    chain_key: ChainKey,
+    block_number: BlockNumber,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if !config.cache_writer_enabled {
+        return Ok(());
+    }
+
+    let pallet = event.pallet_name();
+    let variant = event.variant_name();
+    let field_values = event.field_values()?;
+    let event_data: Value = serde_json::to_value(&field_values)?;
+    let event_data_string = serde_json::to_string(&event_data)?;
+
+    let mut e = Event::new(
+        block_number,
+        event.index(),
+        pallet.to_string(),
+        variant.to_string(),
+    );
+    e.data = event_data_string.into();
+    e.topics = vec![EventTopics::AsyncStaking];
+
+    // if let Some(ev) = event.as_event::<PagedElectionProceeded>()? {
+    //     info!("AH event {:?}", ev);
+    // } else if let Some(ev) = event.as_event::<EraPaid>()? {
+    //     info!("AH event {:?}", ev);
+    // } else if let Some(ev) = event.as_event::<SessionReportReceived>()? {
+    //     info!("AH event {:?}", ev);
+    // } else if let Some(ev) = event.as_event::<OffenceReceived>()? {
+    //     info!("AH event {:?}", ev);
+    // } else if let Some(ev) = event.as_event::<OffenceReceived>()? {
+    //     info!("AH event {:?}", ev);
+    // }
+    // TODO: Handle multi_block events
+    //  if pallet == "MultiBlock"
+    // || pallet == "MultiBlockVerifier"
+    // || pallet == "MultiBlockSigned"
+    // || pallet == "MultiBlockUnsigned"
 
     Ok(())
 }

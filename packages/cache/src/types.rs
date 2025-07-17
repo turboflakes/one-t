@@ -33,6 +33,7 @@ pub enum Index {
     Current,
     Best,
     Finalized,
+    Pair(u64, u32),
 }
 
 impl std::fmt::Display for Index {
@@ -43,6 +44,37 @@ impl std::fmt::Display for Index {
             Self::Current => write!(f, "current"),
             Self::Best => write!(f, "best"),
             Self::Finalized => write!(f, "finalized"),
+            Self::Pair(a, b) => write!(f, "{}-{}", a, b),
+        }
+    }
+}
+
+impl FromStr for Index {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "current" => Ok(Index::Current),
+            "best" => Ok(Index::Best),
+            "finalized" => Ok(Index::Finalized),
+            // Try to parse as a pair (format: "u64:u32")
+            s if s.contains('-') => {
+                let parts: Vec<&str> = s.split('-').collect();
+                if parts.len() == 2 {
+                    match (parts[0].parse::<u64>(), parts[1].parse::<u32>()) {
+                        (Ok(a), Ok(b)) => Ok(Index::Pair(a, b)),
+                        _ => Ok(Index::Str(s.to_string())),
+                    }
+                } else {
+                    Ok(Index::Str(s.to_string()))
+                }
+            }
+            // Try to parse as a number first
+            _ => match s.parse::<u64>() {
+                Ok(num) => Ok(Index::Num(num)),
+                // If it's not a number, treat it as a string
+                Err(_) => Ok(Index::Str(s.to_string())),
+            },
         }
     }
 }
@@ -170,6 +202,7 @@ pub enum CacheKey {
     ValidatorProfileByAccount(AccountId32),
     // Events
     Event(ChainKey, Index),
+    EventsBySession(ChainKey, EpochIndex),
     // NominationPools
     NominationPoolRecord(PoolId),
     NominationPoolIdsBySession(EpochIndex),
@@ -239,8 +272,11 @@ impl std::fmt::Display for CacheKey {
             Self::ValidatorProfileByAccount(account) => {
                 write!(f, "vpa:{}", account)
             }
-            Self::Event(chain, block_index) => {
-                write!(f, "ev:{}:{}", chain, block_index)
+            Self::Event(chain, event_pair_index) => {
+                write!(f, "ev:{}:{}", chain, event_pair_index)
+            }
+            Self::EventsBySession(chain, session_index) => {
+                write!(f, "evs:{}:{}", chain, session_index)
             }
             Self::NominationPoolRecord(pool_id) => {
                 write!(f, "np:{}", pool_id)
