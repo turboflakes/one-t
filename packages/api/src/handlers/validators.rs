@@ -33,7 +33,7 @@ use actix_web::{
     web::{Data, Json, Path, Query},
     HttpRequest,
 };
-use log::warn;
+use log::{debug, warn};
 use onet_cache::{get_conn, CacheKey, Index, RedisPool, Verbosity};
 use onet_config::CONFIG;
 use onet_dn::try_fetch_stashes_from_remote_url;
@@ -518,12 +518,25 @@ async fn get_validator_by_authority_key(
     if show_profile {
         if let Some(stash) = data.get("address") {
             if let Ok(stash) = AccountId32::from_str(&stash) {
-                let profile: String = redis::cmd("GET")
+                // NOTE: Fetching validator profile from Redis cache handling Nil cases
+                if let Ok(value) = redis::cmd("GET")
                     .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
-                    .query_async(&mut conn as &mut Connection)
+                    .query_async::<Connection, redis::Value>(&mut conn as &mut Connection)
                     .await
-                    .map_err(CacheError::RedisCMDError)?;
-                data.insert(String::from("profile"), profile);
+                {
+                    match value {
+                        redis::Value::Data(raw_data) => {
+                            let profile: String =
+                                String::from_utf8(raw_data).expect("Data should be valid utf8");
+                            data.insert(String::from("profile"), profile);
+                        }
+                        _ => {
+                            debug!("Failed to fetch profile for: {}", stash);
+                        }
+                    }
+                } else {
+                    debug!("Failed to fetch profile for: {}", stash);
+                }
             }
         }
     }
