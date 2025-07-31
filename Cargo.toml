@@ -14,6 +14,7 @@ members = [
     "packages/report",
     "packages/chains",
     "packages/matrix",
+    "packages/events",
     # "packages/chains/kusama",
     # "packages/chains/polkadot",
     # "packages/chains/paseo",
