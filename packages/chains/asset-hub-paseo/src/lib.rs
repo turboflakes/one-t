@@ -20,7 +20,7 @@
 // SOFTWARE.
 
 #[subxt::subxt(
-    runtime_metadata_path = "artifacts/metadata/asset_hub_westend_metadata.scale",
+    runtime_metadata_path = "artifacts/metadata/asset_hub_paseo_metadata.scale",
     derive_for_all_types = "PartialEq, Clone"
 )]
 pub mod asset_hub_runtime {}
@@ -43,7 +43,7 @@ use subxt::{
     OnlineClient, PolkadotConfig,
 };
 
-pub type AssetHubCall = asset_hub_runtime::runtime_types::asset_hub_westend_runtime::RuntimeCall;
+pub type AssetHubCall = asset_hub_runtime::runtime_types::asset_hub_paseo_runtime::RuntimeCall;
 pub type NominationPoolsCall =
     asset_hub_runtime::runtime_types::pallet_nomination_pools::pallet::Call;
 
