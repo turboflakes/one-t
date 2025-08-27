@@ -1227,6 +1227,12 @@ pub struct DiscoveryRecord {
 }
 
 impl DiscoveryRecord {
+    pub fn new() -> Self {
+        Self {
+            ..Default::default()
+        }
+    }
+
     pub fn with_authority_discovery_key(authority_discovery_key: AuthorityDiscoveryKey) -> Self {
         Self {
             authority_discovery_key: hex::encode(authority_discovery_key),

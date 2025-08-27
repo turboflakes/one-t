@@ -1221,6 +1221,11 @@ async fn calculate_validator_grade_by_stash(
         ))
     })?;
 
+    warn!(
+        "___calculate_validator_grade_by_stash {:?} {:?}",
+        stash, params
+    );
+
     // get current session
     let requested_session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
@@ -1339,6 +1344,35 @@ async fn calculate_validator_grade_by_stash(
 
     let bur = burs.iter().sum::<f64>() / para_epochs as f64;
 
+    warn!("___params.show_discovery {:?}", params.show_discovery);
+
+    let mut discovery_serialized = String::new();
+    if params.show_discovery {
+        let attempts = config.discovery_epoch_rate * config.discovery_history_attempts;
+        let authority_key =
+            get_authority_key_from_stash_and_epoch(&stash, requested_session_index, &mut conn)
+                .await?;
+        let data = get_discovery_data(
+            &authority_key.to_string(),
+            &mut conn,
+            attempts.try_into().unwrap(),
+            None,
+        )
+        .await?;
+
+        // Get the serialized discovery data
+        discovery_serialized = data
+            .get("discovery")
+            .unwrap_or(&"{}".to_string())
+            .to_string();
+        // let dr: DiscoveryRecord = serde_json::from_str(&serialized).unwrap_or_default();
+
+        warn!("___discovery {:?}", discovery_serialized);
+        // if !discovery.is_empty() {
+        //     auth.extend(discovery);
+        // }
+    }
+
     if params.show_summary {
         return Ok(ValidatorGradeResult {
             address: stash.to_string(),
@@ -1375,6 +1409,7 @@ async fn calculate_validator_grade_by_stash(
                 .map(|bitfields| bitfields.unavailability())
                 .sum(),
             sessions_data: data.into(),
+            discovery: serde_json::from_str(&discovery_serialized).unwrap_or_default(),
             ..Default::default()
         });
     }
@@ -1414,6 +1449,7 @@ async fn calculate_validator_grade_by_stash(
             .map(|bitfields| bitfields.unavailability())
             .sum(),
         sessions: data.iter().map(|v| v.session).collect(),
+        discovery: serde_json::from_str(&discovery_serialized).unwrap_or_default(),
         ..Default::default()
     });
 }

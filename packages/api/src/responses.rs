@@ -799,6 +799,8 @@ pub struct ValidatorGradeResult {
     pub sessions: Vec<u32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sessions_data: Vec<ValidatorResult>,
+    #[serde(skip_serializing_if = "DiscoveryRecord::is_empty")]
+    pub discovery: DiscoveryRecord,
 }
 
 pub type NetworkStatResult = NetworkSessionStats;
