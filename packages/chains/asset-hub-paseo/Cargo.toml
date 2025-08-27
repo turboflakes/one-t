@@ -1,0 +1,16 @@
+[package]
+name = "onet-asset-hub-paseo"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description.workspace = true
+edition.workspace = true
+
+[dependencies]
+onet-errors = { path = "../../errors" }
+onet-records = { path = "../../records" }
+codec = { workspace = true }
+subxt = { workspace = true }
+scale-decode = { workspace = true }
+scale-encode = { workspace = true }
