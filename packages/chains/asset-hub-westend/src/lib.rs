@@ -227,7 +227,7 @@ pub async fn fetch_era_reward_points(
     api: &OnlineClient<PolkadotConfig>,
     ah_block_hash: H256,
     era: EraIndex,
-) -> Result<EraRewardPoints<AccountId32>, OnetError> {
+) -> Result<EraRewardPoints, OnetError> {
     let addr = asset_hub_runtime::storage()
         .staking()
         .eras_reward_points(era);
