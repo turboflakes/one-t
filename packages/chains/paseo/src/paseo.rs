@@ -2876,7 +2876,7 @@ pub async fn cache_session_stats_records(
 
     // Log sesssion cache processed duration time
     info!(
-        "Session #{} stats cached ({:?})",
+        "AH Session #{} stats cached ({:?})",
         epoch_index,
         start.elapsed()
     );
@@ -2917,7 +2917,7 @@ async fn collect_nominators_data(
         counter += 1;
     }
     info!(
-        "Total Nominators {} collected ({:?})",
+        "AH Total Nominators {} collected ({:?})",
         counter,
         start.elapsed()
     );
