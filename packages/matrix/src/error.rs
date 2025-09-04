@@ -19,6 +19,27 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod criterias;
-pub mod error;
-pub mod scores;
+use std::string::String;
+use thiserror::Error;
+
+/// Matrix specific error messages
+#[derive(Error, Debug)]
+pub enum MatrixError {
+    #[error("Reqwest error: {0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("ParseError error: {0}")]
+    ParseError(#[from] url::ParseError),
+    #[error("SerdeError error: {0}")]
+    SerdeError(#[from] serde_json::Error),
+    #[error("IOError error: {0}")]
+    IOError(#[from] std::io::Error),
+    #[error("{0}")]
+    Other(String),
+}
+
+/// Convert MatrixError to String
+impl From<MatrixError> for String {
+    fn from(error: MatrixError) -> Self {
+        format!("{}", error).to_string()
+    }
+}

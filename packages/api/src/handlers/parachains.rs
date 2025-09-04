@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::ApiError;
 use crate::{
     helpers::respond_json,
     responses::{CacheMap, ParachainsResult},
@@ -26,10 +27,10 @@ use crate::{
 use actix_web::web::{Data, Json, Query};
 use log::warn;
 use onet_cache::{
+    error::CacheError,
     provider::{get_conn, RedisPool},
     types::{CacheKey, Index},
 };
-use onet_errors::{ApiError, CacheError};
 use onet_records::EpochIndex;
 use redis::aio::Connection;
 use serde::Deserialize;

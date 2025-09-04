@@ -19,6 +19,26 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod criterias;
-pub mod error;
-pub mod scores;
+use std::string::String;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum DnError {
+    #[error("SerdeError error: {0}")]
+    SerdeError(#[from] serde_json::Error),
+    #[error("Reqwest error: {0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("IOError error: {0}")]
+    IOError(#[from] std::io::Error),
+    #[error("ParseError error: {0}")]
+    ParseError(#[from] url::ParseError),
+    #[error("Other error: {0}")]
+    Other(String),
+}
+
+/// Convert DnError to Sttring
+impl From<DnError> for String {
+    fn from(error: DnError) -> Self {
+        format!("{}", error).to_string()
+    }
+}

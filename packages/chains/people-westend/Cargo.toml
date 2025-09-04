@@ -8,7 +8,6 @@ description.workspace = true
 edition.workspace = true
 
 [dependencies]
-onet-errors = { path = "../../errors" }
 onet-core = { path = "../../core" }
 onet-records = { path = "../../records" }
 

@@ -13,7 +13,7 @@ onet-cache = { path = "../../cache" }
 onet-config = { path = "../../config" }
 onet-discovery = { path = "../../discovery" }
 onet-dn = { path = "../../dn" }
-onet-errors = { path = "../../errors" }
+onet-core = { path = "../../core" }
 onet-matrix = { path = "../../matrix" }
 onet-core = { path = "../../core" }
 onet-mcda = { path = "../../mcda" }

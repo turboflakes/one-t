@@ -21,10 +21,12 @@
 //
 use log::info;
 use multiaddr::{Multiaddr, Protocol};
-use onet_cache::types::{CacheKey, Verbosity};
+use onet_cache::{
+    error::CacheError,
+    types::{CacheKey, Verbosity},
+};
 use onet_config::CONFIG;
-use onet_core::Onet;
-use onet_errors::{CacheError, OnetError};
+use onet_core::{error::OnetError, Onet};
 use onet_records::Records;
 use redis::aio::Connection;
 use regex::Regex;

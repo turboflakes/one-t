@@ -19,8 +19,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::ApiError;
 use actix_web::{web::Json, HttpResponse};
-use onet_errors::ApiError;
 use serde::Serialize;
 
 /// Helper function to reduce boilerplate of an OK/Json response

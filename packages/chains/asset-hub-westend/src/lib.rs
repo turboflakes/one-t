@@ -36,7 +36,7 @@ pub use asset_hub_runtime::{
     staking::storage::types::nominators::Nominators,
 };
 
-use onet_errors::OnetError;
+use onet_core::error::OnetError;
 use onet_records::EraIndex;
 use subxt::{
     utils::{AccountId32, H256},

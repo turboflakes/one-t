@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 pub mod cache;
+pub mod error;
 pub mod limits;
 pub mod nomination_pools;
 pub mod provider;

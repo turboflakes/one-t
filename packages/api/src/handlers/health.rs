@@ -19,10 +19,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::ApiError;
 use crate::helpers::respond_json;
 use actix_web::web::{Data, Json};
-use onet_cache::provider::{get_conn, RedisPool};
-use onet_errors::{ApiError, CacheError};
+use onet_cache::{
+    error::CacheError,
+    provider::{get_conn, RedisPool},
+};
 use redis::aio::Connection;
 use serde::{Deserialize, Serialize};
 

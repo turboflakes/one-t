@@ -14,7 +14,6 @@ onet-chains = { path = "../chains" }
 onet-config = { path = "../config" }
 onet-core = { path = "../core" }
 onet-dn = { path = "../dn" }
-onet-errors = { path = "../errors" }
 # onet-kusama = { path = "../chains/kusama" }
 onet-matrix = { path = "../matrix" }
 onet-paseo = { path = "../chains/paseo" }

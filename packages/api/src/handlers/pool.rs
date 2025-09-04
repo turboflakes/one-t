@@ -19,15 +19,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::ApiError;
 use crate::handlers::params::Params;
 use crate::helpers::respond_json;
 use crate::responses::{PoolResult, PoolsResult};
 use actix_web::web::{Data, Json, Path, Query};
 use onet_cache::{
+    error::CacheError,
     provider::{get_conn, RedisPool},
     types::{CacheKey, Index},
 };
-use onet_errors::{ApiError, CacheError};
 use onet_pools::{Pool, PoolId, PoolNominees, PoolNomineesStats};
 use onet_records::EpochIndex;
 use redis::aio::Connection;

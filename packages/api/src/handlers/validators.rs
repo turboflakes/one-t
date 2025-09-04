@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::ApiError;
 use crate::{
     handlers::boards::handlers::get_validator_stashes_by_session,
     helpers::respond_json,
@@ -35,12 +36,12 @@ use actix_web::{
 };
 use log::{debug, warn};
 use onet_cache::{
+    error::CacheError,
     provider::{get_conn, RedisPool},
     types::{CacheKey, Index, Verbosity},
 };
 use onet_config::CONFIG;
-use onet_dn::try_fetch_stashes_from_remote_url;
-use onet_errors::{ApiError, CacheError};
+use onet_dn::dn::try_fetch_stashes_from_remote_url;
 use onet_pools::{PoolId, PoolNominees};
 use onet_records::{
     grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset, ValidatorProfileRecord,
@@ -329,8 +330,6 @@ async fn get_session_authorities(
     })
 }
 
-use onet_errors::OnetError;
-
 /// Recursively fetches discovery data from cache
 ///
 /// # Arguments
@@ -340,13 +339,13 @@ use onet_errors::OnetError;
 /// * `current_key` - Current key being checked
 ///
 /// # Returns
-/// * `Result<BTreeMap<String, String>, OnetError>` - Discovery data or empty map if not found
+/// * `Result<BTreeMap<String, String>, ApiError>` - Discovery data or empty map if not found
 pub async fn get_discovery_data(
     original_key: &str,
     conn: &mut Connection,
     attempts: usize,
     current_key: Option<AuthorityKey>,
-) -> Result<BTreeMap<String, String>, OnetError> {
+) -> Result<BTreeMap<String, String>, ApiError> {
     // Use the provided key or parse the original on first call
     let current_key = match current_key {
         Some(key) => key,
@@ -431,7 +430,7 @@ async fn get_discovery_from_cache(
 async fn get_address_from_authority_key(
     key: &AuthorityKey,
     conn: &mut Connection,
-) -> Result<AccountId32, OnetError> {
+) -> Result<AccountId32, ApiError> {
     let address: String = redis::cmd("HGET")
         .arg(key.to_string())
         .arg("address")
@@ -439,7 +438,8 @@ async fn get_address_from_authority_key(
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-    let acc = AccountId32::from_str(&address).map_err(|_| OnetError::AccountId32Error)?;
+    let acc = AccountId32::from_str(&address)
+        .map_err(|e| ApiError::InternalServerError(format!("{:?}", e)))?;
 
     Ok(acc)
 }

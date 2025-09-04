@@ -18,6 +18,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+//
 
 use actix::Actor;
 use actix_cors::Cors;
@@ -27,9 +28,8 @@ use onet_api::{routes::routes, ws::server};
 use onet_cache::provider::add_pool;
 use onet_chains::SupportedRuntime;
 use onet_config::CONFIG;
-use onet_core::Onet;
+use onet_core::{core::Onet, error::OnetError};
 use onet_dn::try_fetch_stashes_from_remote_url;
-use onet_errors::OnetError;
 // use onet_kusama::kusama;
 use onet_matrix::Matrix;
 use onet_paseo::paseo;

@@ -19,11 +19,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use super::limits::build_limits_from_session;
-use super::types::{CacheKey, ChainKey, Index, Trait, Verbosity};
+use crate::error::CacheError;
+use crate::limits::build_limits_from_session;
+use crate::types::{CacheKey, ChainKey, Index, Trait, Verbosity};
 use log::info;
 use onet_config::{Config, CONFIG};
-use onet_errors::{CacheError, OnetError};
 use onet_records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, NetworkSessionStats,
     ParaId, ParaRecord, ParaStats, ParachainRecord, Records, SessionStats, ValidatorProfileRecord,
@@ -34,7 +34,7 @@ use std::{collections::BTreeMap, result::Result, time::Instant};
 use subxt::utils::AccountId32;
 
 // Cache records at every block
-pub async fn cache_records(cache: &mut Connection, records: &Records) -> Result<(), OnetError> {
+pub async fn cache_records(cache: &mut Connection, records: &Records) -> Result<(), CacheError> {
     let config = CONFIG.clone();
     if !config.cache_writer_enabled {
         return Ok(());
@@ -74,7 +74,7 @@ async fn process_authority_records(
     records: &Records,
     session_stats: &mut SessionStats,
     parachains: &mut BTreeMap<ParaId, ParachainRecord>,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let Some(authorities) = records.get_authorities(None) else {
         return Ok(());
     };
@@ -101,7 +101,7 @@ async fn process_authority(
     session_stats: &mut SessionStats,
     parachains: &mut BTreeMap<ParaId, ParachainRecord>,
     authority_idx: AuthorityIndex,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let Some(authority_record) = records.get_authority_record(authority_idx, None) else {
         return Ok(());
     };
@@ -161,7 +161,7 @@ fn update_parachains_with_para_record_data(
     parachains: &mut BTreeMap<ParaId, ParachainRecord>,
     para_record: &ParaRecord,
     authority_idx: AuthorityIndex,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     // aggregate parachains counters
     for (para_id, stats) in para_record.para_stats().iter() {
         let pm = parachains
@@ -199,7 +199,7 @@ async fn cache_para_stats_data(
     config: &Config,
     authority_key: &CacheKey,
     para_record: &ParaRecord,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     // cache para.stats as a different cache key
     let serialized = serde_json::to_string(&para_record.para_stats())?;
     redis::pipe()
@@ -229,7 +229,7 @@ async fn cache_para_summary_data(
     config: &Config,
     authority_key: &CacheKey,
     para_record: &ParaRecord,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     // cache para.summary as a different cache key
     let summary = ParaStats {
         points: para_record.total_points(),
@@ -266,7 +266,7 @@ pub async fn cache_best_block(
     cache: &mut Connection,
     chain_key: ChainKey,
     block_number: BlockNumber,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     redis::cmd("SET")
         .arg(CacheKey::BestBlock(chain_key))
         .arg(block_number.to_string())
@@ -281,7 +281,7 @@ pub async fn cache_finalized_block(
     cache: &mut Connection,
     chain_key: ChainKey,
     block_number: BlockNumber,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     redis::cmd("SET")
         .arg(CacheKey::FinalizedBlock(chain_key))
         .arg(block_number.to_string())
@@ -297,7 +297,7 @@ async fn cache_authority_data(
     config: &Config,
     authority_key: &CacheKey,
     authority_data: &BTreeMap<String, String>,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let data = authority_data.clone();
     redis::pipe()
         .atomic()
@@ -320,7 +320,7 @@ async fn cache_session_stats(
     current_epoch: EpochIndex,
     finalized_block: &BlockNumber,
     session_stats: &SessionStats,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let session_stats_serialized = serde_json::to_string(session_stats)?;
     let mut finalized_block_data: BTreeMap<String, String> = BTreeMap::new();
     finalized_block_data.insert(
@@ -366,7 +366,7 @@ async fn cache_parachain_stats(
     config: &Config,
     current_epoch: EpochIndex,
     parachains: &BTreeMap<ParaId, ParachainRecord>,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     for (para_id, records) in parachains.iter() {
         let serialized = serde_json::to_string(&records)?;
         redis::pipe()
@@ -391,7 +391,7 @@ pub async fn cache_records_at_new_session(
     cache: &mut Connection,
     records: &Records,
     first_session_index: EpochIndex,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let config = CONFIG.clone();
     if !config.cache_writer_enabled {
         return Ok(());
@@ -418,7 +418,7 @@ async fn process_records(
     cache: &mut Connection,
     config: &Config,
     records: &Records,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let Some(authorities) = records.get_authorities(None) else {
         return Ok(());
     };
@@ -435,7 +435,7 @@ async fn process_authority_idx(
     config: &Config,
     records: &Records,
     authority_idx: AuthorityIndex,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let Some(authority_record) = records.get_authority_record(authority_idx, None) else {
         return Ok(());
     };
@@ -483,7 +483,7 @@ async fn cache_authority_stash(
     config: &Config,
     authority_key: &CacheKey,
     stash: &AccountId32,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let mut data: BTreeMap<String, String> = BTreeMap::new();
     data.insert(String::from("address"), stash.to_string());
     redis::pipe()
@@ -509,7 +509,7 @@ async fn cache_authority_key(
     current_epoch: EpochIndex,
     authority_idx: AuthorityIndex,
     stash: &AccountId32,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let mut data: BTreeMap<String, String> = BTreeMap::new();
     data.insert(String::from("era"), current_era.to_string());
     data.insert(String::from("session"), current_epoch.to_string());
@@ -541,7 +541,7 @@ async fn cache_authority_key_into_authorities(
     config: &Config,
     current_epoch: EpochIndex,
     authority_key: &CacheKey,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     redis::pipe()
         .atomic()
         .cmd("SADD")
@@ -563,7 +563,7 @@ async fn cache_para_authority_key_into_authorities(
     config: &Config,
     current_epoch: EpochIndex,
     authority_key: &CacheKey,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     redis::pipe()
         .atomic()
         .cmd("SADD")
@@ -584,7 +584,7 @@ async fn cache_session_by_index(
     config: &Config,
     records: &Records,
     first_session_index: u32,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let Some(start_block) = records.start_block(None) else {
         return Ok(());
     };
@@ -652,7 +652,7 @@ pub async fn cache_validator_profile(
     network: &Network,
     stash: &AccountId32,
     current_epoch: EpochIndex,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let serialized = serde_json::to_string(&profile)?;
     redis::pipe()
         .atomic()
@@ -730,7 +730,7 @@ pub async fn cache_validator_profile_only(
     config: &Config,
     profile: &ValidatorProfileRecord,
     stash: &AccountId32,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let serialized = serde_json::to_string(&profile)?;
     redis::pipe()
         .atomic()
@@ -752,7 +752,7 @@ pub async fn cache_network_stats_at_session(
     config: &Config,
     stats: &NetworkSessionStats,
     current_epoch: EpochIndex,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let serialized = serde_json::to_string(&stats)?;
     redis::pipe()
         .atomic()
@@ -779,7 +779,7 @@ pub async fn cache_board_limits_at_session(
     rc_block_number: BlockNumber,
     current_era: EraIndex,
     current_epoch: EpochIndex,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     // Set synced session associated with era (useful for nomi boards)
     let mut era_data: BTreeMap<String, String> = BTreeMap::new();
     era_data.insert(String::from("synced_session"), current_epoch.to_string());
@@ -828,7 +828,7 @@ pub async fn cache_latest_pushed_block_v2(
     client_id: &usize,
     cache_key: CacheKey,
     block_number: BlockNumber,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     redis::pipe()
         .atomic()
         .cmd("SET")
@@ -855,7 +855,7 @@ pub async fn cache_latest_pushed_block(
     config: &Config,
     client_id: &usize,
     rc_block_number: BlockNumber,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     redis::pipe()
         .atomic()
         .cmd("SET")

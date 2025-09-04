@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::ApiError;
 use crate::{
     responses::{
         AuthorityKey, AuthorityKeyCache, BlockResult, BlocksResult, CacheMap, ParachainsResult,
@@ -33,7 +34,6 @@ use onet_cache::{
     types::{CacheKey, ChainKey, Index, Verbosity},
 };
 use onet_config::{Config, CONFIG};
-use onet_errors::OnetError;
 use onet_records::{BlockNumber, EpochIndex, SS58};
 
 use futures::executor::block_on;
@@ -138,7 +138,7 @@ impl Channel {
         topic: &Topic,
         client_id: ClientId,
         act: &Channel,
-    ) -> Result<(), OnetError> {
+    ) -> Result<(), ApiError> {
         let config = CONFIG.clone();
         let mut conn = get_conn(cache).await?;
 
@@ -177,7 +177,7 @@ impl Channel {
         client_id: ClientId,
         number_previous_sessions: u8,
         act: &Channel,
-    ) -> Result<(), OnetError> {
+    ) -> Result<(), ApiError> {
         // Process Relay Chain finalized blocks
         Self::process_relay_chain_finalized_blocks(
             conn,
@@ -200,7 +200,7 @@ impl Channel {
         client_id: ClientId,
         number_previous_sessions: u8,
         act: &Channel,
-    ) -> Result<(), OnetError> {
+    ) -> Result<(), ApiError> {
         let chain_key = ChainKey::RC;
         let cache_key = CacheKey::FinalizedBlock(chain_key.clone());
         if let Ok(finalized_block_number) = redis::cmd("GET")
@@ -337,7 +337,7 @@ impl Channel {
         config: &Config,
         client_id: ClientId,
         act: &Channel,
-    ) -> Result<(), OnetError> {
+    ) -> Result<(), ApiError> {
         let chain_key = ChainKey::AH;
         let cache_key = CacheKey::FinalizedBlock(chain_key.clone());
         if let Ok(Some(block_number)) = redis::cmd("GET")
@@ -390,7 +390,7 @@ impl Channel {
         config: &Config,
         client_id: ClientId,
         act: &Channel,
-    ) -> Result<(), OnetError> {
+    ) -> Result<(), ApiError> {
         for chain_key in [ChainKey::RC, ChainKey::AH] {
             let cache_key = CacheKey::BestBlock(chain_key.clone());
             if let Ok(Some(block_number)) = redis::cmd("GET")
@@ -440,7 +440,7 @@ impl Channel {
         Ok(())
     }
 
-    async fn handle_new_session(conn: &mut Connection, act: &Channel) -> Result<(), OnetError> {
+    async fn handle_new_session(conn: &mut Connection, act: &Channel) -> Result<(), ApiError> {
         if let Ok(current) = redis::cmd("GET")
             .arg(CacheKey::SessionByIndex(Index::Str(String::from(
                 "current",
@@ -505,7 +505,7 @@ impl Channel {
         client_id: ClientId,
         account: &SS58,
         act: &Channel,
-    ) -> Result<(), OnetError> {
+    ) -> Result<(), ApiError> {
         let cache_key = CacheKey::FinalizedBlock(ChainKey::RC);
         if let Ok(finalized_block_number) = redis::cmd("GET")
             .arg(cache_key.to_string())
@@ -593,7 +593,7 @@ impl Channel {
         index: EpochIndex,
         verbosity: &Verbosity,
         act: &Channel,
-    ) -> Result<(), OnetError> {
+    ) -> Result<(), ApiError> {
         let cache_key = CacheKey::FinalizedBlock(ChainKey::RC);
         if let Ok(finalized_block_number) = redis::cmd("GET")
             .arg(cache_key.to_string())
@@ -681,7 +681,7 @@ impl Channel {
         client_id: ClientId,
         index: EpochIndex,
         act: &Channel,
-    ) -> Result<(), OnetError> {
+    ) -> Result<(), ApiError> {
         let cache_key = CacheKey::FinalizedBlock(ChainKey::RC);
         if let Ok(finalized_block_number) = redis::cmd("GET")
             .arg(cache_key.to_string())

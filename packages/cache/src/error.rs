@@ -19,6 +19,31 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod criterias;
-pub mod error;
-pub mod scores;
+use std::string::String;
+use thiserror::Error;
+
+/// Cache specific error messages
+#[derive(Error, Debug)]
+pub enum CacheError {
+    #[error("Could not get redis connection from pool : {0}")]
+    RedisPoolError(mobc::Error<mobc_redis::redis::RedisError>),
+    #[error("Error parsing string from redis result: {0}")]
+    RedisTypeError(mobc_redis::redis::RedisError),
+    #[error("Error executing redis command: {0}")]
+    RedisCMDError(mobc_redis::redis::RedisError),
+    #[error("Error creating redis client: {0}")]
+    RedisClientError(mobc_redis::redis::RedisError),
+    #[error("Pong response error")]
+    RedisPongError,
+    #[error("SerdeError error: {0}")]
+    SerdeError(#[from] serde_json::Error),
+    #[error("Other error: {0}")]
+    Other(String),
+}
+
+/// Convert CacheError to Sttring
+impl From<CacheError> for String {
+    fn from(error: CacheError) -> Self {
+        format!("{}", error).to_string()
+    }
+}

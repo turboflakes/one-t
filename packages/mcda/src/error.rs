@@ -19,6 +19,25 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod criterias;
-pub mod error;
-pub mod scores;
+use std::string::String;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum McdaError {
+    /// Other error.
+    #[error("Other error: {0}")]
+    Other(String),
+}
+
+impl From<&str> for McdaError {
+    fn from(error: &str) -> Self {
+        McdaError::Other(error.into())
+    }
+}
+
+/// Convert McdaError to Sttring
+impl From<McdaError> for String {
+    fn from(error: McdaError) -> Self {
+        format!("{}", error).to_string()
+    }
+}

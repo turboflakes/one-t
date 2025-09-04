@@ -20,9 +20,9 @@
 // SOFTWARE.
 //
 
-use super::types::CacheKey;
+use crate::error::CacheError;
+use crate::types::CacheKey;
 use onet_config::Config;
-use onet_errors::{CacheError, OnetError};
 use onet_pools::{Pool, PoolId, PoolNominees, PoolStats};
 use onet_records::EpochIndex;
 
@@ -35,7 +35,7 @@ pub async fn cache_nomination_pool(
     pool: &Pool,
     pool_id: PoolId,
     current_epoch: EpochIndex,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let serialized = serde_json::to_string(&pool)?;
     redis::pipe()
         .atomic()
@@ -65,7 +65,7 @@ pub async fn cache_nomination_pool_nominees(
     pool_nominees: &PoolNominees,
     pool_id: PoolId,
     current_epoch: EpochIndex,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let serialized = serde_json::to_string(&pool_nominees)?;
     redis::pipe()
         .atomic()
@@ -94,7 +94,7 @@ pub async fn cache_nomination_pool_stats(
     stats: &PoolStats,
     pool_id: PoolId,
     current_epoch: EpochIndex,
-) -> Result<(), OnetError> {
+) -> Result<(), CacheError> {
     let serialized = serde_json::to_string(&stats)?;
     redis::pipe()
         .atomic()

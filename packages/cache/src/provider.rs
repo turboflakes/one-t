@@ -19,12 +19,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::CacheError;
 use actix_web::web;
 use log::{error, info};
 use mobc::{Connection, Pool};
 use mobc_redis::RedisConnectionManager;
 use onet_config::{Config, CONFIG};
-use onet_errors::CacheError;
 use std::time::Duration;
 use std::{thread, time};
 

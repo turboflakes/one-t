@@ -10,7 +10,6 @@ edition.workspace = true
 [dependencies]
 onet-chains = { path = "../chains" }
 onet-config = { path = "../config" }
-onet-errors = { path = "../errors" }
 onet-report = { path = "../report" }
 
 async-recursion = { workspace = true }
@@ -21,3 +20,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 subxt = { workspace = true }
 url = { workspace = true }
+thiserror = { workspace = true }

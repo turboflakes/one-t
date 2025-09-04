@@ -20,7 +20,7 @@
 // SOFTWARE.
 
 use crate::criterias::{CriteriaLimits, CriteriaWeights, WEIGHTS_CAPACITY};
-use onet_errors::ApiError;
+use crate::error::McdaError;
 use onet_records::{ValidatorProfileRecord, DECIMALS};
 use std::result::Result;
 
@@ -58,7 +58,7 @@ pub fn calculate_scores(
     limits: &CriteriaLimits,
     weights: &CriteriaWeights,
     chain_token_decimals: u32,
-) -> Result<Scores, ApiError> {
+) -> Result<Scores, McdaError> {
     let mut scores: Scores = Vec::with_capacity(WEIGHTS_CAPACITY);
 
     scores.push(

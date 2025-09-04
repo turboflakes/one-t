@@ -20,8 +20,8 @@
 // SOFTWARE.
 //
 
-use super::types::{CacheKey, Trait};
-use onet_errors::{CacheError, OnetError};
+use crate::error::CacheError;
+use crate::types::{CacheKey, Trait};
 use onet_mcda::criterias::{CriteriaLimits, Interval};
 use onet_records::EpochIndex;
 
@@ -32,7 +32,7 @@ async fn calculate_min_limit(
     cache: &mut Connection,
     session_index: EpochIndex,
     attribute: Trait,
-) -> Result<u64, OnetError> {
+) -> Result<u64, CacheError> {
     let v: Vec<(String, u64)> = redis::cmd("ZRANGE")
         .arg(CacheKey::NomiBoardBySessionAndTrait(
             session_index,
@@ -58,7 +58,7 @@ async fn calculate_max_limit(
     cache: &mut Connection,
     session_index: EpochIndex,
     attribute: Trait,
-) -> Result<u64, OnetError> {
+) -> Result<u64, CacheError> {
     let v: Vec<(String, u64)> = redis::cmd("ZRANGE")
         .arg(CacheKey::NomiBoardBySessionAndTrait(
             session_index,
@@ -85,7 +85,7 @@ async fn calculate_min_max_interval(
     cache: &mut Connection,
     session_index: EpochIndex,
     attribute: Trait,
-) -> Result<Interval, OnetError> {
+) -> Result<Interval, CacheError> {
     let max = calculate_max_limit(cache, session_index, attribute.clone()).await?;
     let min = calculate_min_limit(cache, session_index, attribute).await?;
     Ok(Interval { min, max })
@@ -94,7 +94,7 @@ async fn calculate_min_max_interval(
 pub async fn build_limits_from_session(
     cache: &mut Connection,
     session_index: EpochIndex,
-) -> Result<CriteriaLimits, OnetError> {
+) -> Result<CriteriaLimits, CacheError> {
     let own_stake_interval =
         calculate_min_max_interval(cache, session_index, Trait::OwnStake).await?;
 

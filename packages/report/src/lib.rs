@@ -19,9 +19,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+pub mod error;
+use crate::error::ReportError;
 use log::info;
 use onet_config::CONFIG;
-use onet_errors::OnetError;
 use onet_records::{
     grade, AuthorityIndex, AuthorityRecord, Grade, ParaId, ParaRecord, ParaStats, Pattern, Points,
     Subset,
@@ -166,7 +167,7 @@ pub struct Network {
 }
 
 impl Network {
-    pub async fn load(rpc: &LegacyRpcMethods<PolkadotConfig>) -> Result<Network, OnetError> {
+    pub async fn load(rpc: &LegacyRpcMethods<PolkadotConfig>) -> Result<Network, ReportError> {
         let properties = rpc.system_properties().await?;
 
         // Get Network name
@@ -303,7 +304,7 @@ impl Report {
         self.body.join("<br>")
     }
 
-    pub fn save(&self, filename: &str) -> Result<(), OnetError> {
+    pub fn save(&self, filename: &str) -> Result<(), ReportError> {
         let config = CONFIG.clone();
         let filename = format!("{}{}", config.data_path, filename.to_string());
         let path = Path::new(&filename);

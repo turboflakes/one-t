@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::ApiError;
 use crate::handlers::boards::{
     params::{Params, Quantity},
     responses::{BoardResult, BoardsResult, LimitsResult},
@@ -27,11 +28,11 @@ use crate::helpers::respond_json;
 use actix_web::web::{Data, Json, Query};
 use log::{debug, warn};
 use onet_cache::{
+    error::CacheError,
     provider::{get_conn, RedisPool},
     types::{CacheKey, Index},
 };
 use onet_config::CONFIG;
-use onet_errors::{ApiError, CacheError};
 use onet_mcda::{
     criterias::{
         criterias_hash, CriteriaFilters, CriteriaLimits, CriteriaWeights, Filters, Intervals,

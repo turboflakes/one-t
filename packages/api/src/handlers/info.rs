@@ -19,10 +19,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::error::ApiError;
 use crate::helpers::respond_json;
 use actix_web::web::Json;
 use onet_config::CONFIG;
-use onet_errors::ApiError;
 use serde::{Deserialize, Serialize};
 use std::env;
 

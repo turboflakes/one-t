@@ -19,6 +19,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod criterias;
-pub mod error;
-pub mod scores;
+use std::string::String;
+use thiserror::Error;
+
+/// On specific error messages
+#[derive(Error, Debug)]
+pub enum ReportError {
+    #[error("IOError error: {0}")]
+    IOError(#[from] std::io::Error),
+    #[error("RPC error: {0}")]
+    RpcError(#[from] subxt::ext::subxt_rpcs::Error),
+    #[error("Other error: {0}")]
+    Other(String),
+}

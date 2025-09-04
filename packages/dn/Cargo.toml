@@ -9,7 +9,6 @@ edition.workspace = true
 
 [dependencies]
 onet-config = { path = "../config" }
-onet-errors = { path = "../errors" }
 
 log = { workspace = true }
 regex = { workspace = true }
@@ -18,3 +17,4 @@ serde_json = { workspace = true }
 subxt = { workspace = true }
 reqwest = { workspace = true }
 url = { workspace = true }
+thiserror = { workspace = true }

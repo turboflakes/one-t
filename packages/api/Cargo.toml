@@ -8,7 +8,6 @@ description.workspace = true
 edition.workspace = true
 
 [dependencies]
-onet-errors = { path = "../errors" }
 onet-config = { path = "../config" }
 onet-records = { path = "../records" }
 onet-pools = { path = "../pools" }
@@ -26,3 +25,6 @@ serde_json = { workspace = true }
 subxt = { workspace = true }
 rand = { workspace = true }
 redis = { workspace = true }
+thiserror = { workspace = true }
+reqwest = { workspace = true }
+derive_more = { workspace = true }

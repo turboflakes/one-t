@@ -21,8 +21,7 @@
 //
 use async_recursion::async_recursion;
 use log::debug;
-use onet_core::Onet;
-use onet_errors::OnetError;
+use onet_core::{error::OnetError, Onet};
 use onet_records::Identity;
 use std::result::Result;
 use subxt::utils::AccountId32;
