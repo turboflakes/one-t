@@ -438,14 +438,12 @@ impl Onet {
         &self.people_client_option.as_ref().unwrap_or(&self.client)
     }
 
-    pub fn asset_hub_client(&self) -> &OnlineClient<PolkadotConfig> {
-        self.asset_hub_client_option
-            .as_ref()
-            .unwrap_or(&self.client)
+    pub fn asset_hub_client(&self) -> &Option<OnlineClient<PolkadotConfig>> {
+        &self.asset_hub_client_option
     }
 
-    pub fn asset_hub_rpc(&self) -> &LegacyRpcMethods<PolkadotConfig> {
-        self.asset_hub_rpc_option.as_ref().unwrap_or(&self.rpc)
+    pub fn asset_hub_rpc(&self) -> &Option<LegacyRpcMethods<PolkadotConfig>> {
+        &self.asset_hub_rpc_option
     }
 
     /// Returns the matrix configuration

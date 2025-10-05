@@ -113,9 +113,10 @@ use subxt_signer::sr25519::Keypair;
     runtime_metadata_path = "artifacts/metadata/paseo_metadata.scale",
     derive_for_all_types = "PartialEq, Clone, codec::Decode, codec::Encode"
 )]
-mod relay_runtime {}
+pub mod relay_runtime {}
 
 use crate::custom_types::PreDigest;
+
 use relay_runtime::{
     grandpa::events::NewAuthorities,
     historical::events::RootStored,
@@ -131,6 +132,8 @@ use relay_runtime::{
         frame_system::AccountInfo,
         frame_system::LastRuntimeUpgradeInfo,
         pallet_balances::types::AccountData,
+        pallet_rc_migrator::MigrationStage,
+        pallet_staking_async_ah_client::OperatingMode,
         polkadot_parachain_primitives::primitives::Id,
         polkadot_primitives::v8::AvailabilityBitfield,
         polkadot_primitives::v8::CoreIndex,
@@ -152,22 +155,24 @@ use relay_runtime::{
     system::events::ExtrinsicFailed,
 };
 
-pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
-    let config = CONFIG.clone();
-    let rc_api = onet.relay_client().clone();
-    let rc_rpc = onet.relay_rpc().clone();
-    let ah_api = onet.asset_hub_client().clone();
+pub type RcCall = relay_runtime::runtime_types::paseo_runtime::RuntimeCall;
+pub type RcNominationPoolsCall =
+    relay_runtime::runtime_types::pallet_nomination_pools::pallet::Call;
 
-    let stashes: Vec<String> = config.pools_featured_nominees;
-    info!(
-        "{} featured nominees loaded from 'config.pools_featured_nominees'",
-        stashes.len()
-    );
+pub async fn init_start_block_number(onet: &Onet) -> Result<BlockNumber, OnetError> {
+    let config = CONFIG.clone();
+    let rc_rpc = onet.relay_rpc().clone();
+
+    // Initialize from the last block processed
+    let latest_block_number = get_latest_block_number_processed()?;
+
+    if config.start_from_cached_block_enabled {
+        return Ok(latest_block_number);
+    }
 
     // Initialize from the first block of the session of last block processed
-    let latest_block_number = get_latest_block_number_processed()?;
+    let rc_api = onet.relay_client().clone();
     let latest_block_hash = fetch_relay_chain_block_hash(&rc_rpc, latest_block_number).await?;
-
     // Fetch ParaSession start block for the latest block processed
     let mut start_block_number = fetch_session_start_block(&rc_api, latest_block_hash).await?;
     // Note: We want to start sync in the first block of a session.
@@ -177,6 +182,26 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     // Load into memory the minimum initial eras defined (default=0)
     start_block_number -= config.minimum_initial_eras * 6 * config.blocks_per_session;
 
+    Ok(start_block_number.into())
+}
+
+pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    let rc_api = onet.relay_client().clone();
+    let rc_rpc = onet.relay_rpc().clone();
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
+
+    let stashes: Vec<String> = config.pools_featured_nominees;
+    info!(
+        "{} featured nominees loaded from 'config.pools_featured_nominees'",
+        stashes.len()
+    );
+
+    let start_block_number = init_start_block_number(&onet).await?;
+
     // get block hash from the start block
     let rc_block_hash = fetch_relay_chain_block_hash(&rc_rpc, start_block_number.into()).await?;
 
@@ -184,9 +209,20 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
         fetch_asset_hub_block_hash_from_relay_chain(onet, start_block_number.into(), rc_block_hash)
             .await?;
 
+    info!(
+        "Start from RC Block #{} {:?}",
+        start_block_number, rc_block_hash
+    );
+    info!("Start from AH Block Hash {:?}", ah_block_hash);
+
     // Fetch active era index
-    let active_era_info = fetch_active_era_info(&ah_api, ah_block_hash).await?;
-    let era_index = active_era_info.index;
+    let era_index = if is_staking_on_ah_live(&onet).await? {
+        let active_era_info = fetch_active_era_info(&ah_api, ah_block_hash).await?;
+        active_era_info.index
+    } else {
+        let active_era_info = super::storage::fetch_active_era_info(&rc_api, rc_block_hash).await?;
+        active_era_info.index
+    };
 
     // Cache Nomination pools
     // try_run_cache_pools_era(era_index, false).await?;
@@ -407,7 +443,10 @@ pub async fn try_run_subscribe_best_asset_hub() -> Result<(), OnetError> {
 
 pub async fn subscribe_best_asset_hub() -> Result<(), OnetError> {
     let onet: Onet = Onet::new().await;
-    let ah_api = onet.asset_hub_client().clone();
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
     let mut blocks_sub = ah_api.blocks().subscribe_best().await?;
     while let Some(Ok(best_block)) = blocks_sub.next().await {
@@ -433,8 +472,16 @@ async fn setup_processing_context(
 ) -> Result<BlockProcessingContext, OnetError> {
     let rc_api = onet.relay_client().clone();
     let rc_rpc = onet.relay_rpc().clone();
-    let ah_api = onet.asset_hub_client().clone();
-    let ah_rpc = onet.asset_hub_rpc().clone();
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available")
+        .clone();
+    let ah_rpc = onet
+        .asset_hub_rpc()
+        .as_ref()
+        .expect("AH RPC to be available")
+        .clone();
     let current_metadata = rc_api.metadata().clone();
 
     // Get parent block metadata for better handling of runtime upgrades
@@ -1569,7 +1616,10 @@ pub async fn run_network_report(
     let config = CONFIG.clone();
     let rc_api = onet.relay_client().clone();
     let rc_rpc = onet.relay_rpc().clone();
-    let ah_api = onet.asset_hub_client().clone();
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
 
     let network = Network::load(onet.rpc()).await?;
 
@@ -2195,7 +2245,10 @@ pub async fn cache_nomination_pools(
     let config = CONFIG.clone();
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
-    let ah_api = onet.asset_hub_client().clone();
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
     let last_pool_id = fetch_last_pool_id(&ah_api, ah_block_hash).await?;
@@ -2275,7 +2328,10 @@ pub async fn cache_nomination_pools_stats(
     let config = CONFIG.clone();
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
-    let ah_api = onet.asset_hub_client().clone();
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
     let last_pool_id = fetch_last_pool_id(&ah_api, ah_block_hash).await?;
@@ -2342,7 +2398,10 @@ pub async fn cache_nomination_pools_nominees(
     let config = CONFIG.clone();
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
-    let ah_api = onet.asset_hub_client().clone();
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
     // fetch last pool id
@@ -2621,7 +2680,10 @@ pub async fn cache_session_stats_records(
     let config = CONFIG.clone();
     let onet: Onet = Onet::new().await;
     let rc_api = onet.client().clone();
-    let ah_api = onet.asset_hub_client().clone();
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
     // Load network details
@@ -3262,4 +3324,80 @@ async fn _fetch_last_runtime_upgrade(
             "Last runtime upgrade not found at block hash {hash}"
         ))
     })
+}
+
+// NOTE: get_staking_api is a temporary sanity check related to Asset Hub Migration
+pub async fn get_staking_api(onet: &Onet) -> Result<OnlineClient<PolkadotConfig>, OnetError> {
+    let api = onet.client().clone();
+
+    let migration_stage_addr = relay_runtime::storage().rc_migrator().rc_migration_stage();
+    let migration_stage = api
+        .storage()
+        .at_latest()
+        .await?
+        .fetch(&migration_stage_addr)
+        .await?;
+
+    if let Some(stage) = migration_stage {
+        match stage {
+            MigrationStage::MigrationDone => {
+                // All staking is available at AH at this stage
+                return Ok(onet
+                    .asset_hub_client()
+                    .as_ref()
+                    .expect("AH API to be available")
+                    .clone());
+            }
+            _ => {
+                return Ok(onet.client().clone());
+            }
+        }
+    } else {
+        return Ok(onet.client().clone());
+    }
+}
+
+// NOTE: is_staking_live_on_ah is a temporary sanity check related to
+// Asset Hub Migration and Staking operations
+pub async fn is_staking_on_ah_live(onet: &Onet) -> Result<bool, OnetError> {
+    let api = onet.client().clone();
+
+    let migration_stage_addr = relay_runtime::storage().rc_migrator().rc_migration_stage();
+    let migration_stage = api
+        .storage()
+        .at_latest()
+        .await?
+        .fetch(&migration_stage_addr)
+        .await?;
+
+    if let Some(stage) = migration_stage {
+        match stage {
+            MigrationStage::MigrationDone => {
+                // All staking is available at AH at this stage
+                let staking_operating_mode_addr =
+                    relay_runtime::storage().staking_ah_client().mode();
+                let staking_operating_mode = api
+                    .storage()
+                    .at_latest()
+                    .await?
+                    .fetch(&staking_operating_mode_addr)
+                    .await?;
+
+                if let Some(mode) = staking_operating_mode {
+                    match mode {
+                        OperatingMode::Active => {
+                            return Ok(true);
+                        }
+                        _ => {
+                            return Ok(false);
+                        }
+                    }
+                }
+            }
+            _ => {
+                return Ok(false);
+            }
+        }
+    }
+    return Ok(false);
 }

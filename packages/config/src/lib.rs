@@ -317,6 +317,8 @@ pub struct Config {
     #[serde(default)]
     pub initial_block_number: u64,
     #[serde(default)]
+    pub start_from_cached_block_enabled: bool,
+    #[serde(default)]
     pub blocks_where_metadata_is_fetched_from_previous_block: Vec<String>,
     #[serde(default = "default_epoch_rate_threshold")]
     pub epoch_rate_threshold: u32,

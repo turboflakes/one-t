@@ -34,7 +34,7 @@ use onet_dn::try_fetch_stashes_from_remote_url;
 use onet_matrix::Matrix;
 use onet_paseo::paseo;
 // use onet_polkadot::polkadot;
-use onet_westend::westend;
+// use onet_westend::westend;
 // use onet_westend_next::westend_next;
 use sp_core::crypto;
 use std::{env, sync::mpsc, thread, time};
@@ -210,7 +210,7 @@ async fn subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
         // SupportedRuntime::Polkadot => polkadot::init_and_subscribe_on_chain_events(onet).await,
         // SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(onet).await,
         SupportedRuntime::Paseo => paseo::init_and_subscribe_on_chain_events(onet).await,
-        SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(onet).await,
+        // SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(onet).await,
         // SupportedRuntime::WestendNext => {
         //     westend_next::init_and_subscribe_on_chain_events(onet).await
         // }
