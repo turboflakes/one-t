@@ -71,17 +71,17 @@ pub async fn fetch_active_era_info(
 pub async fn fetch_first_session_from_active_era(
     api: &OnlineClient<PolkadotConfig>,
     rc_block_hash: H256,
+    era_index: u32,
 ) -> Result<u32, OnetError> {
-    let active_era = fetch_active_era_info(api, rc_block_hash).await?;
     let bonded_eras = fetch_bonded_eras(api, rc_block_hash).await?;
 
     for (era_index, session_index) in bonded_eras {
-        if era_index == active_era.index {
+        if era_index == era_index {
             return Ok(session_index);
         }
     }
     Err(OnetError::from(format!(
-        "First session not found for active era {active_era:?} at block hash {rc_block_hash:?}"
+        "First session not found for active era {era_index:?} at block hash {rc_block_hash:?}"
     )))
 }
 
