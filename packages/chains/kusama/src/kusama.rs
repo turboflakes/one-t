@@ -427,7 +427,15 @@ pub async fn process_finalized_block(
 
     // Update records
     // Note: these records should be updated after the switch of session
-    track_records(&rc_api, &rc_rpc, records, rc_block_number, rc_block_hash).await?;
+    track_records(
+        &rc_api,
+        &rc_rpc,
+        records,
+        rc_block_number,
+        rc_block_hash,
+        is_staking_live_on_asset_hub,
+    )
+    .await?;
 
     // Cache records at every block
     cache_records(&mut cache, &records).await?;
@@ -1073,6 +1081,71 @@ async fn fetch_and_track_authority_points(
     Ok(())
 }
 
+/// Fetch validator points and track points collected per authority method to be used BEFORE AHM
+async fn fetch_and_track_authority_points_before_ahm(
+    api: &OnlineClient<PolkadotConfig>,
+    records: &mut Records,
+    backing_votes: &OnChainVotes,
+    block_authority_index: AuthorityIndex,
+    session_index: SessionIndex,
+    block_hash: H256,
+) -> Result<(), OnetError> {
+    let era_reward_points_addr = relay_runtime::storage()
+        .staking()
+        .eras_reward_points(records.current_era());
+    if let Some(era_reward_points) = api
+        .storage()
+        .at(block_hash)
+        .fetch(&era_reward_points_addr)
+        .await?
+    {
+        if let Some(authorities) = records.get_authorities(Some(EpochKey(session_index))) {
+            // Find groupIdx and peers for each authority
+            for authority_idx in authorities.iter() {
+                let mut latest_points_collected: u32 = 0;
+
+                if let Some(authority_record) =
+                    records.get_mut_authority_record(*authority_idx, Some(backing_votes.session))
+                {
+                    if authority_record.address().is_some() {
+                        // Collect current points
+                        let current_points = if let Some((_s, points)) = era_reward_points
+                            .individual
+                            .iter()
+                            .find(|(s, _p)| s == authority_record.address().unwrap())
+                        {
+                            *points
+                        } else {
+                            0
+                        };
+
+                        // Update authority current points and get the difference
+                        latest_points_collected =
+                            authority_record.update_current_points(current_points);
+                    }
+                }
+
+                // Get para_record for the same on chain votes session
+                if let Some(para_record) =
+                    records.get_mut_para_record(*authority_idx, Some(backing_votes.session))
+                {
+                    // Increment current para_id latest_points_collected
+                    // and authored blocks if is the author of the finalized block
+                    // and the backing_votes session is the same as the current session
+                    // NOTE: At the first block of a session the backing_votes.session still references session().current_index - 1
+                    para_record.update_points(
+                        latest_points_collected,
+                        block_authority_index == *authority_idx
+                            && backing_votes.session == session_index,
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Track authority votes per authority
 fn track_authority_votes(
     records: &mut Records,
@@ -1276,6 +1349,7 @@ pub async fn track_records(
     records: &mut Records,
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
+    is_staking_live_on_asset_hub: bool,
 ) -> Result<(), OnetError> {
     // Update records current block number
     records.set_relay_chain_block_number(rc_block_number.into());
@@ -1306,14 +1380,26 @@ pub async fn track_records(
     let backing_votes = super::storage::fetch_on_chain_votes(&rc_api, rc_block_hash).await?;
 
     // Fetch and Track authority points
-    fetch_and_track_authority_points(
-        &rc_api,
-        records,
-        block_authority_index,
-        session_index,
-        rc_block_hash,
-    )
-    .await?;
+    if is_staking_live_on_asset_hub {
+        fetch_and_track_authority_points(
+            &rc_api,
+            records,
+            block_authority_index,
+            session_index,
+            rc_block_hash,
+        )
+        .await?;
+    } else {
+        fetch_and_track_authority_points_before_ahm(
+            &rc_api,
+            records,
+            &backing_votes,
+            block_authority_index,
+            session_index,
+            rc_block_hash,
+        )
+        .await?;
+    }
 
     // Track authority votes
     track_authority_votes(
