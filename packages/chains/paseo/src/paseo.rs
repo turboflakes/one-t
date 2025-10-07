@@ -261,15 +261,17 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     initialize_records(&rc_api, &mut records, rc_block_hash,is_staking_live_on_asset_hub).await?;
 
     // Initialize cache
-    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-    let first_session_index = if is_staking_live_on_asset_hub {
-        fetch_first_session_from_active_era(&ah_api, ah_block_hash).await?
-    } else {
-        super::storage::fetch_first_session_from_active_era(&rc_api, rc_block_hash).await?
-    };
+    if config.cache_writer_enabled {
+        let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+        let first_session_index = if is_staking_live_on_asset_hub {
+            fetch_first_session_from_active_era(&ah_api, ah_block_hash).await?
+        } else {
+            super::storage::fetch_first_session_from_active_era(&rc_api, rc_block_hash).await?
+        };
 
-    cache_records_at_new_session(&mut cache, &records, first_session_index).await?;
-    cache_records(&mut cache, &records).await?;
+        cache_records_at_new_session(&mut cache, &records, first_session_index).await?;
+        cache_records(&mut cache, &records).await?;
+    }
 
     // Initialize p2p discovery
     try_run_cache_discovery_records(&records, rc_block_hash).await?;
@@ -396,13 +398,11 @@ pub async fn process_finalized_block(
         current_metadata,
     } = setup_processing_context(onet, rc_block_number).await?;
 
-    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-
     let is_staking_live_on_asset_hub = is_staking_live_on_asset_hub(&onet, rc_block_hash).await?;
 
     // Process RC events with the parent_metadata
     process_relay_chain_events(
-        &mut cache,
+        &onet,
         &rc_api,
         &rc_rpc,
         &ah_api,
@@ -437,8 +437,12 @@ pub async fn process_finalized_block(
     )
     .await?;
 
-    // Cache records at every block
-    cache_records(&mut cache, &records).await?;
+    let config = CONFIG.clone();
+    if config.cache_writer_enabled {
+        let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+        // Cache records at every block
+        cache_records(&mut cache, &records).await?;
+    }
 
     // Log block processed duration time
     info!(
@@ -531,7 +535,7 @@ async fn setup_processing_context(
 }
 
 async fn process_relay_chain_events(
-    cache: &mut Connection,
+    onet: &Onet,
     rc_api: &OnlineClient<PolkadotConfig>,
     rc_rpc: &LegacyRpcMethods<PolkadotConfig>,
     ah_api: &OnlineClient<PolkadotConfig>,
@@ -552,7 +556,7 @@ async fn process_relay_chain_events(
             if ev.0.descriptor.para_id == Id(config.asset_hub_para_id) {
                 let ah_block_hash = ev.0.descriptor.para_head;
                 process_asset_hub_events(
-                    cache,
+                    &onet,
                     rc_api,
                     rc_rpc,
                     ah_api,
@@ -598,10 +602,13 @@ async fn process_relay_chain_events(
                 .await?;
 
                 // Cache records at the start of each session
-                let first_session_index =
-                    super::storage::fetch_first_session_from_active_era(&rc_api, rc_block_hash)
-                        .await?;
-                cache_records_at_new_session(cache, records, first_session_index).await?;
+                if config.cache_writer_enabled {
+                    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+                    let first_session_index =
+                        super::storage::fetch_first_session_from_active_era(&rc_api, rc_block_hash)
+                            .await?;
+                    cache_records_at_new_session(&mut cache, records, first_session_index).await?;
+                }
 
                 // Cache session stats records every new session
                 try_run_cache_session_stats_records_on_relay_chain(
@@ -681,7 +688,7 @@ async fn process_new_session_event(
 }
 
 async fn process_asset_hub_events(
-    cache: &mut Connection,
+    onet: &Onet,
     _rc_api: &OnlineClient<PolkadotConfig>,
     _rc_rpc: &LegacyRpcMethods<PolkadotConfig>,
     ah_api: &OnlineClient<PolkadotConfig>,
@@ -694,6 +701,7 @@ async fn process_asset_hub_events(
     is_loading: bool,
     is_staking_live_on_asset_hub: bool,
 ) -> Result<(), OnetError> {
+let config = CONFIG.clone();
     let (ah_block_number, ah_parent_block_hash) =
         fetch_asset_hub_block_info(ah_rpc, ah_block_hash).await?;
 
@@ -711,10 +719,14 @@ async fn process_asset_hub_events(
                 rc_block_number,
                 Some(ah_block_number),
             )?;
+
             // Cache records at the start of each session
-            let first_session_index =
-                fetch_first_session_from_active_era(&ah_api, ah_block_hash).await?;
-            cache_records_at_new_session(cache, records, first_session_index).await?;
+            if config.cache_writer_enabled {
+                let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+                let first_session_index =
+                    fetch_first_session_from_active_era(&ah_api, ah_block_hash).await?;
+                cache_records_at_new_session(&mut cache, records, first_session_index).await?;
+            }
 
             // Cache session stats records every new session with data collected
             // from the parent AH block hash
@@ -770,7 +782,10 @@ async fn process_asset_hub_events(
     }
 
     // Cache finalized block
-    cache_finalized_block(cache, ChainKey::AH, ah_block_number.into()).await?;
+    if config.cache_writer_enabled {
+        let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+        cache_finalized_block(&mut cache, ChainKey::AH, ah_block_number.into()).await?;
+    }
 
     Ok(())
 }
@@ -1026,7 +1041,7 @@ pub async fn initialize_records(
                                     )
                                     .await?
                                 } else {
-                                    super::storage::fetch_validator_points_from_era_reward_points_deprecated( address.clone(), era_reward_points.clone()).await?
+                                    super::storage::fetch_validator_points_from_era_reward_points_deprecated(address.clone(), era_reward_points.clone()).await?
                                 };
 
 
