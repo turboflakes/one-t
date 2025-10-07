@@ -35,9 +35,8 @@ pub use asset_hub_runtime::{
     staking::storage::types::eras_total_stake::ErasTotalStake,
     staking::storage::types::nominators::Nominators,
 };
-
 use onet_core::error::OnetError;
-use onet_records::EraIndex;
+use onet_records::{EraIndex, Points};
 use subxt::{
     utils::{AccountId32, H256},
     OnlineClient, PolkadotConfig,
@@ -294,4 +293,26 @@ pub async fn fetch_account_info(
         .fetch(&addr)
         .await?
         .ok_or_else(|| OnetError::from(format!("Account info not found at block hash {hash}")))
+}
+
+// Fetch validator points at the specified block hash from era reward points
+// Note: this function is deprecated and will be removed in the future
+pub async fn fetch_validator_points_from_era_reward_points_deprecated(
+    stash: AccountId32,
+    era_reward_points: Option<EraRewardPoints>
+) -> Result<Points, OnetError> {
+
+    let points = if let Some(ref erp) = era_reward_points {
+        if let Some((_s, points)) =
+            erp.individual.0.iter().find(|(s, _p)| *s == stash)
+        {
+            *points
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    Ok(points)
 }
