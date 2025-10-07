@@ -9,3 +9,4 @@ Cargo.lock
 .epoch*
 .nominator*
 bump-version*
+/tmp

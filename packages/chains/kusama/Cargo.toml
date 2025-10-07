@@ -13,13 +13,14 @@ onet-cache = { path = "../../cache" }
 onet-config = { path = "../../config" }
 onet-discovery = { path = "../../discovery" }
 onet-dn = { path = "../../dn" }
-onet-core = { path = "../../core" }
 onet-matrix = { path = "../../matrix" }
 onet-core = { path = "../../core" }
 onet-mcda = { path = "../../mcda" }
 onet-pools = { path = "../../pools" }
 onet-records = { path = "../../records" }
 onet-report = { path = "../../report" }
+onet-people-kusama = { path = "../../chains/people-kusama" }
+onet-asset-hub-kusama = { path = "../../chains/asset-hub-kusama" }
 
 async-recursion = { workspace = true }
 async-std = { workspace = true }
