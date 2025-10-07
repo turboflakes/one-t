@@ -324,6 +324,28 @@ pub async fn fetch_validator_points(
         .map_or(Ok(0), |points| Ok(points))
 }
 
+// Fetch validator points at the specified block hash from era reward points
+// Note: this function is deprecated and will be removed in the future
+pub async fn fetch_validator_points_from_era_reward_points_deprecated(
+    stash: AccountId32,
+    era_reward_points: Option<EraRewardPoints<AccountId32>>
+) -> Result<Points, OnetError> {
+
+    let points = if let Some(ref erp) = era_reward_points {
+        if let Some((_s, points)) =
+            erp.individual.iter().find(|(s, _p)| *s == stash)
+        {
+            *points
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    Ok(points)
+}
+
 /// Fetch para validator groups at the specified block hash
 pub async fn _fetch_para_validator_groups(
     api: &OnlineClient<PolkadotConfig>,

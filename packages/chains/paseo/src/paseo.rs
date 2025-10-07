@@ -258,7 +258,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     info!("Start records: {:?}", records);
 
     // Initialize subscribers records
-    initialize_records(&rc_api, &mut records, rc_block_hash).await?;
+    initialize_records(&rc_api, &mut records, rc_block_hash,is_staking_live_on_asset_hub).await?;
 
     // Initialize cache
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
@@ -569,29 +569,33 @@ async fn process_relay_chain_events(
             }
         } else if let Some(ev) = event.as_event::<NewSession>()? {
             info!("RC Event {:?}", ev);
-            process_new_session_event(
-                &rc_api,
-                records,
-                ev.clone(),
-                rc_block_number,
-                rc_block_hash,
-                is_loading,
-            )
-            .await?;
-
-            // NOTE: If staking is not live yet on AH, keep normal operations on RC.
-            if !is_staking_live_on_asset_hub {
+            if is_staking_live_on_asset_hub {
+                process_new_session_event(
+                    &rc_api,
+                    records,
+                    ev.clone(),
+                    rc_block_number,
+                    rc_block_hash,
+                    is_loading,
+                    is_staking_live_on_asset_hub
+                )
+                .await?;
+            } else {
                 let active_era_info =
                     super::storage::fetch_active_era_info(&rc_api, rc_block_hash).await?;
 
-                let previous_epoch_era_index = process_session_rotated(
-                    ev.session_index.clone(),
-                    active_era_info.index,
-                    subscribers,
+                // NOTE: If staking is not live yet on AH, keep normal operations on RC.
+                let previous_epoch_era_index = switch_new_session(
+                    &rc_api,
                     records,
+                    subscribers,
+                    ev.session_index.clone(),
+                    active_era_info.index.clone(),
                     rc_block_number,
-                    None,
-                )?;
+                    rc_block_hash,
+                    is_staking_live_on_asset_hub
+                )
+                .await?;
 
                 // Cache records at the start of each session
                 let first_session_index =
@@ -657,6 +661,7 @@ async fn process_new_session_event(
     rc_block_number: u64,
     rc_block_hash: H256,
     is_loading: bool,
+    is_staking_live_on_asset_hub: bool,
 ) -> Result<(), OnetError> {
     process_new_session(
         &rc_api,
@@ -664,6 +669,7 @@ async fn process_new_session_event(
         event.session_index,
         rc_block_number,
         rc_block_hash,
+        is_staking_live_on_asset_hub
     )
     .await?;
 
@@ -769,6 +775,53 @@ async fn process_asset_hub_events(
     Ok(())
 }
 
+pub async fn switch_new_session(
+    rc_api: &OnlineClient<PolkadotConfig>,
+    records: &mut Records,
+    subscribers: &mut Subscribers,
+    starting_session: EpochIndex,
+    active_era: EraIndex,
+    rc_block_number: u64,
+    rc_block_hash: H256,
+    is_staking_live_on_asset_hub: bool,
+) -> Result<EraIndex, OnetError> {
+    let config = CONFIG.clone();
+
+    // keep previous era in context
+    let previous_era_index = records.current_era().clone();
+
+    // Update records current Era and Epoch
+    records.start_new_epoch(active_era, starting_session);
+    // Update records current block number
+    records.set_relay_chain_block_number(rc_block_number.into());
+
+    // Update subscribers current Era and Epoch
+    subscribers.start_new_epoch(active_era, starting_session);
+
+    if let Ok(subs) = get_subscribers() {
+        for (account, user_id, param) in subs.iter() {
+            subscribers.subscribe(account.clone(), user_id.to_string(), param.clone());
+        }
+    }
+
+    // Initialize records for new epoch
+    initialize_records(&rc_api, records, rc_block_hash, is_staking_live_on_asset_hub).await?;
+
+    // Remove older keys, default is maximum_history_eras + 1
+    records.remove(EpochKey(
+        records.current_epoch() - ((config.maximum_history_eras + 1) * 6),
+    ));
+    subscribers.remove(EpochKey(
+        records.current_epoch() - ((config.maximum_history_eras + 1) * 6),
+    ));
+
+    // Cache current epoch
+    let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
+    fs::write(&epoch_filename, starting_session.to_string())?;
+
+    Ok(previous_era_index)
+}
+
 /// Process new session at RC NewSession event
 pub async fn process_new_session(
     rc_api: &OnlineClient<PolkadotConfig>,
@@ -776,13 +829,14 @@ pub async fn process_new_session(
     new_session_index: EpochIndex,
     rc_block_number: u64,
     rc_block_hash: H256,
+    is_staking_live_on_asset_hub: bool,
 ) -> Result<(), OnetError> {
     // Update records current Epoch
     records.set_new_epoch(new_session_index);
     // Update records current block number
     records.set_relay_chain_block_number(rc_block_number.into());
     // Initialize records for new epoch
-    initialize_records(&rc_api, records, rc_block_hash).await?;
+    initialize_records(&rc_api, records, rc_block_hash,is_staking_live_on_asset_hub).await?;
 
     Ok(())
 }
@@ -906,7 +960,17 @@ pub async fn initialize_records(
     rc_api: &OnlineClient<PolkadotConfig>,
     records: &mut Records,
     rc_block_hash: H256,
+    is_staking_live_on_asset_hub: bool,
 ) -> Result<(), OnetError> {
+
+    // NOTE: Fetch era reward points are only needed if staking is still LIVE on RC
+    let era_reward_points = if  !is_staking_live_on_asset_hub {
+        let erp = super::storage::fetch_era_reward_points(&rc_api, rc_block_hash, records.current_era()).await?;
+        Some(erp)
+    } else {
+        None
+    };
+
     // Fetch active validators
     let authorities = super::storage::fetch_authorities(&rc_api, rc_block_hash).await?;
 
@@ -952,13 +1016,19 @@ pub async fn initialize_records(
                             active_validator_indices.get(*para_idx as usize)
                         {
                             if let Some(address) = authorities.get(*auth_idx as usize) {
+
                                 // Fetch peer points
-                                let points = super::storage::fetch_validator_points(
-                                    &rc_api,
-                                    rc_block_hash,
-                                    address.clone(),
-                                )
-                                .await?;
+                                let points = if is_staking_live_on_asset_hub{
+                                    super::storage::fetch_validator_points(
+                                        &rc_api,
+                                        rc_block_hash,
+                                        address.clone(),
+                                    )
+                                    .await?
+                                } else {
+                                    super::storage::fetch_validator_points_from_era_reward_points_deprecated( address.clone(), era_reward_points.clone()).await?
+                                };
+
 
                                 // Define AuthorityRecord
                                 let authority_record =
@@ -1012,9 +1082,17 @@ pub async fn initialize_records(
                 }
             }
         } else {
-            let points =
-                super::storage::fetch_validator_points(&rc_api, rc_block_hash, stash.clone())
-                    .await?;
+
+            let points = if is_staking_live_on_asset_hub{
+                super::storage::fetch_validator_points(
+                    &rc_api,
+                    rc_block_hash,
+                    stash.clone(),
+                )
+                .await?
+            } else {
+                super::storage::fetch_validator_points_from_era_reward_points_deprecated(stash.clone(), era_reward_points.clone()).await?
+            };
 
             let authority_record =
                 AuthorityRecord::with_index_address_and_points(auth_idx, stash.clone(), points);
