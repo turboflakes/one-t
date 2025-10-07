@@ -20,9 +20,9 @@ members = [
     # "packages/chains/westend",
     # "packages/chains/asset-hub-westend",
     # "packages/chains/people-westend",
-    # "packages/chains/paseo",
-    # "packages/chains/asset-hub-paseo",
-    # "packages/chains/people-paseo",
+    "packages/chains/paseo",
+    "packages/chains/asset-hub-paseo",
+    "packages/chains/people-paseo",
     # "packages/chains/asset-hub-westend-next",
     # "packages/chains/westend-next",
 ]
