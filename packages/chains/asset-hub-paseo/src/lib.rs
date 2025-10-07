@@ -282,7 +282,7 @@ pub async fn fetch_ledger_from_controller(
 }
 
 /// Fetch account info given a stash at the specified block hash
-async fn _fetch_account_info(
+pub async fn fetch_account_info(
     api: &OnlineClient<PolkadotConfig>,
     hash: H256,
     stash: AccountId32,
