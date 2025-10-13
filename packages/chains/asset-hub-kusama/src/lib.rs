@@ -25,6 +25,7 @@
 )]
 pub mod asset_hub_runtime {}
 pub use asset_hub_runtime::{
+    balances::storage::types::total_issuance::TotalIssuance,
     nomination_pools::storage::types::bonded_pools::BondedPools,
     nomination_pools::storage::types::metadata::Metadata as PoolMetadata,
     runtime_types::bounded_collections::bounded_vec::BoundedVec,
@@ -299,13 +300,10 @@ pub async fn fetch_account_info(
 // Note: this function is deprecated and will be removed in the future
 pub async fn fetch_validator_points_from_era_reward_points_deprecated(
     stash: AccountId32,
-    era_reward_points: Option<EraRewardPoints>
+    era_reward_points: Option<EraRewardPoints>,
 ) -> Result<Points, OnetError> {
-
     let points = if let Some(ref erp) = era_reward_points {
-        if let Some((_s, points)) =
-            erp.individual.0.iter().find(|(s, _p)| *s == stash)
-        {
+        if let Some((_s, points)) = erp.individual.0.iter().find(|(s, _p)| *s == stash) {
             *points
         } else {
             0
@@ -315,4 +313,18 @@ pub async fn fetch_validator_points_from_era_reward_points_deprecated(
     };
 
     Ok(points)
+}
+
+/// Fetch total issuance at the specified block hash
+pub async fn fetch_total_issuance(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<TotalIssuance, OnetError> {
+    let addr = asset_hub_runtime::storage().balances().total_issuance();
+
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| OnetError::from(format!("Total issuance not found at block hash {hash}")))
 }

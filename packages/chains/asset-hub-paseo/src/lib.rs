@@ -25,6 +25,7 @@
 )]
 pub mod asset_hub_runtime {}
 pub use asset_hub_runtime::{
+    balances::storage::types::total_issuance::TotalIssuance,
     nomination_pools::storage::types::bonded_pools::BondedPools,
     nomination_pools::storage::types::metadata::Metadata as PoolMetadata,
     runtime_types::bounded_collections::bounded_vec::BoundedVec,
@@ -294,4 +295,18 @@ pub async fn fetch_account_info(
         .fetch(&addr)
         .await?
         .ok_or_else(|| OnetError::from(format!("Account info not found at block hash {hash}")))
+}
+
+/// Fetch total issuance at the specified block hash
+pub async fn fetch_total_issuance(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<TotalIssuance, OnetError> {
+    let addr = asset_hub_runtime::storage().balances().total_issuance();
+
+    api.storage()
+        .at(hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| OnetError::from(format!("Total issuance not found at block hash {hash}")))
 }

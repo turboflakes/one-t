@@ -25,7 +25,6 @@ use onet_api::responses::{AuthorityKey, AuthorityKeyCache};
 use onet_asset_hub_kusama::{
     asset_hub_runtime,
     asset_hub_runtime::{
-        // balances::storage::types::total_issuance::TotalIssuance,
         runtime_types::{
             bounded_collections::bounded_btree_map::BoundedBTreeMap,
             bounded_collections::bounded_vec::BoundedVec, pallet_nomination_pools::PoolState,
@@ -44,7 +43,7 @@ use onet_asset_hub_kusama::{
     fetch_account_info, fetch_active_era_info, fetch_bonded_controller_account, fetch_bonded_pools,
     fetch_era_reward_points, fetch_eras_total_stake, fetch_eras_validator_reward,
     fetch_first_session_from_active_era, fetch_last_pool_id, fetch_ledger_from_controller,
-    fetch_nominators, fetch_pool_metadata, AssetHubCall, NominationPoolsCall,
+    fetch_nominators, fetch_pool_metadata, fetch_total_issuance, AssetHubCall, NominationPoolsCall,
 };
 use onet_cache::{
     cache_best_block, cache_board_limits_at_session, cache_finalized_block,
@@ -129,7 +128,6 @@ use relay_runtime::{
     para_scheduler::storage::types::validator_groups::ValidatorGroups,
     paras_shared::storage::types::active_validator_indices::ActiveValidatorIndices,
     rc_migrator::events::StageTransition,
-    // balances::storage::types::total_issuance::TotalIssuance,
     runtime_types::{
         // frame_system::AccountInfo,
         // frame_system::LastRuntimeUpgradeInfo,
@@ -4008,7 +4006,7 @@ pub async fn cache_session_stats_records(
     // general session stats
     //
     // total issuance
-    let total_issuance = super::storage::fetch_total_issuance(&rc_api, rc_block_hash).await?;
+    let total_issuance = fetch_total_issuance(&ah_api, ah_block_hash).await?;
     nss.total_issuance = total_issuance;
 
     // total staked
