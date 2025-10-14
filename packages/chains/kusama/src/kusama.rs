@@ -3572,12 +3572,29 @@ pub async fn cache_nomination_pools_nominees_on_relay_chain(
                     let pool_stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
 
                     // fetch pool nominees
-                    let nominations = super::storage::fetch_nominators(
+                    let Ok(nominations) = super::storage::fetch_nominators(
                         &rc_api,
                         rc_block_hash,
                         pool_stash_account.clone(),
                     )
-                    .await?;
+                    .await
+                    else {
+                        debug!(
+                            "Failed to fetch pool nominees for pool ID: {} with stash account: {}",
+                            pool_id, pool_stash_account
+                        );
+                        cache_nomination_pool_nominees(
+                            &mut cache,
+                            &config,
+                            &pool_nominees,
+                            pool_id,
+                            epoch_index,
+                        )
+                        .await?;
+
+                        some_pool = Some(pool_id + 1);
+                        continue;
+                    };
 
                     // deconstruct targets
                     let relay_runtime::runtime_types::bounded_collections::bounded_vec::BoundedVec(
