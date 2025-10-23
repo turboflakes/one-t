@@ -43,7 +43,8 @@ use onet_asset_hub_kusama::{
     fetch_account_info, fetch_active_era_info, fetch_bonded_controller_account, fetch_bonded_pools,
     fetch_era_reward_points, fetch_eras_total_stake, fetch_eras_validator_reward,
     fetch_first_session_from_active_era, fetch_last_pool_id, fetch_ledger_from_controller,
-    fetch_nominators, fetch_pool_metadata, fetch_total_issuance, AssetHubCall, NominationPoolsCall,
+    fetch_nominators, fetch_own_stake_via_stash, fetch_pool_metadata, fetch_total_issuance,
+    AssetHubCall, NominationPoolsCall,
 };
 use onet_cache::{
     cache_best_block, cache_board_limits_at_session, cache_finalized_block,
@@ -2140,8 +2141,7 @@ pub async fn run_network_report(
         v.is_active = authorities.contains(&stash);
 
         // Fetch own stake
-        let staking_ledger = fetch_ledger_from_controller(&ah_api, ah_block_hash, &stash).await?;
-        v.own_stake = staking_ledger.active;
+        v.own_stake = fetch_own_stake_via_stash(&ah_api, ah_block_hash, &stash).await?;
 
         // Get performance data from all eras available
         if let Some(((active_epochs, authored_blocks, mut pattern), para_data)) =
@@ -2482,9 +2482,8 @@ pub async fn run_network_report_on_relay_chain(
         v.is_active = authorities.contains(&stash);
 
         // Fetch own stake
-        let staking_ledger =
-            super::storage::fetch_ledger_from_controller(&rc_api, rc_block_hash, &stash).await?;
-        v.own_stake = staking_ledger.active;
+        v.own_stake =
+            super::storage::fetch_own_stake_via_stash(&rc_api, rc_block_hash, &stash).await?;
 
         // Get performance data from all eras available
         if let Some(((active_epochs, authored_blocks, mut pattern), para_data)) =
@@ -3896,12 +3895,14 @@ pub async fn cache_session_stats_records(
         // create a new validator instance
         let mut profile = ValidatorProfileRecord::new(stash.clone());
         // validator controller address
-        let controller = fetch_bonded_controller_account(&ah_api, ah_block_hash, &stash).await?;
+        let Ok(controller) = fetch_bonded_controller_account(ah_api, ah_block_hash, &stash).await
+        else {
+            warn!("Failed to fetch bonded_controller for stash {:?}", stash);
+            continue;
+        };
         profile.controller = Some(controller.clone());
         // get own stake
-        let staking_ledger =
-            fetch_ledger_from_controller(&ah_api, ah_block_hash, &controller).await?;
-        profile.own_stake = staking_ledger.active;
+        profile.own_stake = fetch_own_stake_via_stash(&ah_api, ah_block_hash, &controller).await?;
 
         // deconstruct commisssion
         let Perbill(commission) = storage_resp.value.commission;
@@ -4214,14 +4215,16 @@ pub async fn cache_session_stats_records_on_relay_chain(
         // create a new validator instance
         let mut profile = ValidatorProfileRecord::new(stash.clone());
         // validator controller address
-        let controller =
-            super::storage::fetch_bonded_controller_account(&rc_api, rc_block_hash, &stash).await?;
+        let Ok(controller) =
+            super::storage::fetch_bonded_controller_account(&rc_api, rc_block_hash, &stash).await
+        else {
+            warn!("Failed to fetch bonded_controller for stash {:?}", stash);
+            continue;
+        };
         profile.controller = Some(controller.clone());
         // get own stake
-        let staking_ledger =
-            super::storage::fetch_ledger_from_controller(&rc_api, rc_block_hash, &controller)
-                .await?;
-        profile.own_stake = staking_ledger.active;
+        profile.own_stake =
+            super::storage::fetch_own_stake_via_stash(&rc_api, rc_block_hash, &controller).await?;
 
         // deconstruct commisssion
         let relay_runtime::runtime_types::sp_arithmetic::per_things::Perbill(commission) =

@@ -42,6 +42,7 @@ use crate::kusama::{
     },
 };
 
+use log::warn;
 use onet_core::error::OnetError;
 use onet_records::{EraIndex, Points};
 use subxt::{
@@ -277,6 +278,20 @@ pub async fn fetch_ledger_from_controller(
                 "Bonded controller not found at block hash {rc_block_hash:?}"
             ))
         })
+}
+
+/// Fetch stash own stake given a stash at the specified block hash
+pub async fn fetch_own_stake_via_stash(
+    api: &OnlineClient<PolkadotConfig>,
+    rc_block_hash: H256,
+    stash: &AccountId32,
+) -> Result<u128, OnetError> {
+    let Ok(staking_ledger) = fetch_ledger_from_controller(api, rc_block_hash, stash).await else {
+        warn!("Failed to fetch staking_ledger for stash {:?}", stash);
+        return Ok(0);
+    };
+
+    return Ok(staking_ledger.active);
 }
 
 /// Fetch the set of authorities (validators) at the specified block hash
