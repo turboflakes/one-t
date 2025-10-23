@@ -32,7 +32,6 @@ use onet_matrix::{matrix::Matrix, matrix::UserID, matrix::MATRIX_SUBSCRIBERS_FIL
 use onet_records::EpochIndex;
 use onet_report::{Network, ReportType};
 use redis::aio::Connection;
-use serde::{Deserialize, Serialize};
 use sp_core::crypto;
 use std::{
     collections::BTreeMap,
@@ -488,22 +487,6 @@ impl Onet {
 
         Ok(())
     }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Validator {
-    #[serde(default)]
-    stash: String,
-    #[serde(default)]
-    validity: Vec<Validity>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Validity {
-    #[serde(default)]
-    valid: bool,
-    #[serde(default)]
-    r#type: String,
 }
 
 pub fn get_account_id_from_storage_key(key: StorageKey) -> AccountId32 {
