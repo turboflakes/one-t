@@ -173,7 +173,7 @@ pub async fn init_start_block_number(onet: &Onet) -> Result<BlockNumber, OnetErr
 
     // Initialize from the first block of the session of last block processed
     let rc_api = onet.relay_client().clone();
-    let latest_block_hash = fetch_relay_chain_block_hash(&rc_rpc, latest_block_number).await?;
+    let latest_block_hash = try_fetch_relay_chain_block_hash(&rc_rpc, latest_block_number).await?;
     // Fetch ParaSession start block for the latest block processed
     let mut start_block_number = fetch_session_start_block(&rc_api, latest_block_hash).await?;
     // Note: We want to start sync in the first block of a session.
@@ -204,7 +204,8 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     let start_block_number = init_start_block_number(&onet).await?;
 
     // get block hash from the start block
-    let rc_block_hash = fetch_relay_chain_block_hash(&rc_rpc, start_block_number.into()).await?;
+    let rc_block_hash =
+        try_fetch_relay_chain_block_hash(&rc_rpc, start_block_number.into()).await?;
 
     let ah_block_hash =
         fetch_asset_hub_block_hash_from_relay_chain(onet, start_block_number.into(), rc_block_hash)
@@ -227,8 +228,15 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
         let active_era_info = fetch_active_era_info(&ah_api, ah_block_hash).await?;
         active_era_info.index
     } else {
-        try_fetch_active_era_info(&onet, &rc_api, &ah_api, start_block_number, rc_block_hash)
-            .await?
+        try_fetch_active_era_info(
+            &onet,
+            &rc_api,
+            &ah_api,
+            start_block_number,
+            rc_block_hash,
+            None,
+        )
+        .await?
     };
 
     // Cache Nomination pools
@@ -344,7 +352,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                     } else {
                         // fetch block_hash if not the finalized head
                         let block_hash =
-                            fetch_relay_chain_block_hash(&rc_rpc, block_number).await?;
+                            try_fetch_relay_chain_block_hash(&rc_rpc, block_number).await?;
 
                         process_finalized_block(
                             &onet,
@@ -527,7 +535,7 @@ async fn setup_processing_context(
     let current_metadata = rc_api.metadata().clone();
 
     // Get parent block metadata for better handling of runtime upgrades
-    let parent_block_hash = fetch_relay_chain_block_hash(&rc_rpc, block_number - 1).await?;
+    let parent_block_hash = try_fetch_relay_chain_block_hash(&rc_rpc, block_number - 1).await?;
 
     // let parent_metadata = rc_api::fetch_latest_stable_metadata(parent_block_hash).await?;
     let parent_metadata_bytes = rc_rpc
@@ -554,7 +562,8 @@ async fn try_fetch_active_era_info(
     ah_api: &OnlineClient<PolkadotConfig>,
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
-) -> Result<u32, OnetError> {
+    current_era: Option<EraIndex>,
+) -> Result<EraIndex, OnetError> {
     // *** SEPCIAL_NOTE *** : Edge case while AHM
     // If a NewSession event occurs we need to fetch the active era info from the Asset Hub
     let era_index = match super::storage::fetch_active_era_info(&rc_api, rc_block_hash).await {
@@ -568,7 +577,11 @@ async fn try_fetch_active_era_info(
                 Ok(info) => info.index,
                 Err(err) => {
                     warn!("Not available on AH -> {err:?}");
-                    return Err(err);
+                    // NOTE: If the active era info is not available on the Asset Hub, we return the current era from the records.
+                    // This should not happen but to prevent a potential error during AHM just return whatever is on records
+                    let current_era = current_era.unwrap_or_default();
+                    warn!("Return current era from records: {current_era}");
+                    current_era
                 }
             }
         }
@@ -713,6 +726,7 @@ async fn process_relay_chain_events(
                     &ah_api,
                     rc_block_number,
                     rc_block_hash,
+                    Some(records.current_era()),
                 )
                 .await?;
 
@@ -751,6 +765,7 @@ async fn process_relay_chain_events(
                     rc_block_number,
                     rc_block_hash,
                     is_loading,
+                    Some(records.current_era()),
                 )
                 .await?;
 
@@ -759,6 +774,7 @@ async fn process_relay_chain_events(
                     ev.session_index.clone(),
                     rc_block_number,
                     rc_block_hash,
+                    Some(records.current_era()),
                 )
                 .await?;
 
@@ -2086,7 +2102,7 @@ pub async fn run_network_report(
         )));
     };
 
-    let rc_block_hash = fetch_relay_chain_block_hash(&rc_rpc, *rc_block_number).await?;
+    let rc_block_hash = try_fetch_relay_chain_block_hash(&rc_rpc, *rc_block_number).await?;
 
     let ah_block_hash =
         fetch_asset_hub_block_hash_from_relay_chain(&onet, *rc_block_number, rc_block_hash).await?;
@@ -2427,7 +2443,7 @@ pub async fn run_network_report_on_relay_chain(
         )));
     };
 
-    let rc_block_hash = fetch_relay_chain_block_hash(&rc_rpc, *rc_block_number).await?;
+    let rc_block_hash = try_fetch_relay_chain_block_hash(&rc_rpc, *rc_block_number).await?;
 
     // Fetch active era total stake
     let active_era_total_stake =
@@ -3310,6 +3326,7 @@ pub async fn try_run_cache_nomination_pools_on_relay_chain(
     epoch_index: EpochIndex,
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
+    current_era: Option<EraIndex>,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if config.cache_writer_enabled && config.pools_enabled {
@@ -3342,6 +3359,7 @@ pub async fn try_run_cache_nomination_pools_on_relay_chain(
                 epoch_index,
                 rc_block_number,
                 rc_block_hash,
+                current_era,
             )
             .await
             {
@@ -3541,6 +3559,7 @@ pub async fn cache_nomination_pools_nominees_on_relay_chain(
     epoch_index: EpochIndex,
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
+    current_era: Option<EraIndex>,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     let start = Instant::now();
@@ -3555,8 +3574,15 @@ pub async fn cache_nomination_pools_nominees_on_relay_chain(
     // fetch last pool id
     let last_pool_id = super::storage::fetch_last_pool_id(&rc_api, rc_block_hash).await?;
 
-    let era_index =
-        try_fetch_active_era_info(&onet, &rc_api, &ah_api, rc_block_number, rc_block_hash).await?;
+    let era_index = try_fetch_active_era_info(
+        &onet,
+        &rc_api,
+        &ah_api,
+        rc_block_number,
+        rc_block_hash,
+        current_era,
+    )
+    .await?;
 
     let mut some_pool = Some(1);
     while let Some(pool_id) = some_pool {
@@ -4136,6 +4162,7 @@ pub async fn try_run_cache_session_stats_records_on_relay_chain(
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
     is_loading: bool,
+    current_era: Option<EraIndex>,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if !config.cache_writer_enabled {
@@ -4148,6 +4175,7 @@ pub async fn try_run_cache_session_stats_records_on_relay_chain(
             rc_block_number,
             rc_block_hash,
             is_loading,
+            current_era,
         )
         .await
         {
@@ -4168,6 +4196,7 @@ pub async fn cache_session_stats_records_on_relay_chain(
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
     is_loading: bool,
+    current_era: Option<EraIndex>,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
     let config = CONFIG.clone();
@@ -4319,8 +4348,15 @@ pub async fn cache_session_stats_records_on_relay_chain(
     // Note: era_reward_points are asynchronously sent RC->AH at the beginning of each session
     // We want to know which points were collected up to the last block of the session, so we need to gather the active era
     // from the parent AH block
-    let era_index =
-        try_fetch_active_era_info(&onet, &rc_api, &ah_api, rc_block_number, rc_block_hash).await?;
+    let era_index = try_fetch_active_era_info(
+        &onet,
+        &rc_api,
+        &ah_api,
+        rc_block_number,
+        rc_block_hash,
+        current_era,
+    )
+    .await?;
 
     let era_reward_points =
         super::storage::fetch_era_reward_points(&rc_api, rc_block_hash, era_index).await?;
@@ -4669,6 +4705,37 @@ async fn fetch_relay_chain_block_hash(
         })
 }
 
+/// Try to fetch relay chain block hash from a specified block number, wait if not available
+/// Note: Cap retries up to 100 times ~= 10minutes
+async fn try_fetch_relay_chain_block_hash(
+    rpc: &LegacyRpcMethods<PolkadotConfig>,
+    block_number: BlockNumber,
+) -> Result<H256, OnetError> {
+    let mut retries = 100;
+    while retries > 0 {
+        match fetch_relay_chain_block_hash(rpc, block_number).await {
+            Ok(hash) => {
+                return Ok(hash);
+            }
+            Err(err) => {
+                if retries == 1 {
+                    // Last retry, return the error
+                    return Err(OnetError::from(format!("{err} after 100 retries")));
+                }
+                warn!(
+                    "{err} -> Waiting 6 seconds and retrying ({} retries left)",
+                    retries - 1
+                );
+                async_std::task::sleep(std::time::Duration::from_secs(6)).await;
+                retries -= 1;
+            }
+        };
+    }
+    Err(OnetError::from(format!(
+        "Relay block hash not available at block number {block_number} after 100 retries"
+    )))
+}
+
 /// Fetch the included asset hub block hash from a specified relay chain block number
 #[async_recursion]
 async fn fetch_asset_hub_block_hash_from_relay_chain(
@@ -4683,7 +4750,8 @@ async fn fetch_asset_hub_block_hash_from_relay_chain(
     }
 
     let rc_next_block_number = rc_block_number + 1;
-    let rc_next_block_hash = fetch_relay_chain_block_hash(&rc_rpc, rc_next_block_number).await?;
+    let rc_next_block_hash =
+        try_fetch_relay_chain_block_hash(&rc_rpc, rc_next_block_number).await?;
 
     fetch_asset_hub_block_hash_from_relay_chain(onet, rc_next_block_number, rc_next_block_hash)
         .await
