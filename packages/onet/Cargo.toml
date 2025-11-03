@@ -19,7 +19,6 @@ onet-paseo = { path = "../chains/paseo" }
 onet-kusama = { path = "../chains/kusama" }
 # onet-polkadot = { path = "../chains/polkadot" }
 # onet-westend = { path = "../chains/westend" }
-# onet-westend-next = { path = "../chains/westend-next" }
 
 actix = { workspace = true }
 actix-web = { workspace = true }

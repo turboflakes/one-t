@@ -23,8 +23,6 @@ members = [
     "packages/chains/paseo",
     "packages/chains/asset-hub-paseo",
     "packages/chains/people-paseo",
-    # "packages/chains/asset-hub-westend-next",
-    # "packages/chains/westend-next",
 ]
 
 resolver = "2"
