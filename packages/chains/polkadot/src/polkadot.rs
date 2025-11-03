@@ -18,32 +18,71 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+//
 use async_recursion::async_recursion;
 use log::{debug, error, info, warn};
 use onet_api::responses::{AuthorityKey, AuthorityKeyCache};
-use onet_cache::{CacheKey, Index, Trait, Verbosity};
+use onet_asset_hub_polkadot::{
+    asset_hub_runtime,
+    asset_hub_runtime::{
+        runtime_types::{
+            bounded_collections::bounded_btree_map::BoundedBTreeMap,
+            bounded_collections::bounded_vec::BoundedVec, pallet_nomination_pools::PoolState,
+            pallet_staking_async::pallet::pallet::BoundedExposurePage,
+            sp_arithmetic::per_things::Perbill,
+        },
+        // staking::events::EraPaid,
+        staking::events::PagedElectionProceeded,
+        staking::events::SessionRotated,
+        staking_rc_client::events::OffenceReceived,
+        staking_rc_client::events::SessionReportReceived,
+    },
+};
+
+use onet_asset_hub_polkadot::{
+    fetch_account_info, fetch_active_era_info, fetch_bonded_controller_account, fetch_bonded_pools,
+    fetch_era_reward_points, fetch_eras_total_stake, fetch_eras_validator_reward,
+    fetch_first_session_from_active_era, fetch_last_pool_id, fetch_ledger_from_controller,
+    fetch_nominators, fetch_own_stake_via_stash, fetch_pool_metadata, fetch_total_issuance,
+    AssetHubCall, NominationPoolsCall,
+};
+use onet_cache::{
+    cache_best_block, cache_board_limits_at_session, cache_finalized_block,
+    cache_network_stats_at_session, cache_nomination_pool, cache_nomination_pool_nominees,
+    cache_nomination_pool_stats, cache_records, cache_records_at_new_session,
+    cache_validator_profile, cache_validator_profile_only,
+};
+use onet_cache::{
+    error::CacheError,
+    types::{CacheKey, ChainKey, Verbosity},
+};
 use onet_config::{CONFIG, EPOCH_FILENAME};
 use onet_core::{
-    get_account_id_from_storage_key, get_latest_block_number_processed, get_signer_from_seed,
-    get_subscribers, get_subscribers_by_epoch, write_latest_block_number_processed, Onet,
+    core::{
+        get_account_id_from_storage_key, get_latest_block_number_processed, get_signer_from_seed,
+        get_subscribers, get_subscribers_by_epoch, write_latest_block_number_processed,
+    },
+    error::OnetError,
+    Onet,
 };
 use onet_discovery::try_fetch_discovery_data;
 use onet_dn::try_fetch_stashes_from_remote_url;
-use onet_errors::{CacheError, OnetError};
 use onet_matrix::FileInfo;
-use onet_mcda::{criterias::build_limits_from_session, scores::base_decimals};
+use onet_mcda::scores::base_decimals;
+use onet_people_polkadot::{bytes_to_str, get_display_name, get_identity};
 use onet_pools::{
     nomination_pool_account, Account, AccountType, ActiveNominee, Pool, PoolNominees, PoolStats,
     Roles,
 };
+
 use onet_records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, DiscoveryRecord, EpochIndex, EpochKey, EraIndex,
-    Identity, NetworkSessionStats, ParaId, ParaRecord, ParaStats, ParachainRecord, Points, Records,
-    SessionStats, Subscribers, Subset, SubsetStats, ValidatorProfileRecord,
+    NetworkSessionStats, ParaId, ParaRecord, ParaStats, Points, Records, Subscribers, Subset,
+    SubsetStats, ValidatorProfileRecord,
 };
 use onet_report::{
-    group_by_points, position, Callout, Metadata, Network, RawData, RawDataGroup, RawDataPara,
-    RawDataParachains, RawDataRank, Report, ReportType, Validator, Validators,
+    group_by_points, position, Callout, Metadata as ReportMetadata, Network, RawData, RawDataGroup,
+    RawDataPara, RawDataParachains, RawDataRank, Report, ReportType, Validator, Validators,
 };
 use redis::aio::Connection;
 
@@ -59,50 +98,102 @@ use std::{
     time::Instant,
 };
 
+use frame_metadata::RuntimeMetadataPrefixed;
 use subxt::{
-    config::{
-        substrate::{Digest, DigestItem},
-    },
-    ext::{frame_metadata::RuntimeMetadataPrefixed, subxt_core::Metadata as RuntimeMetadata},
+    backend::legacy::LegacyRpcMethods,
+    config::substrate::{Digest, DigestItem},
+    ext::{frame_metadata, subxt_core::Metadata},
     tx::TxStatus,
     utils::{AccountId32, H256},
+    OnlineClient, PolkadotConfig,
 };
 use subxt_signer::sr25519::Keypair;
 
 #[subxt::subxt(
     runtime_metadata_path = "artifacts/metadata/polkadot_metadata.scale",
-    derive_for_all_types = "PartialEq, Clone"
+    derive_for_all_types = "PartialEq, Clone, codec::Decode, codec::Encode"
 )]
-mod node_runtime {}
+pub mod relay_runtime {}
 
-use node_runtime::{
+use crate::custom_types::PreDigest;
+
+use relay_runtime::{
+    grandpa::events::NewAuthorities,
+    historical::events::RootStored,
+    // historical::events::RootsPruned,
+    para_inclusion::events::CandidateIncluded,
+    // para_inclusion::storage::types::v1::V1 as CoreInfo,
     para_inherent::calls::types::Enter,
+    para_inherent::storage::types::on_chain_votes::OnChainVotes,
+    para_scheduler::storage::types::session_start_block::SessionStartBlock,
+    para_scheduler::storage::types::validator_groups::ValidatorGroups,
+    paras_shared::storage::types::active_validator_indices::ActiveValidatorIndices,
+    rc_migrator::events::StageTransition,
     runtime_types::{
-        bounded_collections::bounded_vec::BoundedVec, pallet_nomination_pools::PoolState,
+        // frame_system::AccountInfo,
+        // frame_system::LastRuntimeUpgradeInfo,
+        // pallet_balances::types::AccountData,
+        pallet_rc_migrator::MigrationStage,
+        pallet_staking_async_ah_client::OperatingMode,
         polkadot_parachain_primitives::primitives::Id,
-        polkadot_primitives::v8::AvailabilityBitfield, polkadot_primitives::v8::CoreIndex,
-        polkadot_primitives::v8::DisputeStatement, polkadot_primitives::v8::ValidatorIndex,
-        polkadot_primitives::v8::ValidityAttestation, sp_arithmetic::per_things::Perbill,
-        sp_authority_discovery::app::Public, sp_consensus_babe::digests::PreDigest,
+        polkadot_primitives::v8::AvailabilityBitfield,
+        polkadot_primitives::v8::CoreIndex,
+        polkadot_primitives::v8::DisputeStatement,
+        polkadot_primitives::v8::ValidatorIndex,
+        polkadot_primitives::v8::ValidityAttestation,
+        // polkadot_runtime_parachains::scheduler::common::Assignment,
+        // polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
+        sp_authority_discovery::app::Public,
+        // sp_consensus_babe::digests::PreDigest,
     },
+    session::events::new_session::SessionIndex,
     session::events::NewSession,
+    // session::storage::types::queued_keys::QueuedKeys,
+    // session::storage::types::validators::Validators as ValidatorSet,
+    // staking_ah_client::events::CouldNotMergeAndDropped,
+    // staking_ah_client::events::SetTooSmallAndDropped,
+    staking_ah_client::events::ValidatorSetReceived,
     system::events::ExtrinsicFailed,
 };
 
-#[subxt::subxt(
-    runtime_metadata_path = "artifacts/metadata/people_polkadot_metadata.scale",
-    derive_for_all_types = "PartialEq, Clone"
-)]
-mod people_node_runtime {}
+pub type RcCall = relay_runtime::runtime_types::polkadot_runtime::RuntimeCall;
+pub type RcNominationPoolsCall =
+    relay_runtime::runtime_types::pallet_nomination_pools::pallet::Call;
 
-use people_node_runtime::runtime_types::pallet_identity::types::Data;
+pub async fn init_start_block_number(onet: &Onet) -> Result<BlockNumber, OnetError> {
+    let config = CONFIG.clone();
+    let rc_rpc = onet.relay_rpc().clone();
 
-type Call = node_runtime::runtime_types::polkadot_runtime::RuntimeCall;
-type NominationPoolsCall = node_runtime::runtime_types::pallet_nomination_pools::pallet::Call;
+    // Initialize from the last block processed
+    let latest_block_number = get_latest_block_number_processed()?;
+
+    if config.start_from_cached_block_enabled {
+        return Ok(latest_block_number);
+    }
+
+    // Initialize from the first block of the session of last block processed
+    let rc_api = onet.relay_client().clone();
+    let latest_block_hash = try_fetch_relay_chain_block_hash(&rc_rpc, latest_block_number).await?;
+    // Fetch ParaSession start block for the latest block processed
+    let mut start_block_number = fetch_session_start_block(&rc_api, latest_block_hash).await?;
+    // Note: We want to start sync in the first block of a session.
+    // For that we get the first block of a ParaSession and remove 1 block,
+    // since ParaSession starts always at the the second block of a new session
+    start_block_number -= 1;
+    // Load into memory the minimum initial eras defined (default=0)
+    start_block_number -= config.minimum_initial_eras * 6 * config.blocks_per_session;
+
+    Ok(start_block_number.into())
+}
 
 pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    let api = onet.client().clone();
+    let rc_api = onet.relay_client().clone();
+    let rc_rpc = onet.relay_rpc().clone();
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
 
     let stashes: Vec<String> = config.pools_featured_nominees;
     info!(
@@ -110,72 +201,55 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
         stashes.len()
     );
 
-    // Initialize from the first block of the session of last block processed
-    let latest_block_number = get_latest_block_number_processed()?;
-    let latest_block_hash = onet
-        .rpc()
-        .chain_get_block_hash(Some(latest_block_number.into()))
-        .await?
-        .unwrap();
-
-    // Fetch ParaSession start block for the latest block processed
-    let session_start_block_addr = node_runtime::storage()
-        .para_scheduler()
-        .session_start_block();
-    let mut start_block_number = api
-        .storage()
-        .at(latest_block_hash)
-        .fetch(&session_start_block_addr)
-        .await?
-        .unwrap();
-
-    // Note: We want to start sync in the first block of a session.
-    // For that we get the first block of a ParaSession and remove 1 block,
-    // since ParaSession starts always at the the second block of a new session
-    start_block_number -= 1;
-    // Load into memory the minimum initial eras defined (default=0)
-
-    start_block_number -= config.minimum_initial_eras * 6 * config.blocks_per_session;
-
-    info!(
-        "Start loading blocks since block number: {}",
-        start_block_number
-    );
+    let start_block_number = init_start_block_number(&onet).await?;
 
     // get block hash from the start block
-    let block_hash = onet
-        .rpc()
-        .chain_get_block_hash(Some(start_block_number.into()))
-        .await?
-        .unwrap();
+    let rc_block_hash =
+        try_fetch_relay_chain_block_hash(&rc_rpc, start_block_number.into()).await?;
+
+    let ah_block_hash =
+        fetch_asset_hub_block_hash_from_relay_chain(onet, start_block_number.into(), rc_block_hash)
+            .await?;
+
+    info!(
+        "Start from RC Block #{} {:?}",
+        start_block_number, rc_block_hash
+    );
+    info!("Start from AH Block Hash {:?}", ah_block_hash);
+
+    let is_staking_live_on_asset_hub = is_staking_live_on_asset_hub(&onet, rc_block_hash).await?;
+    warn!(
+        "Is staking Live on Asset Hub: {}",
+        is_staking_live_on_asset_hub
+    );
 
     // Fetch active era index
-    let active_era_addr = node_runtime::storage().staking().active_era();
-    let era_index = match api.storage().at(block_hash).fetch(&active_era_addr).await? {
-        Some(info) => info.index,
-        None => return Err(format!("Active Era not found for block_hash: {block_hash}").into()),
+    let era_index = if is_staking_live_on_asset_hub {
+        let active_era_info = fetch_active_era_info(&ah_api, ah_block_hash).await?;
+        active_era_info.index
+    } else {
+        try_fetch_active_era_info(
+            &onet,
+            &rc_api,
+            &ah_api,
+            start_block_number,
+            rc_block_hash,
+            None,
+        )
+        .await?
     };
 
     // Cache Nomination pools
     // try_run_cache_pools_era(era_index, false).await?;
 
-    // Fetch current session index
-    let session_index_addr = node_runtime::storage().session().current_index();
-    let session_index = match api
-        .storage()
-        .at(block_hash)
-        .fetch(&session_index_addr)
-        .await?
-    {
-        Some(session_index) => session_index,
-        None => return Err(format!("Session Index not found for block_hash: {block_hash}").into()),
-    };
+    // Fetch session index
+    let session_index = super::storage::fetch_session_index(&rc_api, rc_block_hash).await?;
 
     // Cache current epoch
     let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
     fs::write(&epoch_filename, session_index.to_string())?;
 
-    // Subscribers
+    // Matrix users subscribers
     let mut subscribers = Subscribers::with_era_and_epoch(era_index, session_index);
     // Initialized subscribers
     if let Ok(subs) = get_subscribers() {
@@ -188,29 +262,64 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     let mut records =
         Records::with_era_epoch_and_block(era_index, session_index, start_block_number.into());
 
+    info!("Start records: {:?}", records);
+
     // Initialize subscribers records
-    initialize_records(&onet, &mut records, block_hash).await?;
+    initialize_records(
+        &rc_api,
+        &ah_api,
+        &mut records,
+        rc_block_hash,
+        ah_block_hash,
+        is_staking_live_on_asset_hub,
+    )
+    .await?;
 
     // Initialize cache
-    cache_session_records(&records, block_hash).await?;
-    cache_track_records(&onet, &records).await?;
+    if config.cache_writer_enabled {
+        let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+        let first_session_index = if is_staking_live_on_asset_hub {
+            fetch_first_session_from_active_era(&ah_api, ah_block_hash).await?
+        } else {
+            try_fetch_first_session_from_active_era(
+                &rc_api,
+                &ah_api,
+                rc_block_hash,
+                ah_block_hash,
+                era_index,
+            )
+            .await?
+        };
+
+        cache_records_at_new_session(&mut cache, &records, first_session_index).await?;
+        cache_records(&mut cache, &records).await?;
+    }
 
     // Initialize p2p discovery
-    try_run_cache_discovery_records(&records, block_hash).await?;
+    try_run_cache_discovery_records(&records, rc_block_hash).await?;
 
     // Start indexing from the start_block_number
     let mut latest_block_number_processed: Option<u64> = Some(start_block_number.into());
     let mut is_loading = true;
 
-    // Subscribe head
+    // AH Subscribe head
+    try_run_subscribe_best_asset_hub().await?;
+
+    // RC Subscribe head
     // NOTE: the reason why we subscribe head and not finalized_head,
     // is just because head is in sync more frequently.
     // finalized_head can always be queried so as soon as it changes we process th repective block_hash
-    let mut blocks_sub = api.blocks().subscribe_best().await?;
+    let mut blocks_sub = rc_api.blocks().subscribe_best().await?;
     while let Some(Ok(best_block)) = blocks_sub.next().await {
-        info!("Block #{:?} received", best_block.number());
+        info!("RC Block #{:?} best received", best_block.number());
         // update records best_block number
-        process_best_block(&onet, &mut records, best_block.number().into()).await?;
+        process_best_block(
+            &onet,
+            &mut records,
+            ChainKey::RC,
+            best_block.number().into(),
+        )
+        .await?;
 
         // fetch latest finalized block
         let finalized_block_hash = onet.rpc().chain_get_finalized_head().await?;
@@ -219,7 +328,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
             .chain_get_header(Some(finalized_block_hash))
             .await?
         {
-            info!("Block #{:?} finalized in storage", block.number);
+            info!("RC Block #{:?} finalized fetched", block.number);
             // process older blocks that have not been processed first
             while let Some(processed_block_number) = latest_block_number_processed {
                 if block.number as u64 == processed_block_number {
@@ -242,21 +351,18 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
                         .await?;
                     } else {
                         // fetch block_hash if not the finalized head
-                        if let Some(block_hash) = onet
-                            .rpc()
-                            .chain_get_block_hash(Some(block_number.into()))
-                            .await?
-                        {
-                            process_finalized_block(
-                                &onet,
-                                &mut subscribers,
-                                &mut records,
-                                block_number,
-                                block_hash,
-                                is_loading,
-                            )
-                            .await?;
-                        }
+                        let block_hash =
+                            try_fetch_relay_chain_block_hash(&rc_rpc, block_number).await?;
+
+                        process_finalized_block(
+                            &onet,
+                            &mut subscribers,
+                            &mut records,
+                            block_number,
+                            block_hash,
+                            is_loading,
+                        )
+                        .await?;
                     };
 
                     //
@@ -275,22 +381,22 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
 pub async fn process_best_block(
     onet: &Onet,
     records: &mut Records,
+    chain_key: ChainKey,
     block_number: BlockNumber,
 ) -> Result<(), OnetError> {
     // update best block number
-    records.set_best_block_number(block_number.into());
+    match chain_key {
+        ChainKey::RC => records.set_relay_chain_best_block_number(block_number.into()),
+        ChainKey::AH => records.set_asset_hub_best_block_number(block_number.into()),
+    };
 
     // if api enabled cache best block
     let config = CONFIG.clone();
-    if config.cache_writer_enabled {
-        let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-        redis::cmd("SET")
-            .arg(CacheKey::BestBlock)
-            .arg(block_number.to_string())
-            .query_async(&mut cache as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?;
+    if !config.cache_writer_enabled {
+        return Ok(());
     }
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+    cache_best_block(&mut cache, chain_key, block_number).await?;
 
     Ok(())
 }
@@ -299,322 +405,724 @@ pub async fn process_finalized_block(
     onet: &Onet,
     subscribers: &mut Subscribers,
     records: &mut Records,
-    block_number: BlockNumber,
-    block_hash: H256,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
-    debug!("Block #{} to be processed now", block_number);
-    let api = onet.client().clone();
+    debug!("RC Block #{} to be processed now", rc_block_number);
 
-    // DEPRECATE exceptional_blocks, see note below
-    // let exceptional_blocks: Vec<String> =
-    //     config.blocks_where_metadata_is_fetched_from_previous_block;
-    // // // NOTE: this exceptional cases handle the cases where the events of a certain block is
-    // // only able to be decoded if metadata presented is from previous block
-    // // an example is the block_number 15426015 in Kusama
-    // let block_hash_metadata = if exceptional_blocks.contains(&block_number.to_string()) {
-    //     onet.rpc()
-    //         .chain_get_block_hash(Some((block_number - 1).into()))
-    //         .await?
-    // } else {
-    //     Some(block_hash)
-    // };
+    let BlockProcessingContext {
+        rc_api,
+        rc_rpc,
+        ah_api,
+        ah_rpc,
+        current_metadata,
+    } = setup_processing_context(onet, rc_block_number).await?;
 
-    //NOTE: Clone static metadata has it might be useful later to be restored again!
-    let static_metadata = api.metadata().clone();
+    let is_staking_live_on_asset_hub = is_staking_live_on_asset_hub(&onet, rc_block_hash).await?;
 
-    // NOTE: To better handle runtime upgrades where the event system.code_updated can only be decoded by the parent metadata,
-    // (an example is the block_number 15426015 in Kusama) we retrieve first the metadata from parent block
-    // and use it to iterate the events, after if no specific breaking changes aredecode the current block
-    let block_hash_metadata = onet
-        .rpc()
-        .chain_get_block_hash(Some((block_number - 1).into()))
-        .await?;
-
-    let parent_block_metadata_bytes = onet
-        .rpc()
-        .state_get_metadata(block_hash_metadata)
-        .await?
-        .into_raw();
-    let parent_block_metadata: RuntimeMetadata =
-        RuntimeMetadataPrefixed::decode(&mut &parent_block_metadata_bytes[..])?.try_into()?;
-
-    // Assign block_metadata to the api
-    api.set_metadata(parent_block_metadata.clone());
-
-    // Fetch events
-    let events = api.events().at(block_hash).await?;
-
-    if let Some(new_session_event) = events.find_first::<NewSession>()? {
-        info!("{:?}", new_session_event);
-
-        switch_new_session(
-            &onet,
-            block_number,
-            new_session_event.session_index,
-            subscribers,
-            records,
-            block_hash,
-            is_loading,
-        )
-        .await?;
-
-        // Network public report
-        try_run_network_report(new_session_event.session_index, &records, is_loading).await?;
-
-        // Cache session records every new session
-        try_run_cache_session_records(&records, block_hash).await?;
-
-        // Cache session stats records every new session
-        try_run_cache_session_stats_records(block_hash, is_loading).await?;
-
-        // Cache nomination pools every new session
-        try_run_cache_nomination_pools(block_number, block_hash).await?;
-
-        if !is_loading {
-            // Cache p2p discovery
-            try_run_cache_discovery_records(&records, block_hash).await?;
-        }
-    }
+    // Process RC events with the parent_metadata
+    process_relay_chain_events(
+        &onet,
+        &rc_api,
+        &rc_rpc,
+        &ah_api,
+        &ah_rpc,
+        records,
+        subscribers,
+        rc_block_number,
+        rc_block_hash,
+        is_loading,
+        is_staking_live_on_asset_hub,
+    )
+    .await?;
 
     // NOTE_1: It might require further testing, but since v1003000 the aproach will be to
-    // restore the original static_metadata to process the next records!
+    // restore the original `current_metadata` to process the next records!
 
-    // NOTE_2: Lookup for exceptions where both metadatas (block_metadata or static_metadatas) need to be passed down
-    // and apply them where required!
+    // NOTE_2: Lookup for exceptions where both metadatas (parent_metadata or current_metadata)
+    // need to be passed down and apply them where required!
 
     // Restore assignement of static_metadata to the api
-    api.set_metadata(static_metadata);
+    rc_api.set_metadata(current_metadata);
 
     // Update records
-    // Note: this records should be updated after the switch of session
-    track_records(&onet, records, block_number, block_hash).await?;
+    // Note: these records should be updated after the switch of session
+    track_records(
+        &rc_api,
+        &rc_rpc,
+        records,
+        rc_block_number,
+        rc_block_hash,
+        is_staking_live_on_asset_hub,
+    )
+    .await?;
 
-    // Cache pool stats every 10 minutes
-    try_run_cache_nomination_pools_stats(block_number, block_hash).await?;
-
-    // Cache records at every block
-    cache_track_records(&onet, &records).await?;
+    let config = CONFIG.clone();
+    if config.cache_writer_enabled {
+        let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+        // Cache records at every block
+        cache_records(&mut cache, &records).await?;
+    }
 
     // Log block processed duration time
-    info!("Block #{} processed ({:?})", block_number, start.elapsed());
+    info!(
+        "RC Block #{} processed ({:?})",
+        rc_block_number,
+        start.elapsed()
+    );
 
     Ok(())
 }
 
-// cache_track_records is called once at every block
-pub async fn cache_track_records(onet: &Onet, records: &Records) -> Result<(), OnetError> {
+pub async fn try_run_subscribe_best_asset_hub() -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.cache_writer_enabled {
-        let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+    if !config.cache_writer_enabled {
+        return Ok(());
+    }
 
-        // cache records every new block
-        if let Some(current_block) = records.current_block() {
-            let current_era = records.current_era();
-            let current_epoch = records.current_epoch();
+    async_std::task::spawn(async move {
+        if let Err(e) = subscribe_best_asset_hub().await {
+            error!("subscribe_best_asset_hub error: {:?}", e);
+        }
+    });
 
-            let mut parachains_map: BTreeMap<ParaId, ParachainRecord> = BTreeMap::new();
-            let mut session_stats = SessionStats::default();
+    Ok(())
+}
 
-            if let Some(authorities) = records.get_authorities(None) {
-                for authority_idx in authorities.iter() {
-                    if let Some(authority_record) =
-                        records.get_authority_record(*authority_idx, None)
-                    {
-                        // aggregate authority session_stats counters
-                        session_stats.authorities += 1;
-                        session_stats.points += authority_record.points();
-                        // info!("___block: {} points: {}", current_block, session_stats.points);
-                        session_stats.authored_blocks += authority_record.total_authored_blocks();
+pub async fn subscribe_best_asset_hub() -> Result<(), OnetError> {
+    let onet: Onet = Onet::new().await;
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+    let mut blocks_sub = ah_api.blocks().subscribe_best().await?;
+    while let Some(Ok(best_block)) = blocks_sub.next().await {
+        info!("AH Block #{:?} best received", best_block.number());
+        let block_number = best_block.number();
+        let chain_key = ChainKey::AH;
+        cache_best_block(&mut cache, chain_key, block_number.into()).await?;
+    }
+    Err(OnetError::SubscriptionFinished)
+}
 
-                        //
-                        let authority_key =
-                            CacheKey::AuthorityRecord(current_era, current_epoch, *authority_idx);
+struct BlockProcessingContext {
+    rc_api: OnlineClient<PolkadotConfig>,
+    rc_rpc: LegacyRpcMethods<PolkadotConfig>,
+    ah_api: OnlineClient<PolkadotConfig>,
+    ah_rpc: LegacyRpcMethods<PolkadotConfig>,
+    current_metadata: Metadata,
+}
 
-                        let mut data: BTreeMap<String, String> = BTreeMap::new();
-                        if let Some(para_record) = records.get_para_record(*authority_idx, None) {
-                            // aggregate para_authority session_stats counters
-                            session_stats.para_authorities += 1;
-                            session_stats.core_assignments += para_record.total_core_assignments();
-                            session_stats.explicit_votes += para_record.total_explicit_votes();
-                            session_stats.implicit_votes += para_record.total_implicit_votes();
-                            session_stats.missed_votes += para_record.total_missed_votes();
-                            session_stats.disputes += para_record.total_disputes();
-                            // bitfields availability
-                            session_stats.bitfields_availability +=
-                                para_record.total_availability();
-                            session_stats.bitfields_unavailability +=
-                                para_record.total_unavailability();
+async fn setup_processing_context(
+    onet: &Onet,
+    block_number: BlockNumber,
+) -> Result<BlockProcessingContext, OnetError> {
+    let rc_api = onet.relay_client().clone();
+    let rc_rpc = onet.relay_rpc().clone();
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available")
+        .clone();
+    let ah_rpc = onet
+        .asset_hub_rpc()
+        .as_ref()
+        .expect("AH RPC to be available")
+        .clone();
+    let current_metadata = rc_api.metadata().clone();
 
-                            //
-                            let serialized = serde_json::to_string(&para_record)?;
-                            data.insert(String::from("para"), serialized);
+    // Get parent block metadata for better handling of runtime upgrades
+    let parent_block_hash = try_fetch_relay_chain_block_hash(&rc_rpc, block_number - 1).await?;
 
-                            // cache para.stats as a different cache key
-                            let serialized = serde_json::to_string(&para_record.para_stats())?;
-                            redis::pipe()
-                                .atomic()
-                                .cmd("HSET")
-                                .arg(CacheKey::AuthorityRecordVerbose(
-                                    authority_key.to_string(),
-                                    Verbosity::Stats,
-                                ))
-                                .arg(String::from("para_stats"))
-                                .arg(serialized)
-                                .cmd("EXPIRE")
-                                .arg(CacheKey::AuthorityRecordVerbose(
-                                    authority_key.to_string(),
-                                    Verbosity::Stats,
-                                ))
-                                .arg(config.cache_writer_prunning)
-                                .query_async(&mut cache as &mut Connection)
-                                .await
-                                .map_err(CacheError::RedisCMDError)?;
+    // let parent_metadata = rc_api::fetch_latest_stable_metadata(parent_block_hash).await?;
+    let parent_metadata_bytes = rc_rpc
+        .state_get_metadata(Some(parent_block_hash))
+        .await?
+        .into_raw();
+    let parent_metadata: Metadata =
+        RuntimeMetadataPrefixed::decode(&mut &parent_metadata_bytes[..])?.try_into()?;
 
-                            // cache para.summary as a different cache key
-                            let summary = ParaStats {
-                                points: para_record.total_points(),
-                                authored_blocks: para_record.total_authored_blocks(),
-                                core_assignments: para_record.total_core_assignments(),
-                                explicit_votes: para_record.total_explicit_votes(),
-                                implicit_votes: para_record.total_implicit_votes(),
-                                missed_votes: para_record.total_missed_votes(),
-                            };
-                            let serialized = serde_json::to_string(&summary)?;
-                            redis::pipe()
-                                .atomic()
-                                .cmd("HSET")
-                                .arg(CacheKey::AuthorityRecordVerbose(
-                                    authority_key.to_string(),
-                                    Verbosity::Summary,
-                                ))
-                                .arg(String::from("para_summary"))
-                                .arg(serialized)
-                                .cmd("EXPIRE")
-                                .arg(CacheKey::AuthorityRecordVerbose(
-                                    authority_key.to_string(),
-                                    Verbosity::Summary,
-                                ))
-                                .arg(config.cache_writer_prunning)
-                                .query_async(&mut cache as &mut Connection)
-                                .await
-                                .map_err(CacheError::RedisCMDError)?;
+    rc_api.set_metadata(parent_metadata.clone());
 
-                            // aggregate parachains counters
-                            for (para_id, stats) in para_record.para_stats().iter() {
-                                let pm = parachains_map
-                                    .entry(*para_id)
-                                    .or_insert(ParachainRecord::default());
-                                pm.stats.implicit_votes += stats.implicit_votes();
-                                pm.stats.explicit_votes += stats.explicit_votes();
-                                pm.stats.missed_votes += stats.missed_votes();
-                                pm.stats.authored_blocks += stats.authored_blocks();
-                                pm.stats.points += stats.points();
-                                // NOTE: parachain core_assignments is related to the val_group
-                                // to calculate the core_assignments, just take into consideration that each authority in the val_group
-                                // has 1 core_assignment which means that 5 validators ca in the same group represent 1 core_assignment for the parachain.
-                                // The total of core_assignments will be given in cents meaning 100 = 1
-                                let ca: u32 = (100 / (para_record.peers().len() + 1)) as u32
-                                    * stats.core_assignments();
-                                pm.stats.core_assignments += ca;
-                                pm.para_id = *para_id;
-                            }
+    Ok(BlockProcessingContext {
+        rc_api,
+        rc_rpc,
+        ah_api,
+        ah_rpc,
+        current_metadata,
+    })
+}
 
-                            if let Some(para_id) = para_record.para_id() {
-                                let pm = parachains_map
-                                    .entry(para_id)
-                                    .or_insert(ParachainRecord::default());
-                                pm.current_group = para_record.group();
-                                let mut authorities: Vec<AuthorityIndex> = vec![*authority_idx];
-                                authorities.append(&mut para_record.peers());
-                                pm.current_authorities = authorities;
-                            }
-                        }
-                        let serialized = serde_json::to_string(&authority_record)?;
-                        data.insert(String::from("auth"), serialized);
-                        redis::pipe()
-                            .atomic()
-                            .cmd("HSET")
-                            .arg(authority_key.to_string())
-                            .arg(data)
-                            .cmd("EXPIRE")
-                            .arg(authority_key.to_string())
-                            .arg(config.cache_writer_prunning)
-                            .query_async(&mut cache as &mut Connection)
-                            .await
-                            .map_err(CacheError::RedisCMDError)?;
-                    }
-                }
-            }
-            let serialized = serde_json::to_string(&session_stats)?;
-
-            redis::pipe()
-                .atomic()
-                // cache current_block / finalized block
-                .cmd("SET")
-                .arg(CacheKey::FinalizedBlock)
-                .arg(*current_block)
-                // cache current_block / finalized block into a sorted set by session
-                .cmd("ZADD")
-                .arg(CacheKey::BlocksBySession(Index::Num(current_epoch.into())))
-                .arg(0)
-                .arg(*current_block)
-                .cmd("EXPIRE")
-                .arg(CacheKey::BlocksBySession(Index::Num(current_epoch.into())))
-                .arg(config.cache_writer_prunning)
-                // cache session_stats at every block
-                .cmd("SET")
-                .arg(CacheKey::BlockByIndexStats(Index::Num(*current_block)))
-                .arg(serialized)
-                .arg("EX")
-                .arg(config.cache_writer_prunning)
-                .query_async(&mut cache as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
-
-            // cache parachains stats
-            for (para_id, records) in parachains_map.iter() {
-                let serialized = serde_json::to_string(&records)?;
-                redis::pipe()
-                    .atomic()
-                    .cmd("HSET")
-                    .arg(CacheKey::ParachainsBySession(current_epoch))
-                    .arg(para_id.to_string())
-                    .arg(serialized)
-                    .cmd("EXPIRE")
-                    .arg(CacheKey::ParachainsBySession(current_epoch))
-                    .arg(config.cache_writer_prunning)
-                    .query_async(&mut cache as &mut Connection)
-                    .await
-                    .map_err(CacheError::RedisCMDError)?;
-            }
-
-            // cache current_block for the current_session
-            if let Some(start_block) = records.start_block(None) {
-                if current_block != start_block {
-                    let mut data: BTreeMap<String, String> = BTreeMap::new();
-                    data.insert(String::from("current_block"), (*current_block).to_string());
-                    // by `epoch_index`
-                    redis::pipe()
-                        .atomic()
-                        .cmd("HSET")
-                        .arg(CacheKey::SessionByIndex(Index::Num(
-                            records.current_epoch().into(),
-                        )))
-                        .arg(data)
-                        .cmd("EXPIRE")
-                        .arg(CacheKey::SessionByIndex(Index::Num(
-                            records.current_epoch().into(),
-                        )))
-                        .arg(config.cache_writer_prunning)
-                        .query_async(&mut cache as &mut Connection)
-                        .await
-                        .map_err(CacheError::RedisCMDError)?;
+async fn try_fetch_active_era_info(
+    onet: &Onet,
+    rc_api: &OnlineClient<PolkadotConfig>,
+    ah_api: &OnlineClient<PolkadotConfig>,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+    current_era: Option<EraIndex>,
+) -> Result<EraIndex, OnetError> {
+    // *** SEPCIAL_NOTE *** : Edge case while AHM
+    // If a NewSession event occurs we need to fetch the active era info from the Asset Hub
+    let era_index = match super::storage::fetch_active_era_info(&rc_api, rc_block_hash).await {
+        Ok(info) => info.index,
+        Err(err) => {
+            warn!("No longer on RC -> {err:?}");
+            let ah_block_hash =
+                fetch_asset_hub_block_hash_from_relay_chain(&onet, rc_block_number, rc_block_hash)
+                    .await?;
+            match fetch_active_era_info(&ah_api, ah_block_hash).await {
+                Ok(info) => info.index,
+                Err(err) => {
+                    warn!("Not available on AH -> {err:?}");
+                    // NOTE: If the active era info is not available on the Asset Hub, we return the current era from the records.
+                    // This should not happen but to prevent a potential error during AHM just return whatever is on records
+                    let current_era = current_era.unwrap_or_default();
+                    warn!("Return current era from records: {current_era}");
+                    current_era
                 }
             }
         }
+    };
+
+    Ok(era_index)
+}
+
+async fn try_fetch_first_session_from_active_era(
+    rc_api: &OnlineClient<PolkadotConfig>,
+    ah_api: &OnlineClient<PolkadotConfig>,
+    rc_block_hash: H256,
+    ah_block_hash: H256,
+    era_index: u32,
+) -> Result<u32, OnetError> {
+    let session_index = match super::storage::fetch_first_session_from_active_era(
+        &rc_api,
+        rc_block_hash,
+        era_index,
+    )
+    .await
+    {
+        Ok(session_index) => session_index,
+        Err(err) => {
+            warn!("No longer on RC -> {err:?}");
+            match fetch_first_session_from_active_era(&ah_api, ah_block_hash).await {
+                Ok(session_index) => session_index,
+                Err(err) => {
+                    warn!("Not available on AH -> {err:?}");
+                    return Err(err);
+                }
+            }
+        }
+    };
+
+    Ok(session_index)
+}
+
+async fn try_fetch_era_reward_points(
+    rc_api: &OnlineClient<PolkadotConfig>,
+    ah_api: &OnlineClient<PolkadotConfig>,
+    rc_block_hash: H256,
+    ah_block_hash: H256,
+    era_index: u32,
+) -> Result<BTreeMap<AccountId32, Points>, OnetError> {
+    // NOTE_1: Fetch era reward points are only needed if staking is still LIVE on RC
+    // NOTE_2: When AHM is InProgress, the staking state at some point will no longer be available at RC,
+    // so we need to verify if state is already available at AH;
+    // NOTE_3: We than loop over all reward points and map them to easier retrieval later on and less storage calls
+
+    let mut era_reward_points_map: BTreeMap<AccountId32, Points> = BTreeMap::new();
+    match super::storage::fetch_era_reward_points(&rc_api, rc_block_hash, era_index).await {
+        Ok(erp) => {
+            erp.individual.iter().for_each(|(stash, points)| {
+                era_reward_points_map
+                    .entry(stash.clone())
+                    .or_insert(*points);
+            });
+        }
+        Err(err) => {
+            warn!("No longer on RC -> {err:?}");
+            match fetch_era_reward_points(&ah_api, ah_block_hash, era_index).await {
+                Ok(erp) => {
+                    erp.individual.0.iter().for_each(|(stash, points)| {
+                        era_reward_points_map
+                            .entry(stash.clone())
+                            .or_insert(*points);
+                    });
+                }
+                Err(err) => {
+                    warn!("Not available on AH -> {err:?}");
+                    return Err(err);
+                }
+            }
+        }
+    };
+    Ok(era_reward_points_map)
+}
+
+async fn process_relay_chain_events(
+    onet: &Onet,
+    rc_api: &OnlineClient<PolkadotConfig>,
+    rc_rpc: &LegacyRpcMethods<PolkadotConfig>,
+    ah_api: &OnlineClient<PolkadotConfig>,
+    ah_rpc: &LegacyRpcMethods<PolkadotConfig>,
+    records: &mut Records,
+    subscribers: &mut Subscribers,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+    is_loading: bool,
+    is_staking_live_on_asset_hub: bool,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    let events = rc_api.events().at(rc_block_hash).await?;
+
+    for event in events.iter() {
+        let event = event?;
+        if let Some(ev) = event.as_event::<CandidateIncluded>()? {
+            if ev.0.descriptor.para_id == Id(config.asset_hub_para_id) {
+                let ah_block_hash = ev.0.descriptor.para_head;
+                process_asset_hub_events(
+                    &onet,
+                    rc_api,
+                    rc_rpc,
+                    ah_api,
+                    ah_rpc,
+                    rc_block_number,
+                    rc_block_hash,
+                    ah_block_hash,
+                    subscribers,
+                    records,
+                    is_loading,
+                    is_staking_live_on_asset_hub,
+                )
+                .await?;
+            }
+        } else if let Some(ev) = event.as_event::<NewSession>()? {
+            info!("RC Event {:?}", ev);
+            let ah_block_hash =
+                fetch_asset_hub_block_hash_from_relay_chain(&onet, rc_block_number, rc_block_hash)
+                    .await?;
+
+            if is_staking_live_on_asset_hub {
+                process_new_session_event(
+                    &rc_api,
+                    &ah_api,
+                    records,
+                    ev.clone(),
+                    rc_block_number,
+                    rc_block_hash,
+                    ah_block_hash,
+                    is_loading,
+                    is_staking_live_on_asset_hub,
+                )
+                .await?;
+            } else {
+                // NOTE_1: Edge case while AHM is InProgress and staking is being migrated;
+                // If a NewSession event occurs we need to fetch the active era info from the Asset Hub
+                let era_index = try_fetch_active_era_info(
+                    &onet,
+                    &rc_api,
+                    &ah_api,
+                    rc_block_number,
+                    rc_block_hash,
+                    Some(records.current_era()),
+                )
+                .await?;
+
+                // NOTE: If staking is not live yet on AH, keep normal operations on RC.
+                let previous_epoch_era_index = switch_new_session(
+                    &rc_api,
+                    &ah_api,
+                    records,
+                    subscribers,
+                    ev.session_index.clone(),
+                    era_index.clone(),
+                    rc_block_number,
+                    rc_block_hash,
+                    ah_block_hash,
+                    is_staking_live_on_asset_hub,
+                )
+                .await?;
+
+                // Cache records at the start of each session
+                if config.cache_writer_enabled {
+                    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+                    let first_session_index = try_fetch_first_session_from_active_era(
+                        &rc_api,
+                        &ah_api,
+                        rc_block_hash,
+                        ah_block_hash,
+                        era_index,
+                    )
+                    .await?;
+                    cache_records_at_new_session(&mut cache, records, first_session_index).await?;
+                }
+
+                // Cache session stats records every new session
+                try_run_cache_session_stats_records_on_relay_chain(
+                    ev.session_index.clone() - 1,
+                    rc_block_number,
+                    rc_block_hash,
+                    is_loading,
+                    Some(records.current_era()),
+                )
+                .await?;
+
+                // Cache nomination pools every new session
+                try_run_cache_nomination_pools_on_relay_chain(
+                    ev.session_index.clone(),
+                    rc_block_number,
+                    rc_block_hash,
+                    Some(records.current_era()),
+                )
+                .await?;
+
+                // Run matrix reports every new session
+                try_run_matrix_reports(records, subscribers, previous_epoch_era_index, is_loading)
+                    .await?;
+            }
+        } else if let Some(ev) = event.as_event::<relay_runtime::staking::events::EraPaid>()? {
+            info!("RC Event {:?}", ev);
+            if !is_staking_live_on_asset_hub {
+                // Note: Network public report is based on the previous era index and parent hash
+                try_run_network_report_on_relay_chain(ev.era_index, &records, is_loading).await?;
+            }
+        } else if let Some(ev) = event.as_event::<RootStored>()? {
+            info!("RC Event {:?}", ev);
+        } else if let Some(ev) = event.as_event::<ValidatorSetReceived>()? {
+            info!("RC Event {:?}", ev);
+        } else if let Some(ev) = event.as_event::<NewAuthorities>()? {
+            info!("RC Event {:?}", ev);
+        } else if let Some(ev) = event.as_event::<StageTransition>()? {
+            info!("RC Event {:?}", ev);
+        }
     }
+
+    if !is_staking_live_on_asset_hub {
+        // Cache pool stats every 10 minutes
+        try_run_cache_nomination_pools_stats_on_relay_chain(
+            records.current_epoch(),
+            rc_block_number,
+            rc_block_hash,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn process_new_session_event(
+    rc_api: &OnlineClient<PolkadotConfig>,
+    ah_api: &OnlineClient<PolkadotConfig>,
+    records: &mut Records,
+    event: NewSession,
+    rc_block_number: u64,
+    rc_block_hash: H256,
+    ah_block_hash: H256,
+    is_loading: bool,
+    is_staking_live_on_asset_hub: bool,
+) -> Result<(), OnetError> {
+    process_new_session(
+        &rc_api,
+        &ah_api,
+        records,
+        event.session_index,
+        rc_block_number,
+        rc_block_hash,
+        ah_block_hash,
+        is_staking_live_on_asset_hub,
+    )
+    .await?;
+
+    if !is_loading {
+        // Cache p2p discovery
+        try_run_cache_discovery_records(&records, rc_block_hash).await?;
+    }
+    Ok(())
+}
+
+async fn process_asset_hub_events(
+    onet: &Onet,
+    _rc_api: &OnlineClient<PolkadotConfig>,
+    _rc_rpc: &LegacyRpcMethods<PolkadotConfig>,
+    ah_api: &OnlineClient<PolkadotConfig>,
+    ah_rpc: &LegacyRpcMethods<PolkadotConfig>,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+    ah_block_hash: H256,
+    subscribers: &mut Subscribers,
+    records: &mut Records,
+    is_loading: bool,
+    is_staking_live_on_asset_hub: bool,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    let (ah_block_number, ah_parent_block_hash) =
+        fetch_asset_hub_block_info(ah_rpc, ah_block_hash).await?;
+
+    let events = ah_api.events().at(ah_block_hash).await?;
+
+    for event in events.iter() {
+        let event = event?;
+        if let Some(ev) = event.as_event::<SessionRotated>()? {
+            info!("AH event {:?}", ev);
+            let previous_epoch_era_index = process_session_rotated(
+                ev.starting_session,
+                ev.active_era,
+                subscribers,
+                records,
+                rc_block_number,
+                Some(ah_block_number),
+            )?;
+
+            // Cache records at the start of each session
+            if config.cache_writer_enabled {
+                let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+                let first_session_index =
+                    fetch_first_session_from_active_era(&ah_api, ah_block_hash).await?;
+                cache_records_at_new_session(&mut cache, records, first_session_index).await?;
+            }
+
+            // Cache session stats records every new session with data collected
+            // from the parent AH block hash
+            try_run_cache_session_stats_records(
+                ev.starting_session - 1,
+                rc_block_number,
+                rc_block_hash,
+                ah_block_hash,
+                ah_parent_block_hash,
+                is_loading,
+            )
+            .await?;
+
+            // Cache nomination pools every new session
+            try_run_cache_nomination_pools(ev.starting_session, ah_block_number, ah_block_hash)
+                .await?;
+
+            // Run matrix reports every new session
+            try_run_matrix_reports(records, subscribers, previous_epoch_era_index, is_loading)
+                .await?;
+        } else if let Some(ev) = event.as_event::<PagedElectionProceeded>()? {
+            info!("AH Event {:?}", ev);
+        } else if let Some(ev) = event.as_event::<asset_hub_runtime::staking::events::EraPaid>()? {
+            info!("AH Event {:?}", ev);
+            if is_staking_live_on_asset_hub {
+                // Note: Network public report is based on the previous era index and parent hash
+                try_run_network_report(ev.era_index, &records, is_loading).await?;
+            }
+        } else if let Some(ev) = event.as_event::<SessionReportReceived>()? {
+            info!("AH Event {:?}", ev);
+        } else if let Some(ev) = event.as_event::<OffenceReceived>()? {
+            info!("AH Event {:?}", ev);
+        } else if let Some(ev) = event.as_event::<OffenceReceived>()? {
+            info!("AH Event {:?}", ev);
+        }
+        // TODO: Handle multi_block events
+        //  if pallet == "MultiBlock"
+        // || pallet == "MultiBlockVerifier"
+        // || pallet == "MultiBlockSigned"
+        // || pallet == "MultiBlockUnsigned"
+    }
+
+    records.set_asset_hub_block_number(ah_block_number, rc_block_number);
+
+    if is_staking_live_on_asset_hub {
+        // Cache pool stats every 10 minutes
+        try_run_cache_nomination_pools_stats(
+            records.current_epoch(),
+            ah_block_number,
+            ah_block_hash,
+        )
+        .await?;
+    }
+
+    // Cache finalized block
+    if config.cache_writer_enabled {
+        let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+        cache_finalized_block(&mut cache, ChainKey::AH, ah_block_number.into()).await?;
+    }
+
+    Ok(())
+}
+
+pub async fn switch_new_session(
+    rc_api: &OnlineClient<PolkadotConfig>,
+    ah_api: &OnlineClient<PolkadotConfig>,
+    records: &mut Records,
+    subscribers: &mut Subscribers,
+    starting_session: EpochIndex,
+    active_era: EraIndex,
+    rc_block_number: u64,
+    rc_block_hash: H256,
+    ah_block_hash: H256,
+    is_staking_live_on_asset_hub: bool,
+) -> Result<EraIndex, OnetError> {
+    let config = CONFIG.clone();
+
+    // keep previous era in context
+    let previous_era_index = records.current_era().clone();
+
+    // Update records current Era and Epoch
+    records.start_new_epoch(active_era, starting_session);
+    // Update records current block number
+    records.set_relay_chain_block_number(rc_block_number.into());
+
+    // Update subscribers current Era and Epoch
+    subscribers.start_new_epoch(active_era, starting_session);
+
+    if let Ok(subs) = get_subscribers() {
+        for (account, user_id, param) in subs.iter() {
+            subscribers.subscribe(account.clone(), user_id.to_string(), param.clone());
+        }
+    }
+
+    // Initialize records for new epoch
+    initialize_records(
+        &rc_api,
+        &ah_api,
+        records,
+        rc_block_hash,
+        ah_block_hash,
+        is_staking_live_on_asset_hub,
+    )
+    .await?;
+
+    // Remove older keys, default is maximum_history_eras + 1
+    records.remove(EpochKey(
+        records.current_epoch() - ((config.maximum_history_eras + 1) * 6),
+    ));
+    subscribers.remove(EpochKey(
+        records.current_epoch() - ((config.maximum_history_eras + 1) * 6),
+    ));
+
+    // Cache current epoch
+    let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
+    fs::write(&epoch_filename, starting_session.to_string())?;
+
+    Ok(previous_era_index)
+}
+
+/// Process new session at RC NewSession event
+pub async fn process_new_session(
+    rc_api: &OnlineClient<PolkadotConfig>,
+    ah_api: &OnlineClient<PolkadotConfig>,
+    records: &mut Records,
+    new_session_index: EpochIndex,
+    rc_block_number: u64,
+    rc_block_hash: H256,
+    ah_block_hash: H256,
+    is_staking_live_on_asset_hub: bool,
+) -> Result<(), OnetError> {
+    // Update records current Epoch
+    records.set_new_epoch(new_session_index);
+    // Update records current block number
+    records.set_relay_chain_block_number(rc_block_number.into());
+    // Initialize records for new epoch
+    initialize_records(
+        &rc_api,
+        &ah_api,
+        records,
+        rc_block_hash,
+        ah_block_hash,
+        is_staking_live_on_asset_hub,
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// Process session rotated at AH SessionRotated event
+pub fn process_session_rotated(
+    starting_session: EpochIndex,
+    active_era: EraIndex,
+    subscribers: &mut Subscribers,
+    records: &mut Records,
+    rc_block_number: u64,
+    ah_block_number: Option<u64>,
+) -> Result<EraIndex, OnetError> {
+    let config = CONFIG.clone();
+
+    // keep previous era in context
+    let previous_era_index = records.current_era().clone();
+
+    // Update records current Era and Epoch
+    records.start_new_epoch(active_era, starting_session);
+
+    if let Some(ah_block_number) = ah_block_number {
+        // Update records current block number
+        records.set_asset_hub_block_number(ah_block_number.into(), rc_block_number.into());
+    }
+
+    // Update subscribers current Era and Epoch
+    subscribers.start_new_epoch(active_era, starting_session);
+
+    if let Ok(subs) = get_subscribers() {
+        for (account, user_id, param) in subs.iter() {
+            subscribers.subscribe(account.clone(), user_id.to_string(), param.clone());
+        }
+    }
+
+    // Remove older keys, default is maximum_history_eras + 1
+    records.remove(EpochKey(
+        records.current_epoch() - ((config.maximum_history_eras + 1) * 6),
+    ));
+    subscribers.remove(EpochKey(
+        records.current_epoch() - ((config.maximum_history_eras + 1) * 6),
+    ));
+
+    // Cache current epoch
+    let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
+    fs::write(&epoch_filename, starting_session.to_string())?;
+
+    Ok(previous_era_index)
+}
+
+/// Run process_matrix_reports after rotate_session
+pub async fn try_run_matrix_reports(
+    records: &mut Records,
+    subscribers: &mut Subscribers,
+    previous_epoch_era_index: EraIndex,
+    is_loading: bool,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+
+    // Try to run matrix reports
+    if config.matrix_disabled || is_loading {
+        return Ok(());
+    }
+    let current_era_index = records.current_era();
+    // Send reports from previous session (verify if era_index is the same or previous)
+    let era_index: u32 = if current_era_index != previous_epoch_era_index {
+        previous_epoch_era_index
+    } else {
+        current_era_index
+    };
+
+    let records_cloned = records.clone();
+    let subscribers_cloned = subscribers.clone();
+    async_std::task::spawn(async move {
+        let epoch_index = records_cloned.current_epoch() - 1;
+        if let Err(e) =
+            run_val_perf_report(era_index, epoch_index, &records_cloned, &subscribers_cloned).await
+        {
+            error!(
+                "run_val_perf_report error: {:?} ({}//{})",
+                e, era_index, epoch_index
+            );
+        }
+        if let Err(e) = run_groups_report(era_index, epoch_index, &records_cloned).await {
+            error!(
+                "run_groups_report error: {:?} ({}//{})",
+                e, era_index, epoch_index
+            );
+        }
+        if let Err(e) = run_parachains_report(era_index, epoch_index, &records_cloned).await {
+            error!(
+                "run_parachains_report error: {:?} ({}//{})",
+                e, era_index, epoch_index
+            );
+        }
+    });
 
     Ok(())
 }
@@ -624,305 +1132,58 @@ pub async fn try_run_cache_discovery_records(
     block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    let current_epoch: f64 = records.current_epoch().into();
-
-    // Note: only trigger discovery process if enabled and at the rate defined in config
-    if config.discovery_enabled && (current_epoch % config.discovery_epoch_rate as f64 == 0.0) {
-        let records_cloned = records.clone();
-
-        async_std::task::spawn(async move {
-            if let Err(e) = try_fetch_discovery_data(&records_cloned, block_hash).await {
-                error!("try_fetch_discovery_data error: {:?}", e);
-            }
-        });
+    if !config.discovery_enabled {
+        return Ok(());
     }
 
-    Ok(())
-}
-
-pub async fn try_run_cache_session_records(
-    records: &Records,
-    block_hash: H256,
-) -> Result<(), OnetError> {
-    let config = CONFIG.clone();
-    if config.cache_writer_enabled {
-        let records_cloned = records.clone();
-        async_std::task::spawn(async move {
-            if let Err(e) = cache_session_records(&records_cloned, block_hash).await {
-                error!("try_run_cache_session_records error: {:?}", e);
-            }
-        });
-    }
-
-    Ok(())
-}
-
-// cache_session_records is called once at every new session
-pub async fn cache_session_records(records: &Records, block_hash: H256) -> Result<(), OnetError> {
-    let config = CONFIG.clone();
-    if config.cache_writer_enabled {
-        let start = Instant::now();
-        let onet: Onet = Onet::new().await;
-        let api = onet.client().clone();
-        let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-
-        // cache records every new session
-        let current_era = records.current_era();
-        let current_epoch = records.current_epoch();
-
-        // --- Cache SessionByIndex -> `current` or `epoch_index` (to be able to search history)
-        if let Some(start_block) = records.start_block(None) {
-            if let Some(current_block) = records.current_block() {
-                // get start session index
-                let eras_start_session_index_addr = node_runtime::storage()
-                    .staking()
-                    .eras_start_session_index(&current_era);
-                let start_session_index = match api
-                    .storage()
-                    .at(block_hash)
-                    .fetch(&eras_start_session_index_addr)
-                    .await?
-                {
-                    Some(index) => index,
-                    None => return Err(OnetError::Other("Start session index not defined".into())),
-                };
-
-                // era session index
-                let era_session_index = 1 + current_epoch - start_session_index;
-
-                let mut data: BTreeMap<String, String> = BTreeMap::new();
-                data.insert(String::from("era"), records.current_era().to_string());
-                data.insert(String::from("session"), records.current_epoch().to_string());
-                data.insert(String::from("start_block"), (*start_block).to_string());
-                data.insert(String::from("current_block"), (*current_block).to_string());
-                data.insert(
-                    String::from("era_session_index"),
-                    era_session_index.to_string(),
-                );
-
-                redis::pipe()
-                    .atomic()
-                    // by `epoch_index`
-                    .cmd("HSET")
-                    .arg(CacheKey::SessionByIndex(Index::Num(
-                        records.current_epoch().into(),
-                    )))
-                    .arg(data)
-                    .cmd("EXPIRE")
-                    .arg(CacheKey::SessionByIndex(Index::Num(
-                        records.current_epoch().into(),
-                    )))
-                    .arg(config.cache_writer_prunning)
-                    // by `current`
-                    .cmd("SET")
-                    .arg(CacheKey::SessionByIndex(Index::Str(String::from(
-                        "current",
-                    ))))
-                    .arg(records.current_epoch().to_string())
-                    //NOTE: make session_stats available to previous session by copying stats from previous block
-                    .cmd("COPY")
-                    .arg(CacheKey::BlockByIndexStats(Index::Num(*current_block - 1)))
-                    .arg(CacheKey::SessionByIndexStats(Index::Num(
-                        (current_epoch - 1).into(),
-                    )))
-                    .cmd("EXPIRE")
-                    .arg(CacheKey::SessionByIndexStats(Index::Num(
-                        (current_epoch - 1).into(),
-                    )))
-                    .arg(config.cache_writer_prunning)
-                    .query_async(&mut cache as &mut Connection)
-                    .await
-                    .map_err(CacheError::RedisCMDError)?;
-            }
+    let records_cloned = records.clone();
+    async_std::task::spawn(async move {
+        if let Err(e) = try_fetch_discovery_data(&records_cloned, block_hash).await {
+            error!("try_fetch_discovery_data error: {:?}", e);
         }
-
-        // ---
-        // cache authorities every new session
-        if let Some(authorities) = records.get_authorities(None) {
-            for authority_idx in authorities.iter() {
-                if let Some(authority_record) = records.get_authority_record(*authority_idx, None) {
-                    if let Some(stash) = authority_record.address() {
-                        // cache authority key for the current era and session
-                        // along with data_type and identity
-                        let mut data: BTreeMap<String, String> = BTreeMap::new();
-                        data.insert(String::from("address"), stash.to_string());
-                        redis::pipe()
-                            .atomic()
-                            .cmd("HSET")
-                            .arg(CacheKey::AuthorityRecord(
-                                current_era,
-                                current_epoch,
-                                *authority_idx,
-                            ))
-                            .arg(data)
-                            .cmd("EXPIRE")
-                            .arg(CacheKey::AuthorityRecord(
-                                current_era,
-                                current_epoch,
-                                *authority_idx,
-                            ))
-                            .arg(config.cache_writer_prunning)
-                            .query_async(&mut cache as &mut Connection)
-                            .await
-                            .map_err(CacheError::RedisCMDError)?;
-
-                        // cache authority key by stash account
-                        let mut data: BTreeMap<String, String> = BTreeMap::new();
-                        data.insert(String::from("era"), current_era.to_string());
-                        data.insert(String::from("session"), current_epoch.to_string());
-                        data.insert(String::from("authority"), (*authority_idx).to_string());
-                        redis::pipe()
-                            .atomic()
-                            .cmd("HSET")
-                            .arg(CacheKey::AuthorityKeyByAccountAndSession(
-                                stash.clone(),
-                                current_epoch,
-                            ))
-                            .arg(data)
-                            .cmd("EXPIRE")
-                            .arg(CacheKey::AuthorityKeyByAccountAndSession(
-                                stash.clone(),
-                                current_epoch,
-                            ))
-                            .arg(config.cache_writer_prunning)
-                            .query_async(&mut cache as &mut Connection)
-                            .await
-                            .map_err(CacheError::RedisCMDError)?;
-
-                        // cache authority key into authorities by session to be easily filtered
-                        let _: () = redis::pipe()
-                            .atomic()
-                            .cmd("SADD")
-                            .arg(CacheKey::AuthorityKeysBySession(current_epoch))
-                            .arg(
-                                CacheKey::AuthorityRecord(
-                                    current_era,
-                                    current_epoch,
-                                    *authority_idx,
-                                )
-                                .to_string(),
-                            )
-                            .cmd("EXPIRE")
-                            .arg(CacheKey::AuthorityKeysBySession(current_epoch))
-                            .arg(config.cache_writer_prunning)
-                            .query_async(&mut cache as &mut Connection)
-                            .await
-                            .map_err(CacheError::RedisCMDError)?;
-
-                        if records.get_para_record(*authority_idx, None).is_some() {
-                            // cache authority key into authorities by session (only para_validators) to be easily filtered
-                            let _: () = redis::pipe()
-                                .atomic()
-                                .cmd("SADD")
-                                .arg(CacheKey::AuthorityKeysBySessionParaOnly(current_epoch))
-                                .arg(
-                                    CacheKey::AuthorityRecord(
-                                        current_era,
-                                        current_epoch,
-                                        *authority_idx,
-                                    )
-                                    .to_string(),
-                                )
-                                .cmd("EXPIRE")
-                                .arg(CacheKey::AuthorityKeysBySessionParaOnly(current_epoch))
-                                .arg(config.cache_writer_prunning)
-                                .query_async(&mut cache as &mut Connection)
-                                .await
-                                .map_err(CacheError::RedisCMDError)?;
-                        }
-                    }
-                }
-            }
-        }
-        // Log sesssion cache processed duration time
-        info!("Session #{} cached ({:?})", current_epoch, start.elapsed());
-    }
+    });
 
     Ok(())
 }
 
 pub async fn initialize_records(
-    onet: &Onet,
+    rc_api: &OnlineClient<PolkadotConfig>,
+    ah_api: &OnlineClient<PolkadotConfig>,
     records: &mut Records,
-    block_hash: H256,
+    rc_block_hash: H256,
+    ah_block_hash: H256,
+    is_staking_live_on_asset_hub: bool,
 ) -> Result<(), OnetError> {
-    let api = onet.client().clone();
-
-    // Fetch Era reward points
-    let era_reward_points_addr = node_runtime::storage()
-        .staking()
-        .eras_reward_points(&records.current_era());
-    let era_reward_points = api
-        .storage()
-        .at(block_hash)
-        .fetch(&era_reward_points_addr)
+    // NOTE: Fetch era reward points are only needed if staking is still LIVE on RC
+    // When AHM is InProgress, the staking state at some point will no longer be available at RC,
+    // So we need to verify if state is already available at AH
+    let era_reward_points_map = if !is_staking_live_on_asset_hub {
+        let m = try_fetch_era_reward_points(
+            &rc_api,
+            &ah_api,
+            rc_block_hash,
+            ah_block_hash,
+            records.current_era(),
+        )
         .await?;
-
-    if era_reward_points.is_none() {
-        warn!(
-            "At block hash: {:?} - None reward points were found for era {}.",
-            block_hash,
-            &records.current_era()
-        );
-    }
+        Some(m)
+    } else {
+        None
+    };
 
     // Fetch active validators
-    let authorities_addr = node_runtime::storage().session().validators();
-    let Some(authorities) = api
-        .storage()
-        .at(block_hash)
-        .fetch(&authorities_addr)
-        .await?
-    else {
-        return Err(OnetError::Other(format!(
-            "At block hash: {:?} - None active validator indices defined.",
-            block_hash
-        )));
-    };
+    let authorities = super::storage::fetch_authorities(&rc_api, rc_block_hash).await?;
 
-    // Fetch queued_keys
-    let queued_keys_addr = node_runtime::storage().session().queued_keys();
-    let Some(queued_keys) = api
-        .storage()
-        .at(block_hash)
-        .fetch(&queued_keys_addr)
-        .await?
-    else {
-        return Err(OnetError::Other(format!(
-            "At block hash: {:?} - None queued keys defined.",
-            block_hash
-        )));
-    };
+    // Fetch queued keys
+    let queued_keys = super::storage::fetch_queued_keys(&rc_api, rc_block_hash).await?;
 
     // Fetch para validator groups
-    let validator_groups_addr = node_runtime::storage().para_scheduler().validator_groups();
-    let Some(validator_groups) = api
-        .storage()
-        .at(block_hash)
-        .fetch(&validator_groups_addr)
-        .await?
-    else {
-        return Err(OnetError::Other(format!(
-            "At block hash: {:?} - None validator groups defined.",
-            block_hash
-        )));
-    };
+    let validator_groups = super::storage::fetch_validator_groups(&rc_api, rc_block_hash).await?;
 
     // Fetch para validator indices
-    let active_validator_indices_addr = node_runtime::storage()
-        .paras_shared()
-        .active_validator_indices();
-    let Some(active_validator_indices) = api
-        .storage()
-        .at(block_hash)
-        .fetch(&active_validator_indices_addr)
-        .await?
-    else {
-        return Err(OnetError::Other(format!(
-            "At block hash: {:?} - None active validator indices defined.",
-            block_hash
-        )));
-    };
+    let active_validator_indices =
+        super::storage::fetch_validator_indices(&rc_api, rc_block_hash).await?;
+
     // Update records groups with respective authorities
     for (group_idx, group) in validator_groups.iter().enumerate() {
         let auths: Vec<AuthorityIndex> = group
@@ -940,7 +1201,7 @@ pub async fn initialize_records(
     for (auth_idx, stash) in authorities.iter().enumerate() {
         let auth_idx: AuthorityIndex = auth_idx.try_into().unwrap();
 
-        // Verify if is a para validator
+        // Verify if is a para_validator
         if let Some(auth_para_idx) = active_validator_indices
             .iter()
             .position(|i| *i == ValidatorIndex(auth_idx))
@@ -955,17 +1216,24 @@ pub async fn initialize_records(
                             active_validator_indices.get(*para_idx as usize)
                         {
                             if let Some(address) = authorities.get(*auth_idx as usize) {
-                                // Collect peer points
-                                let points = if let Some(ref erp) = era_reward_points {
-                                    if let Some((_s, points)) =
-                                        erp.individual.iter().find(|(s, _p)| s == address)
-                                    {
-                                        *points
+                                // Fetch peer points
+                                let points = if is_staking_live_on_asset_hub {
+                                    super::storage::fetch_validator_points(
+                                        &rc_api,
+                                        rc_block_hash,
+                                        address.clone(),
+                                    )
+                                    .await?
+                                } else {
+                                    if let Some(ref erp) = era_reward_points_map {
+                                        if let Some(points) = erp.get(&address) {
+                                            *points
+                                        } else {
+                                            0
+                                        }
                                     } else {
                                         0
                                     }
-                                } else {
-                                    0
                                 };
 
                                 // Define AuthorityRecord
@@ -1020,15 +1288,19 @@ pub async fn initialize_records(
                 }
             }
         } else {
-            // Fetch current points
-            let points = if let Some(ref erp) = era_reward_points {
-                if let Some((_s, points)) = erp.individual.iter().find(|(s, _p)| s == stash) {
-                    *points
+            let points = if is_staking_live_on_asset_hub {
+                super::storage::fetch_validator_points(&rc_api, rc_block_hash, stash.clone())
+                    .await?
+            } else {
+                if let Some(ref erp) = era_reward_points_map {
+                    if let Some(points) = erp.get(&stash) {
+                        *points
+                    } else {
+                        0
+                    }
                 } else {
                     0
                 }
-            } else {
-                0
             };
 
             let authority_record =
@@ -1051,550 +1323,402 @@ pub async fn initialize_records(
     Ok(())
 }
 
-pub async fn switch_new_session(
-    onet: &Onet,
-    block_number: u64,
-    new_session_index: EpochIndex,
-    subscribers: &mut Subscribers,
+/// Fetch validator points and track points collected per authority
+async fn fetch_and_track_authority_points(
+    api: &OnlineClient<PolkadotConfig>,
     records: &mut Records,
+    block_authority_index: AuthorityIndex,
+    session_index: SessionIndex,
     block_hash: H256,
-    is_loading: bool,
 ) -> Result<(), OnetError> {
-    let config = CONFIG.clone();
-    let api = onet.client().clone();
+    let validator_points_addr = relay_runtime::storage()
+        .staking_ah_client()
+        .validator_points_iter();
+    let mut iter = api
+        .storage()
+        .at(block_hash)
+        .iter(validator_points_addr)
+        .await?;
+    while let Some(Ok(storage_resp)) = iter.next().await {
+        let stash = get_account_id_from_storage_key(storage_resp.key_bytes);
+        let mut latest_points_collected: u32 = 0;
+        if let Some(authority_record) =
+            records.get_mut_authority_record_with_address(&stash, Some(EpochKey(session_index)))
+        {
+            if authority_record.address().is_some() {
+                // Update authority current points and get the difference
+                latest_points_collected =
+                    authority_record.update_current_points(storage_resp.value);
+            }
 
-    // keep previous era in context
-    let previous_era_index = records.current_era().clone();
-
-    // Fetch active era index
-    let active_era_addr = node_runtime::storage().staking().active_era();
-    let current_era_index = match api.storage().at(block_hash).fetch(&active_era_addr).await? {
-        Some(info) => info.index,
-        None => return Err("Active era not defined".into()),
-    };
-
-    // Update records current Era and Epoch
-    records.start_new_epoch(current_era_index, new_session_index);
-    // Update records current block number
-    records.set_current_block_number(block_number.into());
-
-    // Update subscribers current Era and Epoch
-    subscribers.start_new_epoch(current_era_index, new_session_index);
-
-    if let Ok(subs) = get_subscribers() {
-        for (account, user_id, param) in subs.iter() {
-            subscribers.subscribe(account.clone(), user_id.to_string(), param.clone());
+            if let Some(authority_idx) = authority_record.authority_index() {
+                // Get para_record for the same session
+                if let Some(para_record) =
+                    records.get_mut_para_record(authority_idx, Some(session_index))
+                {
+                    para_record.update_points(
+                        latest_points_collected,
+                        block_authority_index == authority_idx,
+                    );
+                }
+            }
         }
     }
-
-    // Initialize records for new epoch
-    initialize_records(&onet, records, block_hash).await?;
-
-    // Remove older keys, default is maximum_history_eras + 1
-    records.remove(EpochKey(
-        records.current_era() - (config.maximum_history_eras + 1),
-        records.current_epoch() - ((config.maximum_history_eras + 1) * 6),
-    ));
-    subscribers.remove(EpochKey(
-        records.current_era() - (config.maximum_history_eras + 1),
-        records.current_epoch() - ((config.maximum_history_eras + 1) * 6),
-    ));
-
-    // Try to run matrix reports
-    if !config.matrix_disabled && !is_loading {
-        // Send reports from previous session (verify if era_index is the same or previous)
-        let era_index: u32 = if current_era_index != previous_era_index {
-            previous_era_index
-        } else {
-            current_era_index
-        };
-
-        let records_cloned = records.clone();
-        let subscribers_cloned = subscribers.clone();
-        async_std::task::spawn(async move {
-            let epoch_index = records_cloned.current_epoch() - 1;
-            if let Err(e) =
-                run_val_perf_report(era_index, epoch_index, &records_cloned, &subscribers_cloned)
-                    .await
-            {
-                error!(
-                    "run_val_perf_report error: {:?} ({}//{})",
-                    e, era_index, epoch_index
-                );
-            }
-            if let Err(e) = run_groups_report(era_index, epoch_index, &records_cloned).await {
-                error!(
-                    "run_groups_report error: {:?} ({}//{})",
-                    e, era_index, epoch_index
-                );
-            }
-            if let Err(e) = run_parachains_report(era_index, epoch_index, &records_cloned).await {
-                error!(
-                    "run_parachains_report error: {:?} ({}//{})",
-                    e, era_index, epoch_index
-                );
-            }
-        });
-    }
-
-    // Cache current epoch
-    let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
-    fs::write(&epoch_filename, new_session_index.to_string())?;
 
     Ok(())
 }
 
-pub async fn track_records(
-    onet: &Onet,
+/// Fetch validator points and track points collected per authority method to be used BEFORE AHM
+async fn fetch_and_track_authority_points_before_ahm(
+    api: &OnlineClient<PolkadotConfig>,
     records: &mut Records,
-    block_number: BlockNumber,
+    backing_votes: &OnChainVotes,
+    block_authority_index: AuthorityIndex,
+    session_index: SessionIndex,
     block_hash: H256,
 ) -> Result<(), OnetError> {
-    let api = onet.client().clone();
+    let era_reward_points_addr = relay_runtime::storage()
+        .staking()
+        .eras_reward_points(records.current_era());
+    if let Some(era_reward_points) = api
+        .storage()
+        .at(block_hash)
+        .fetch(&era_reward_points_addr)
+        .await?
+    {
+        if let Some(authorities) = records.get_authorities(Some(EpochKey(session_index))) {
+            // Find groupIdx and peers for each authority
+            for authority_idx in authorities.iter() {
+                let mut latest_points_collected: u32 = 0;
 
-    // Update records current block number
-    records.set_current_block_number(block_number.into());
-
-    // Extract authority from the block header
-    if let Some(authority_index) = get_authority_index(&onet, Some(block_hash)).await? {
-        // Fetch session index for the specified
-        let current_index_addr = node_runtime::storage().session().current_index();
-        let session_index = match api
-            .storage()
-            .at(block_hash)
-            .fetch(&current_index_addr)
-            .await?
-        {
-            Some(index) => index,
-            None => return Err("Current session index not defined".into()),
-        };
-
-        // Track block authored
-        if let Some(authority_record) =
-            records.get_mut_authority_record(authority_index, Some(session_index))
-        {
-            authority_record.push_authored_block(block_number);
-        }
-
-        //
-        // NOTE: Fetch currently scheduled cores as been DEPRECATED
-        //
-        // let scheduled_cores_addr = node_runtime::storage().para_scheduler().scheduled();
-        // if let Some(scheduled_cores) = api
-        //     .storage()
-        //     .at(block_hash)
-        //     .fetch(&scheduled_cores_addr)
-        //     .await?
-        // {
-        //     // Update records para_group
-        //     for core_assignment in scheduled_cores.iter() {
-        //         debug!("core_assignment: {:?}", core_assignment);
-        //         // CoreAssignment { core: CoreIndex(16), para_id: Id(2087), kind: Parachain, group_idx: GroupIndex(31) }
-
-        //         // Destructure GroupIndex
-        //         let GroupIndex(group_idx) = core_assignment.group_idx;
-        //         // Destructure CoreIndex
-        //         let CoreIndex(core) = core_assignment.core;
-        //         // Destructure Id
-        //         let Id(para_id) = core_assignment.para_id;
-
-        //         records.update_para_group(para_id, core, group_idx, Some(session_index));
-        //     }
-        // }
-
-        // Fetch Era reward points
-        let era_reward_points_addr = node_runtime::storage()
-            .staking()
-            .eras_reward_points(&records.current_era());
-        if let Some(era_reward_points) = api
-            .storage()
-            .at(block_hash)
-            .fetch(&era_reward_points_addr)
-            .await?
-        {
-            // Fetch para validator groups
-            let validator_groups_addr = node_runtime::storage().para_scheduler().validator_groups();
-            if let Some(validator_groups) = api
-                .storage()
-                .at(block_hash)
-                .fetch(&validator_groups_addr)
-                .await?
-            {
-                // Fetch para validator indices
-                let active_validator_indices_addr = node_runtime::storage()
-                    .paras_shared()
-                    .active_validator_indices();
-                if let Some(active_validator_indices) = api
-                    .storage()
-                    .at(block_hash)
-                    .fetch(&active_validator_indices_addr)
-                    .await?
+                if let Some(authority_record) =
+                    records.get_mut_authority_record(*authority_idx, Some(backing_votes.session))
                 {
-                    // Fetch on chain votes
-                    let on_chain_votes_addr =
-                        node_runtime::storage().para_inherent().on_chain_votes();
+                    if authority_record.address().is_some() {
+                        // Collect current points
+                        let current_points = if let Some((_s, points)) = era_reward_points
+                            .individual
+                            .iter()
+                            .find(|(s, _p)| s == authority_record.address().unwrap())
+                        {
+                            *points
+                        } else {
+                            0
+                        };
 
-                    if let Some(backing_votes) = api
-                        .storage()
-                        .at(block_hash)
-                        .fetch(&on_chain_votes_addr)
-                        .await?
+                        // Update authority current points and get the difference
+                        latest_points_collected =
+                            authority_record.update_current_points(current_points);
+                    }
+                }
+
+                // Get para_record for the same on chain votes session
+                if let Some(para_record) =
+                    records.get_mut_para_record(*authority_idx, Some(backing_votes.session))
+                {
+                    // Increment current para_id latest_points_collected
+                    // and authored blocks if is the author of the finalized block
+                    // and the backing_votes session is the same as the current session
+                    // NOTE: At the first block of a session the backing_votes.session still references session().current_index - 1
+                    para_record.update_points(
+                        latest_points_collected,
+                        block_authority_index == *authority_idx
+                            && backing_votes.session == session_index,
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Track authority votes per authority
+fn track_authority_votes(
+    records: &mut Records,
+    backing_votes: &OnChainVotes,
+    validator_groups: &ValidatorGroups,
+    active_validator_indices: &ActiveValidatorIndices,
+) -> Result<(), OnetError> {
+    // ***********************************************************************
+    // Track explicit/implicit/missed votes new approach since runtime 1000000
+    // ***********************************************************************
+    //
+    // Iterate over each validator_groups and find if one of the members show up at backing.group_authorities
+    // If yes, iterate again and increase implicit/explicit vote or increase missed vote if member is not present in backing.group_authorities
+    // TODO: Edge case of all members missing from backing.group_authorities
+
+    for (group_idx, group) in validator_groups.iter().enumerate() {
+        // NOTE: authorities_present vec will contain the authorities present in a group where someone is missing
+        let mut authorities_present = Vec::new();
+        let mut para_id_flagged: Option<ParaId> = None;
+
+        'outer: for ValidatorIndex(group_para_val_idx) in group {
+            for (candidate_receipt, group_authorities) in
+                backing_votes.backing_validators_per_candidate.iter()
+            {
+                // destructure para_id
+                let Id(para_id) = candidate_receipt.descriptor.para_id;
+
+                if let Some((_, vote)) = group_authorities
+                    .iter()
+                    .find(|(ValidatorIndex(para_idx), _)| *para_idx == *group_para_val_idx)
+                {
+                    // get authority index from active_validator_indices
+                    if let Some(ValidatorIndex(auth_idx)) =
+                        active_validator_indices.get(*group_para_val_idx as usize)
                     {
-                        // *******************************************
-                        // Track latest points collected per authority
-                        // *******************************************
-                        if let Some(&era_idx) = records.get_era_index(Some(backing_votes.session)) {
-                            if let Some(authorities) = records
-                                .get_authorities(Some(EpochKey(era_idx, backing_votes.session)))
-                            {
-                                // Find groupIdx and peers for each authority
-                                for authority_idx in authorities.iter() {
-                                    let mut latest_points_collected: u32 = 0;
+                        // NOTE: in case there are less backing authorities than the original group len it means that someone is missing.
+                        // keep track of the ones present so that the ones missing could be identified later
+                        if group_authorities.len() < group.len() {
+                            authorities_present.push(*auth_idx);
+                            para_id_flagged = Some(para_id);
+                        }
 
-                                    if let Some(authority_record) = records
-                                        .get_mut_authority_record(
-                                            *authority_idx,
-                                            Some(backing_votes.session),
-                                        )
-                                    {
-                                        if authority_record.address().is_some() {
-                                            // Collect current points
-                                            let current_points = if let Some((_s, points)) =
-                                                era_reward_points.individual.iter().find(
-                                                    |(s, _p)| {
-                                                        s == authority_record.address().unwrap()
-                                                    },
-                                                ) {
-                                                *points
-                                            } else {
-                                                0
-                                            };
-
-                                            // Update authority current points and get the difference
-                                            latest_points_collected = authority_record
-                                                .update_current_points(current_points);
-                                        }
-                                    }
-
-                                    // Get para_record for the same on chain votes session
-                                    if let Some(para_record) = records.get_mut_para_record(
-                                        *authority_idx,
-                                        Some(backing_votes.session),
-                                    ) {
-                                        // Increment current para_id latest_points_collected
-                                        // and authored blocks if is the author of the finalized block
-                                        // and the backing_votes session is the same as the current session
-                                        // NOTE: At the first block of a session the backing_votes.session still references session().current_index - 1
-                                        para_record.update_points(
-                                            latest_points_collected,
-                                            authority_index == *authority_idx
-                                                && backing_votes.session == session_index,
-                                        );
-                                    }
+                        // get para_record for the same on chain votes session
+                        if let Some(para_record) =
+                            records.get_mut_para_record(*auth_idx, Some(backing_votes.session))
+                        {
+                            match vote {
+                                ValidityAttestation::Explicit(_) => {
+                                    para_record.inc_explicit_votes(para_id);
+                                }
+                                ValidityAttestation::Implicit(_) => {
+                                    para_record.inc_implicit_votes(para_id);
                                 }
                             }
                         }
+                    }
+                    // assign current para_id to the group
+                    records.update_para_id_by_group(
+                        para_id,
+                        u32::try_from(group_idx).unwrap(),
+                        Some(backing_votes.session),
+                    );
+                    continue 'outer;
+                }
+            }
+        }
+        if authorities_present.len() > 0 && para_id_flagged.is_some() {
+            records.inc_missing_vote_for_the_missing_authorities(
+                authorities_present,
+                para_id_flagged.unwrap(),
+                u32::try_from(group_idx).unwrap(),
+                Some(backing_votes.session),
+            );
+        }
+    }
+    Ok(())
+}
 
-                        // ***********************************************************************
-                        // Track explicit/implicit/missed votes new approach since runtime 1000000
-                        // ***********************************************************************
-                        //
-                        // Iterate over each validator_groups and find if one of the members show up at backing.group_authorities
-                        // If yes, iterate again and increase implicit/explicit vote or increase missed vote if member is not present in backing.group_authorities
-                        // TODO: Edge case of all members missing from backing.group_authorities
-
-                        for (group_idx, group) in validator_groups.iter().enumerate() {
-                            // NOTE: authorities_present vec will contain the authorities present in a group where someone is missing
-                            let mut authorities_present = Vec::new();
-                            let mut para_id_flagged: Option<ParaId> = None;
-
-                            'outer: for ValidatorIndex(group_para_val_idx) in group {
-                                for (candidate_receipt, group_authorities) in
-                                    backing_votes.backing_validators_per_candidate.iter()
-                                {
-                                    // destructure para_id
-                                    let Id(para_id) = candidate_receipt.descriptor.para_id;
-
-                                    if let Some((_, vote)) = group_authorities.iter().find(
-                                        |(ValidatorIndex(para_idx), _)| {
-                                            *para_idx == *group_para_val_idx
-                                        },
-                                    ) {
-                                        // get authority index from active_validator_indices
-                                        if let Some(ValidatorIndex(auth_idx)) =
-                                            active_validator_indices
-                                                .get(*group_para_val_idx as usize)
-                                        {
-                                            // NOTE: in case there are less backing authorities than the original group len it means that someone is missing.
-                                            // keep track of the ones present so that the ones missing could be identified later
-                                            if group_authorities.len() < group.len() {
-                                                authorities_present.push(*auth_idx);
-                                                para_id_flagged = Some(para_id);
-                                            }
-
-                                            // get para_record for the same on chain votes session
-                                            if let Some(para_record) = records.get_mut_para_record(
-                                                *auth_idx,
-                                                Some(backing_votes.session),
-                                            ) {
-                                                match vote {
-                                                    ValidityAttestation::Explicit(_) => {
-                                                        para_record.inc_explicit_votes(para_id);
-                                                    }
-                                                    ValidityAttestation::Implicit(_) => {
-                                                        para_record.inc_implicit_votes(para_id);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        // assign current para_id to the group
-                                        records.update_para_id_by_group(
-                                            para_id,
-                                            u32::try_from(group_idx).unwrap(),
-                                            Some(backing_votes.session),
-                                        );
-                                        continue 'outer;
-                                    }
-                                }
-                            }
-                            if authorities_present.len() > 0 && para_id_flagged.is_some() {
-                                records.inc_missing_vote_for_the_missing_authorities(
-                                    authorities_present,
-                                    para_id_flagged.unwrap(),
-                                    u32::try_from(group_idx).unwrap(),
-                                    Some(backing_votes.session),
+/// Track initiated disputes per authority
+fn track_disputes(
+    records: &mut Records,
+    backing_votes: &OnChainVotes,
+    active_validator_indices: &ActiveValidatorIndices,
+    block_number: BlockNumber,
+) -> Result<(), OnetError> {
+    for dispute_statement_set in backing_votes.disputes.iter() {
+        for (statement, ValidatorIndex(para_idx), _) in dispute_statement_set.statements.iter() {
+            match statement {
+                DisputeStatement::Invalid(_) => {
+                    if let Some(ValidatorIndex(auth_idx)) =
+                        active_validator_indices.get(*para_idx as usize)
+                    {
+                        // Log stash address for the initiated dispute
+                        if let Some(authority_record) =
+                            records.get_mut_authority_record(*auth_idx, Some(backing_votes.session))
+                        {
+                            if let Some(stash) = authority_record.address() {
+                                warn!(
+                                    "Dispute initiated for stash: {} ({}) {:?}",
+                                    stash, auth_idx, statement
                                 );
                             }
                         }
-
-                        // ***********************************************************************
-                        // Track Core Assignments only after specVersion > 1000000
-                        // ***********************************************************************
-                        // Fetch last_runtime_upgrade
-                        let last_runtime_upgrade_addr =
-                            node_runtime::storage().system().last_runtime_upgrade();
-
-                        if let Some(info) = api
-                            .storage()
-                            .at(block_hash)
-                            .fetch(&last_runtime_upgrade_addr)
-                            .await?
+                        // Get para_record for the same on chain votes session
+                        if let Some(para_record) =
+                            records.get_mut_para_record(*auth_idx, Some(backing_votes.session))
                         {
-                            // TODO: evaluate how history can also be imported with different metadata
-                            //
-                            // if info.spec_version >= 1000000 && info.spec_version < 1002000 {
-                            //     // Fetch availability_cores
-                            //     let availability_cores_addr = node_runtime::storage()
-                            //         .para_scheduler()
-                            //         .availability_cores();
-
-                            //     if let Some(availability_cores) = api
-                            //         .storage()
-                            //         .at(block_hash)
-                            //         .fetch(&availability_cores_addr)
-                            //         .await?
-                            //     {
-                            //         for (i, core_occupied) in availability_cores.iter().enumerate()
-                            //         {
-                            //             let core_idx = u32::try_from(i).unwrap();
-                            //             match &core_occupied {
-                            //                 CoreOccupied::Free => records.update_core_free(
-                            //                     core_idx,
-                            //                     Some(backing_votes.session),
-                            //                 ),
-                            //                 CoreOccupied::Paras(paras_entry) => {
-                            //                     // destructure para_id
-                            //                     let Id(para_id) = paras_entry.assignment.para_id;
-                            //                     records.update_core_by_para_id(
-                            //                         para_id,
-                            //                         core_idx,
-                            //                         Some(backing_votes.session),
-                            //                     );
-                            //                 }
-                            //             }
-                            //         }
-                            //     }
-                            // }
-                            //
-                            // NOTE: DEPRECATED since spec_version > 1005000 availability_cores storage is no longer available
-                            // if info.spec_version >= 1002000 {
-                            //     // Fetch availability_cores
-                            //     let availability_cores_addr = node_runtime::storage()
-                            //         .para_scheduler()
-                            //         .availability_cores();
-                            //     if let Some(availability_cores) = api
-                            //         .storage()
-                            //         .at(block_hash)
-                            //         .fetch(&availability_cores_addr)
-                            //         .await?
-                            //     {
-                            //         for (i, core_occupied) in availability_cores.iter().enumerate()
-                            //         {
-                            //             let core_idx = u32::try_from(i).unwrap();
-                            //             match &core_occupied {
-                            //                 CoreOccupied::Free => records.update_core_free(
-                            //                     core_idx,
-                            //                     Some(backing_votes.session),
-                            //                 ),
-                            //                 CoreOccupied::Paras(paras_entry) => {
-                            //                     match &paras_entry.assignment {
-                            //                         //     ParasEntry::<u32>
-                            //                         Assignment::Pool {
-                            //                             para_id: Id(para_id),
-                            //                             core_index: _,
-                            //                         } => {
-                            //                             records.update_core_by_para_id(
-                            //                                 para_id.clone(),
-                            //                                 core_idx,
-                            //                                 Some(backing_votes.session),
-                            //                             );
-                            //                         }
-                            //                         Assignment::Bulk(Id(para_id)) => {
-                            //                             records.update_core_by_para_id(
-                            //                                 para_id.clone(),
-                            //                                 core_idx,
-                            //                                 Some(backing_votes.session),
-                            //                             );
-                            //                         }
-                            //                     }
-                            //                 }
-                            //             }
-                            //         }
-                            //     }
-                            // }
-                            //
-                            // NOTE: since spec_version 1005000 we track core assignments via
-                            // para_inclusion candidate descriptor
-                            if info.spec_version >= 1005000 {
-                                let paras_inclusion_addr =
-                                    node_runtime::storage().para_inclusion().v1_iter();
-                                let mut iter = api
-                                    .storage()
-                                    .at(block_hash)
-                                    .iter(paras_inclusion_addr)
-                                    .await?;
-                                while let Some(Ok(storage_resp)) = iter.next().await {
-                                    for candidate_pending_availability in storage_resp.value {
-                                        let CoreIndex(core_index) =
-                                            candidate_pending_availability.core;
-                                        let Id(para_id) =
-                                            candidate_pending_availability.descriptor.para_id;
-
-                                        records.update_core_by_para_id(
-                                            para_id,
-                                            core_index,
-                                            Some(backing_votes.session),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-
-                        // ***********************************************************************
-                        // Track Initiated Disputes
-                        // ***********************************************************************
-                        for dispute_statement_set in backing_votes.disputes.iter() {
-                            for (statement, ValidatorIndex(para_idx), _) in
-                                dispute_statement_set.statements.iter()
-                            {
-                                match statement {
-                                    DisputeStatement::Invalid(_) => {
-                                        if let Some(ValidatorIndex(auth_idx)) =
-                                            active_validator_indices.get(*para_idx as usize)
-                                        {
-                                            // Log stash address for the initiated dispute
-                                            if let Some(authority_record) = records
-                                                .get_mut_authority_record(
-                                                    *auth_idx,
-                                                    Some(backing_votes.session),
-                                                )
-                                            {
-                                                if let Some(stash) = authority_record.address() {
-                                                    warn!(
-                                                        "Dispute initiated for stash: {} ({}) {:?}",
-                                                        stash, auth_idx, statement
-                                                    );
-                                                }
-                                            }
-                                            // Get para_record for the same on chain votes session
-                                            if let Some(para_record) = records.get_mut_para_record(
-                                                *auth_idx,
-                                                Some(backing_votes.session),
-                                            ) {
-                                                para_record.push_dispute(
-                                                    block_number,
-                                                    format!("{:?}", statement),
-                                                );
-                                            }
-                                        } else {
-                                            warn!("Dispute initiated at block {block_number} but authority record for para_idx: {para_idx} not found!");
-                                        }
-                                    }
-                                    _ => continue,
-                                }
-                            }
-                        }
-
-                        // ***********************************************************************
-                        // Track Availability data from bitfields
-                        // ***********************************************************************
-                        // NOTE: authorities_present vec will contain the authorities present in para_inherent.data.bitfields and it's useful
-                        // to increase unavailability to the authorities not present
-                        let mut authorities_present = Vec::new();
-                        let extrinsics = api.blocks().at(block_hash).await?.extrinsics().await?;
-                        for res in extrinsics.find::<Enter>() {
-                            let extrinsic = res?;
-                            for availability_bitfield in extrinsic.value.data.bitfields.iter() {
-                                // Note: availability_bitfield.validator_index is the index of the validator in the paras_shared.active_validator_indices
-                                let ValidatorIndex(para_idx) =
-                                    &availability_bitfield.validator_index;
-
-                                if let Some(ValidatorIndex(auth_idx)) =
-                                    active_validator_indices.get(*para_idx as usize)
-                                {
-                                    // Get para_record for the same on chain votes session
-                                    if let Some(para_record) = records
-                                        .get_mut_para_record(*auth_idx, Some(backing_votes.session))
-                                    {
-                                        let AvailabilityBitfield(decoded_bits) =
-                                            &availability_bitfield.payload;
-                                        if decoded_bits.as_bits().iter().any(|x| x) {
-                                            para_record.inc_availability();
-                                        } else {
-                                            para_record.push_unavailable_at(block_number);
-                                        }
-                                    }
-                                    // Keep track of the authorities that show up in para_inherent.data.bitfields
-                                    authorities_present.push(*auth_idx);
-                                }
-                            }
-                        }
-                        // Also increase unavailability to the authorities that do not show up in para_inherent.data.bitfields
-                        if active_validator_indices.len() != authorities_present.len() {
-                            for ValidatorIndex(auth_idx) in active_validator_indices.iter() {
-                                if !authorities_present.contains(auth_idx) {
-                                    if let Some(para_record) = records
-                                        .get_mut_para_record(*auth_idx, Some(backing_votes.session))
-                                    {
-                                        para_record.push_unavailable_at(block_number);
-                                    }
-                                }
-                            }
+                            para_record.push_dispute(block_number, format!("{:?}", statement));
                         }
                     } else {
-                        warn!("None on chain voted recorded.");
+                        warn!("Dispute initiated at block {block_number} but authority record for para_idx: {para_idx} not found!");
                     }
-                } else {
-                    warn!("None para validator indices defined.");
                 }
-            } else {
-                warn!("None validator groups defined.");
+                _ => continue,
             }
-        } else {
-            warn!("None reward points at era {}.", &records.current_era());
         }
-        debug!("records {:?}", records);
     }
+
+    Ok(())
+}
+
+/// Fetch and track the core assigned to a para_id from para_inclusion.v1 storage
+async fn fetch_and_track_core_assignments(
+    api: &OnlineClient<PolkadotConfig>,
+    records: &mut Records,
+    backing_votes: &OnChainVotes,
+    block_hash: H256,
+) -> Result<(), OnetError> {
+    let paras_inclusion_addr = relay_runtime::storage().para_inclusion().v1_iter();
+    let mut iter = api
+        .storage()
+        .at(block_hash)
+        .iter(paras_inclusion_addr)
+        .await?;
+    while let Some(Ok(storage_resp)) = iter.next().await {
+        for candidate_pending_availability in storage_resp.value {
+            let CoreIndex(core_index) = candidate_pending_availability.core;
+            let Id(para_id) = candidate_pending_availability.descriptor.para_id;
+
+            records.update_core_by_para_id(para_id, core_index, Some(backing_votes.session));
+        }
+    }
+    Ok(())
+}
+
+/// Fetch block extrinsics and track data availability per authority
+async fn fetch_and_track_availability(
+    api: &OnlineClient<PolkadotConfig>,
+    records: &mut Records,
+    backing_votes: &OnChainVotes,
+    active_validator_indices: &ActiveValidatorIndices,
+    block_number: BlockNumber,
+    block_hash: H256,
+) -> Result<(), OnetError> {
+    // NOTE: authorities_present vec will contain the authorities present in para_inherent.data.bitfields and it's useful
+    // to increase unavailability to the authorities not present
+    let mut authorities_present = Vec::new();
+    let extrinsics = api.blocks().at(block_hash).await?.extrinsics().await?;
+    for res in extrinsics.find::<Enter>() {
+        let extrinsic = res?;
+        for availability_bitfield in extrinsic.value.data.bitfields.iter() {
+            // Note: availability_bitfield.validator_index is the index of the validator in the paras_shared.active_validator_indices
+            let ValidatorIndex(para_idx) = &availability_bitfield.validator_index;
+
+            if let Some(ValidatorIndex(auth_idx)) = active_validator_indices.get(*para_idx as usize)
+            {
+                // Get para_record for the same on chain votes session
+                if let Some(para_record) =
+                    records.get_mut_para_record(*auth_idx, Some(backing_votes.session))
+                {
+                    let AvailabilityBitfield(decoded_bits) = &availability_bitfield.payload;
+                    if decoded_bits.as_bits().iter().any(|x| x) {
+                        para_record.inc_availability();
+                    } else {
+                        para_record.push_unavailable_at(block_number);
+                    }
+                }
+                // Keep track of the authorities that show up in para_inherent.data.bitfields
+                authorities_present.push(*auth_idx);
+            }
+        }
+    }
+    // Also increase unavailability to the authorities that do not show up in para_inherent.data.bitfields
+    if active_validator_indices.len() != authorities_present.len() {
+        for ValidatorIndex(auth_idx) in active_validator_indices.iter() {
+            if !authorities_present.contains(auth_idx) {
+                if let Some(para_record) =
+                    records.get_mut_para_record(*auth_idx, Some(backing_votes.session))
+                {
+                    para_record.push_unavailable_at(block_number);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn track_records(
+    rc_api: &OnlineClient<PolkadotConfig>,
+    rc_rpc: &LegacyRpcMethods<PolkadotConfig>,
+    records: &mut Records,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+    is_staking_live_on_asset_hub: bool,
+) -> Result<(), OnetError> {
+    // Update records current block number
+    records.set_relay_chain_block_number(rc_block_number.into());
+
+    // Extract authority from the block header
+    let block_authority_index = get_authority_index(&rc_rpc, Some(rc_block_hash))
+        .await?
+        .ok_or_else(|| OnetError::from("Authority index not found"))?;
+
+    // Fetch session index
+    let session_index = super::storage::fetch_session_index(&rc_api, rc_block_hash).await?;
+
+    // Track block authored
+    if let Some(authority_record) =
+        records.get_mut_authority_record(block_authority_index, Some(session_index))
+    {
+        authority_record.push_authored_block(rc_block_number);
+    }
+
+    // Fetch para validator groups
+    let validator_groups = super::storage::fetch_validator_groups(&rc_api, rc_block_hash).await?;
+
+    // Fetch para validator indices
+    let active_validator_indices =
+        super::storage::fetch_validator_indices(&rc_api, rc_block_hash).await?;
+
+    // Fetch on chain votes
+    let backing_votes = super::storage::fetch_on_chain_votes(&rc_api, rc_block_hash).await?;
+
+    // Fetch and Track authority points
+    if is_staking_live_on_asset_hub {
+        fetch_and_track_authority_points(
+            &rc_api,
+            records,
+            block_authority_index,
+            session_index,
+            rc_block_hash,
+        )
+        .await?;
+    } else {
+        fetch_and_track_authority_points_before_ahm(
+            &rc_api,
+            records,
+            &backing_votes,
+            block_authority_index,
+            session_index,
+            rc_block_hash,
+        )
+        .await?;
+    }
+
+    // Track authority votes
+    track_authority_votes(
+        records,
+        &backing_votes,
+        &validator_groups,
+        &active_validator_indices,
+    )?;
+
+    // Track disputes
+    track_disputes(
+        records,
+        &backing_votes,
+        &active_validator_indices,
+        rc_block_number,
+    )?;
+
+    // Fetch and Track core assignments
+    fetch_and_track_core_assignments(&rc_api, records, &backing_votes, rc_block_hash).await?;
+
+    // Fetch and Track availability
+    fetch_and_track_availability(
+        &rc_api,
+        records,
+        &backing_votes,
+        &active_validator_indices,
+        rc_block_number,
+        rc_block_hash,
+    )
+    .await?;
+
+    debug!("records {:?}", records);
 
     Ok(())
 }
@@ -1611,12 +1735,10 @@ pub async fn run_val_perf_report(
     let network = Network::load(onet.rpc()).await?;
     // Set era/session details
     let start_block = records
-        .start_block(Some(EpochKey(era_index, epoch_index)))
+        .start_block(Some(EpochKey(epoch_index)))
         .unwrap_or(&0);
-    let end_block = records
-        .end_block(Some(EpochKey(era_index, epoch_index)))
-        .unwrap_or(&0);
-    let metadata = Metadata {
+    let end_block = records.end_block(Some(EpochKey(epoch_index))).unwrap_or(&0);
+    let metadata = ReportMetadata {
         active_era_index: era_index,
         current_session_index: epoch_index,
         blocks_interval: Some((*start_block, *end_block)),
@@ -1626,7 +1748,7 @@ pub async fn run_val_perf_report(
     // Fetch parachains list
     // TODO: get parachains names
     let mut parachains: Vec<ParaId> = Vec::new();
-    let parachains_addr = node_runtime::storage().paras().parachains();
+    let parachains_addr = relay_runtime::storage().paras().parachains();
     if let Some(paras) = api
         .storage()
         .at_latest()
@@ -1644,16 +1766,15 @@ pub async fn run_val_perf_report(
     // Populate vec to get all para authority ranks
     let mut para_authorities_by_points = Vec::<(AuthorityIndex, Points)>::new();
 
-    if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
+    if let Some(authorities) = records.get_authorities(Some(EpochKey(epoch_index))) {
         for authority_idx in authorities.iter() {
             if let Some(para_record) =
-                records.get_para_record(*authority_idx, Some(EpochKey(era_index, epoch_index)))
+                records.get_para_record(*authority_idx, Some(EpochKey(epoch_index)))
             {
                 if let Some(group_idx) = para_record.group() {
-                    if let Some(authority_record) = records.get_authority_record(
-                        *authority_idx,
-                        Some(EpochKey(era_index, epoch_index)),
-                    ) {
+                    if let Some(authority_record) =
+                        records.get_authority_record(*authority_idx, Some(EpochKey(epoch_index)))
+                    {
                         let ga = group_authorities_by_points_map
                             .entry(group_idx)
                             .or_insert(authority_record.points());
@@ -1673,7 +1794,7 @@ pub async fn run_val_perf_report(
     let group_authorities_by_points = Vec::from_iter(group_authorities_by_points_map);
 
     // Prepare data for each validator subscriber
-    if let Some(subs) = subscribers.get(Some(EpochKey(era_index, epoch_index))) {
+    if let Some(subs) = subscribers.get(Some(EpochKey(epoch_index))) {
         for (stash, user_id, param) in subs.iter() {
             let mut validator = Validator::new(stash.clone());
             validator.name = get_display_name(&onet, &stash).await?;
@@ -1691,13 +1812,13 @@ pub async fn run_val_perf_report(
                 group_rank: None,
             };
 
-            if let Some(authority_record) = records
-                .get_authority_record_with_address(&stash, Some(EpochKey(era_index, epoch_index)))
+            if let Some(authority_record) =
+                records.get_authority_record_with_address(&stash, Some(EpochKey(epoch_index)))
             {
                 data.authority_record = Some(authority_record.clone());
 
-                if let Some(para_record) = records
-                    .get_para_record_with_address(&stash, Some(EpochKey(era_index, epoch_index)))
+                if let Some(para_record) =
+                    records.get_para_record_with_address(&stash, Some(EpochKey(epoch_index)))
                 {
                     data.para_record = Some(para_record.clone());
 
@@ -1725,14 +1846,14 @@ pub async fn run_val_perf_report(
                     for peer_authority_index in para_record.peers().iter() {
                         if let Some(peer_authority_record) = records.get_authority_record(
                             *peer_authority_index,
-                            Some(EpochKey(era_index, epoch_index)),
+                            Some(EpochKey(epoch_index)),
                         ) {
                             if let Some(peer_stash) = peer_authority_record.address() {
                                 let peer_name = get_display_name(&onet, &peer_stash).await?;
 
                                 if let Some(peer_para_record) = records.get_para_record(
                                     *peer_authority_index,
-                                    Some(EpochKey(era_index, epoch_index)),
+                                    Some(EpochKey(epoch_index)),
                                 ) {
                                     data.peers.push((
                                         peer_name,
@@ -1747,24 +1868,13 @@ pub async fn run_val_perf_report(
                     // Send report only if para records available
                     let report = Report::from(data);
 
-                    // NOTE: Silently log warning if failed to send message;
-                    // This is to guarantee that subsequent messages are tried to be sent and not lost.
-                    match onet
-                        .matrix()
+                    onet.matrix()
                         .send_private_message(
                             user_id,
                             &report.message(),
                             Some(&report.formatted_message()),
                         )
-                        .await
-                    {
-                        Ok(_) => (),
-                        Err(e) => {
-                            warn!("Failed to send message for user {}: {}", user_id, e);
-                            warn!("Failed message: {}", report.message());
-                        }
-                    }
-
+                        .await?;
                     // NOTE: To not overflow matrix with messages just send maximum 2 per second
                     thread::sleep(time::Duration::from_millis(500));
                 }
@@ -1787,12 +1897,10 @@ pub async fn run_groups_report(
 
     // Set era/session details
     let start_block = records
-        .start_block(Some(EpochKey(era_index, epoch_index)))
+        .start_block(Some(EpochKey(epoch_index)))
         .unwrap_or(&0);
-    let end_block = records
-        .end_block(Some(EpochKey(era_index, epoch_index)))
-        .unwrap_or(&0);
-    let metadata = Metadata {
+    let end_block = records.end_block(Some(EpochKey(epoch_index))).unwrap_or(&0);
+    let metadata = ReportMetadata {
         active_era_index: era_index,
         current_session_index: epoch_index,
         blocks_interval: Some((*start_block, *end_block)),
@@ -1803,16 +1911,15 @@ pub async fn run_groups_report(
     let mut group_authorities_map: BTreeMap<u32, Vec<(AuthorityRecord, ParaRecord, String)>> =
         BTreeMap::new();
 
-    if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
+    if let Some(authorities) = records.get_authorities(Some(EpochKey(epoch_index))) {
         for authority_idx in authorities.iter() {
             if let Some(para_record) =
-                records.get_para_record(*authority_idx, Some(EpochKey(era_index, epoch_index)))
+                records.get_para_record(*authority_idx, Some(EpochKey(epoch_index)))
             {
                 if let Some(group_idx) = para_record.group() {
-                    if let Some(authority_record) = records.get_authority_record(
-                        *authority_idx,
-                        Some(EpochKey(era_index, epoch_index)),
-                    ) {
+                    if let Some(authority_record) =
+                        records.get_authority_record(*authority_idx, Some(EpochKey(epoch_index)))
+                    {
                         if let Some(stash) = authority_record.address() {
                             // get validator name
                             let name = get_display_name(&onet, &stash).await?;
@@ -1879,12 +1986,10 @@ pub async fn run_parachains_report(
 
     // Set era/session details
     let start_block = records
-        .start_block(Some(EpochKey(era_index, epoch_index)))
+        .start_block(Some(EpochKey(epoch_index)))
         .unwrap_or(&0);
-    let end_block = records
-        .end_block(Some(EpochKey(era_index, epoch_index)))
-        .unwrap_or(&0);
-    let metadata = Metadata {
+    let end_block = records.end_block(Some(EpochKey(epoch_index))).unwrap_or(&0);
+    let metadata = ReportMetadata {
         active_era_index: era_index,
         current_session_index: epoch_index,
         blocks_interval: Some((*start_block, *end_block)),
@@ -1894,10 +1999,10 @@ pub async fn run_parachains_report(
     // Populate some maps to get ranks
     let mut parachains_map: BTreeMap<ParaId, ParaStats> = BTreeMap::new();
 
-    if let Some(authorities) = records.get_authorities(Some(EpochKey(era_index, epoch_index))) {
+    if let Some(authorities) = records.get_authorities(Some(EpochKey(epoch_index))) {
         for authority_idx in authorities.iter() {
             if let Some(para_record) =
-                records.get_para_record(*authority_idx, Some(EpochKey(era_index, epoch_index)))
+                records.get_para_record(*authority_idx, Some(EpochKey(epoch_index)))
             {
                 for (para_id, stats) in para_record.para_stats().iter() {
                     let s = parachains_map
@@ -1947,81 +2052,67 @@ pub async fn run_parachains_report(
 }
 
 pub async fn try_run_network_report(
-    epoch_index: EpochIndex,
+    era_index: EraIndex,
     records: &Records,
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if !config.matrix_disabled && !config.matrix_network_report_disabled && !is_loading {
-        if (epoch_index as f64 % config.matrix_network_report_epoch_rate as f64)
-            == config.epoch_rate_threshold as f64
-        {
-            if records.total_full_epochs() > 0 {
-                let records_cloned = records.clone();
-                async_std::task::spawn(async move {
-                    if let Err(e) = run_network_report(&records_cloned).await {
-                        error!("try_run_network_report error: {:?}", e);
-                    }
-                });
-            } else {
-                warn!("No full sessions yet to run the network report.")
-            }
-        }
+    if config.matrix_disabled || config.matrix_network_report_disabled || is_loading {
+        return Ok(());
     }
+    if records.total_full_epochs() == 0 {
+        warn!("No full sessions yet to run the network report.");
+        return Ok(());
+    }
+    let records_cloned = records.clone();
+    async_std::task::spawn(async move {
+        if let Err(e) = run_network_report(era_index, &records_cloned).await {
+            error!("try_run_network_report error: {:?}", e);
+        }
+    });
 
     Ok(())
 }
 
-pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
+pub async fn run_network_report(
+    active_era_index: EraIndex,
+    records: &Records,
+) -> Result<(), OnetError> {
     let onet: Onet = Onet::new().await;
     let config = CONFIG.clone();
-    let api = onet.client().clone();
+    let rc_api = onet.relay_client().clone();
+    let rc_rpc = onet.relay_rpc().clone();
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
 
     let network = Network::load(onet.rpc()).await?;
 
-    // Fetch active era index
-    let active_era_addr = node_runtime::storage().staking().active_era();
-    let active_era_index = match api
-        .storage()
-        .at_latest()
-        .await?
-        .fetch(&active_era_addr)
-        .await?
-    {
-        Some(info) => info.index,
-        None => return Err("Active era not defined".into()),
+    // Note: the network report is triggered when a session is rotated, or previous era paid;
+    // At this points records must have been already actualized with the new session authorities,
+    // and we want the report to be based on the previous eras, so we get the previous session index
+    // stored in the records and the last block hash of the previous session
+    let current_session_index = records.current_epoch() - 1;
+
+    // Get the last block number of the previous session from records
+    let Some(rc_block_number) = records.end_block(Some(EpochKey(current_session_index))) else {
+        return Err(OnetError::from(format!(
+            "Last block number not available for session {current_session_index}"
+        )));
     };
 
-    // Fetch current epoch
-    let current_index_addr = node_runtime::storage().session().current_index();
-    let current_session_index = match api
-        .storage()
-        .at_latest()
-        .await?
-        .fetch(&current_index_addr)
-        .await?
-    {
-        Some(index) => index,
-        None => return Err("Current session index not defined".into()),
-    };
+    let rc_block_hash = try_fetch_relay_chain_block_hash(&rc_rpc, *rc_block_number).await?;
+
+    let ah_block_hash =
+        fetch_asset_hub_block_hash_from_relay_chain(&onet, *rc_block_number, rc_block_hash).await?;
 
     // Fetch active era total stake
-    let eras_total_stake_addr = node_runtime::storage()
-        .staking()
-        .eras_total_stake(&active_era_index);
-    let active_era_total_stake = match api
-        .storage()
-        .at_latest()
-        .await?
-        .fetch(&eras_total_stake_addr)
-        .await?
-    {
-        Some(total_stake) => total_stake,
-        None => return Err("Current session index not defined".into()),
-    };
+    let active_era_total_stake =
+        fetch_eras_total_stake(&ah_api, ah_block_hash, active_era_index).await?;
 
     // Set era/session details
-    let metadata = Metadata {
+    let metadata = ReportMetadata {
         active_era_index,
         current_session_index,
         active_era_total_stake,
@@ -2031,116 +2122,103 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     let mut validators: Validators = Vec::new();
 
     // Load TVP stashes
-    let tvp_stashes: Vec<AccountId32> = try_fetch_stashes_from_remote_url(false, None).await?;
+    let tvp_stashes: Vec<AccountId32> = if onet.runtime().is_dn_supported() {
+        try_fetch_stashes_from_remote_url(false, None).await?
+    } else {
+        Vec::new()
+    };
 
-    // Fetch active validators
-    let authorities_addr = node_runtime::storage().session().validators();
-    if let Some(authorities) = api
+    // Fetch authorities
+    let authorities = super::storage::fetch_authorities(&rc_api, rc_block_hash).await?;
+
+    // Fetch all validators
+    let validators_addr = asset_hub_runtime::storage().staking().validators_iter();
+    let mut iter = ah_api
         .storage()
-        .at_latest()
-        .await?
-        .fetch(&authorities_addr)
-        .await?
-    {
-        // Fetch all validators
-        let validators_addr = node_runtime::storage().staking().validators_iter();
-        let mut iter = api
-            .storage()
-            .at_latest()
-            .await?
-            .iter(validators_addr)
-            .await?;
-        while let Some(Ok(storage_resp)) = iter.next().await {
-            let stash = get_account_id_from_storage_key(storage_resp.key_bytes);
-            let mut v = Validator::new(stash.clone());
-            if storage_resp.value.commission != Perbill(1000000000) {
-                if !tvp_stashes.contains(&stash) {
-                    v.subset = Subset::NONTVP;
-                } else {
-                    v.subset = Subset::TVP;
-                }
+        .at(ah_block_hash)
+        .iter(validators_addr)
+        .await?;
+    while let Some(Ok(storage_resp)) = iter.next().await {
+        let stash = get_account_id_from_storage_key(storage_resp.key_bytes);
+        let mut v = Validator::new(stash.clone());
+        if storage_resp.value.commission != Perbill(1000000000) {
+            if !tvp_stashes.contains(&stash) {
+                v.subset = Subset::NONTVP;
             } else {
-                v.subset = Subset::C100;
+                v.subset = Subset::TVP;
             }
-            // Commisssion
-            let Perbill(commission) = storage_resp.value.commission;
-            v.commission = commission as f64 / 1_000_000_000.0_f64;
-            // Check if validator is in active set
-            v.is_active = authorities.contains(&stash);
+        } else {
+            v.subset = Subset::C100;
+        }
+        // Commisssion
+        let Perbill(commission) = storage_resp.value.commission;
+        v.commission = commission as f64 / 1_000_000_000.0_f64;
+        // Check if validator is in active set
+        v.is_active = authorities.contains(&stash);
 
-            // Fetch own stake
-            v.own_stake = get_own_stake_via_stash(&onet, &stash).await?;
+        // Fetch own stake
+        v.own_stake = fetch_own_stake_via_stash(&ah_api, ah_block_hash, &stash).await?;
 
-            // Get performance data from all eras available
-            if let Some(((active_epochs, authored_blocks, mut pattern), para_data)) =
-                records.get_data_from_all_full_epochs(&stash)
+        // Get performance data from all eras available
+        if let Some(((active_epochs, authored_blocks, mut pattern), para_data)) =
+            records.get_data_from_all_full_epochs(&stash)
+        {
+            v.active_epochs = active_epochs;
+            v.authored_blocks = authored_blocks;
+            v.pattern.append(&mut pattern);
+            if let Some((
+                para_epochs,
+                para_points,
+                explicit_votes,
+                implicit_votes,
+                missed_votes,
+                core_assignments,
+                bitfields_availability,
+                bitfields_unavailability,
+            )) = para_data
             {
-                v.active_epochs = active_epochs;
-                v.authored_blocks = authored_blocks;
-                v.pattern.append(&mut pattern);
-                if let Some((
-                    para_epochs,
-                    para_points,
-                    explicit_votes,
-                    implicit_votes,
-                    missed_votes,
-                    core_assignments,
-                    bitfields_availability,
-                    bitfields_unavailability,
-                )) = para_data
-                {
-                    // Note: If Para data exists than get node identity to be visible in the report
-                    v.name = get_display_name(&onet, &stash).await?;
-                    //
-                    v.para_epochs = para_epochs;
-                    v.explicit_votes = explicit_votes;
-                    v.implicit_votes = implicit_votes;
-                    v.missed_votes = missed_votes;
-                    v.core_assignments = core_assignments;
-                    if explicit_votes + implicit_votes + missed_votes > 0 {
-                        let mvr = missed_votes as f64
-                            / (explicit_votes + implicit_votes + missed_votes) as f64;
-                        v.missed_ratio = Some(mvr);
-                    }
-                    if bitfields_availability + bitfields_unavailability > 0 {
-                        let bar = bitfields_availability as f64
-                            / (bitfields_availability + bitfields_unavailability) as f64;
-                        v.bitfields_availability_ratio = Some(bar);
-                    }
-                    if para_epochs >= 1 {
-                        v.avg_para_points = para_points / para_epochs;
-                    }
+                // Note: If Para data exists than get node identity to be visible in the report
+                v.name = get_display_name(&onet, &stash).await?;
+                //
+                v.para_epochs = para_epochs;
+                v.explicit_votes = explicit_votes;
+                v.implicit_votes = implicit_votes;
+                v.missed_votes = missed_votes;
+                v.core_assignments = core_assignments;
+                if explicit_votes + implicit_votes + missed_votes > 0 {
+                    let mvr = missed_votes as f64
+                        / (explicit_votes + implicit_votes + missed_votes) as f64;
+                    v.missed_ratio = Some(mvr);
+                }
+                if bitfields_availability + bitfields_unavailability > 0 {
+                    let bar = bitfields_availability as f64
+                        / (bitfields_availability + bitfields_unavailability) as f64;
+                    v.bitfields_availability_ratio = Some(bar);
+                }
+                if para_epochs >= 1 {
+                    v.avg_para_points = para_points / para_epochs;
                 }
             }
-
-            //
-            validators.push(v);
         }
+
+        //
+        validators.push(v);
     }
 
     // Collect era points for maximum_history_eras
     let start_era_index = active_era_index - config.maximum_history_eras;
     for era_index in start_era_index..active_era_index {
         // Fetch Era reward points
-        let era_reward_points_addr = node_runtime::storage()
-            .staking()
-            .eras_reward_points(&era_index);
-        if let Some(era_reward_points) = api
-            .storage()
-            .at_latest()
-            .await?
-            .fetch(&era_reward_points_addr)
-            .await?
-        {
-            for (stash, points) in era_reward_points.individual.iter() {
-                validators
-                    .iter_mut()
-                    .filter(|v| v.stash == *stash)
-                    .for_each(|v| {
-                        (*v).maximum_history_total_eras += 1;
-                        (*v).maximum_history_total_points += points;
-                    });
-            }
+        let era_reward_points = fetch_era_reward_points(&ah_api, ah_block_hash, era_index).await?;
+        let BoundedBTreeMap(individual) = era_reward_points.individual;
+        for (stash, points) in individual.iter() {
+            validators
+                .iter_mut()
+                .filter(|v| v.stash == *stash)
+                .for_each(|v| {
+                    (*v).maximum_history_total_eras += 1;
+                    (*v).maximum_history_total_points += points;
+                });
         }
     }
 
@@ -2219,15 +2297,15 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
         let start_epoch = current_session_index - records.total_full_epochs();
         if let Some(start_era) = records.get_era_index(Some(start_epoch)) {
             let start_block = records
-                .start_block(Some(EpochKey(*start_era, start_epoch)))
+                .start_block(Some(EpochKey(start_epoch)))
                 .unwrap_or(&0);
 
             let end_epoch = current_session_index - 1;
             if let Some(end_era) = records.get_era_index(Some(end_epoch)) {
                 let end_block = records
-                    .end_block(Some(EpochKey(*end_era, current_session_index - 1)))
+                    .end_block(Some(EpochKey(current_session_index - 1)))
                     .unwrap_or(&0);
-                let metadata = Metadata {
+                let metadata = ReportMetadata {
                     interval: Some(((*start_era, start_epoch), (*end_era, end_epoch))),
                     blocks_interval: Some((*start_block, *end_block)),
                     ..Default::default()
@@ -2314,10 +2392,356 @@ pub async fn run_network_report(records: &Records) -> Result<(), OnetError> {
     Ok(())
 }
 
+// **************************
+// NETWORK REPORT ON RELAY CHAIN
+// **************************
+//
+pub async fn try_run_network_report_on_relay_chain(
+    era_index: EraIndex,
+    records: &Records,
+    is_loading: bool,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if config.matrix_disabled || config.matrix_network_report_disabled || is_loading {
+        return Ok(());
+    }
+    if records.total_full_epochs() == 0 {
+        warn!("No full sessions yet to run the network report.");
+        return Ok(());
+    }
+    let records_cloned = records.clone();
+    async_std::task::spawn(async move {
+        if let Err(e) = run_network_report_on_relay_chain(era_index, &records_cloned).await {
+            error!("try_run_network_report_on_relay_chain error: {:?}", e);
+        }
+    });
+
+    Ok(())
+}
+
+pub async fn run_network_report_on_relay_chain(
+    active_era_index: EraIndex,
+    records: &Records,
+) -> Result<(), OnetError> {
+    let onet: Onet = Onet::new().await;
+    let config = CONFIG.clone();
+    let rc_api = onet.relay_client().clone();
+    let rc_rpc = onet.relay_rpc().clone();
+
+    let network = Network::load(onet.rpc()).await?;
+
+    // Note: the network report is triggered when a session is rotated, or previous era paid;
+    // At this points records must have been already actualized with the new session authorities,
+    // and we want the report to be based on the previous eras, so we get the previous session index
+    // stored in the records and the last block hash of the previous session
+    let current_session_index = records.current_epoch() - 1;
+
+    // Get the last block number of the previous session from records
+    let Some(rc_block_number) = records.end_block(Some(EpochKey(current_session_index))) else {
+        return Err(OnetError::from(format!(
+            "Last block number not available for session {current_session_index}"
+        )));
+    };
+
+    let rc_block_hash = try_fetch_relay_chain_block_hash(&rc_rpc, *rc_block_number).await?;
+
+    // Fetch active era total stake
+    let active_era_total_stake =
+        super::storage::fetch_eras_total_stake(&rc_api, rc_block_hash, active_era_index).await?;
+
+    // Set era/session details
+    let metadata = ReportMetadata {
+        active_era_index,
+        current_session_index,
+        active_era_total_stake,
+        ..Default::default()
+    };
+
+    let mut validators: Validators = Vec::new();
+
+    // Load TVP stashes
+    let tvp_stashes: Vec<AccountId32> = if onet.runtime().is_dn_supported() {
+        try_fetch_stashes_from_remote_url(false, None).await?
+    } else {
+        Vec::new()
+    };
+
+    // Fetch authorities
+    let authorities = super::storage::fetch_authorities(&rc_api, rc_block_hash).await?;
+
+    // Fetch all validators
+    let validators_addr = relay_runtime::storage().staking().validators_iter();
+    let mut iter = rc_api
+        .storage()
+        .at(rc_block_hash)
+        .iter(validators_addr)
+        .await?;
+    while let Some(Ok(storage_resp)) = iter.next().await {
+        let stash = get_account_id_from_storage_key(storage_resp.key_bytes);
+        let mut v = Validator::new(stash.clone());
+        if storage_resp.value.commission
+            != relay_runtime::runtime_types::sp_arithmetic::per_things::Perbill(1000000000)
+        {
+            if !tvp_stashes.contains(&stash) {
+                v.subset = Subset::NONTVP;
+            } else {
+                v.subset = Subset::TVP;
+            }
+        } else {
+            v.subset = Subset::C100;
+        }
+        // Commisssion
+        let relay_runtime::runtime_types::sp_arithmetic::per_things::Perbill(commission) =
+            storage_resp.value.commission;
+        v.commission = commission as f64 / 1_000_000_000.0_f64;
+        // Check if validator is in active set
+        v.is_active = authorities.contains(&stash);
+
+        // Fetch own stake
+        v.own_stake =
+            super::storage::fetch_own_stake_via_stash(&rc_api, rc_block_hash, &stash).await?;
+
+        // Get performance data from all eras available
+        if let Some(((active_epochs, authored_blocks, mut pattern), para_data)) =
+            records.get_data_from_all_full_epochs(&stash)
+        {
+            v.active_epochs = active_epochs;
+            v.authored_blocks = authored_blocks;
+            v.pattern.append(&mut pattern);
+            if let Some((
+                para_epochs,
+                para_points,
+                explicit_votes,
+                implicit_votes,
+                missed_votes,
+                core_assignments,
+                bitfields_availability,
+                bitfields_unavailability,
+            )) = para_data
+            {
+                // Note: If Para data exists than get node identity to be visible in the report
+                v.name = get_display_name(&onet, &stash).await?;
+                //
+                v.para_epochs = para_epochs;
+                v.explicit_votes = explicit_votes;
+                v.implicit_votes = implicit_votes;
+                v.missed_votes = missed_votes;
+                v.core_assignments = core_assignments;
+                if explicit_votes + implicit_votes + missed_votes > 0 {
+                    let mvr = missed_votes as f64
+                        / (explicit_votes + implicit_votes + missed_votes) as f64;
+                    v.missed_ratio = Some(mvr);
+                }
+                if bitfields_availability + bitfields_unavailability > 0 {
+                    let bar = bitfields_availability as f64
+                        / (bitfields_availability + bitfields_unavailability) as f64;
+                    v.bitfields_availability_ratio = Some(bar);
+                }
+                if para_epochs >= 1 {
+                    v.avg_para_points = para_points / para_epochs;
+                }
+            }
+        }
+
+        //
+        validators.push(v);
+    }
+
+    // Collect era points for maximum_history_eras
+    let start_era_index = active_era_index - config.maximum_history_eras;
+    for era_index in start_era_index..active_era_index {
+        // Fetch Era reward points
+        let era_reward_points =
+            super::storage::fetch_era_reward_points(&rc_api, rc_block_hash, era_index).await?;
+        let individual = era_reward_points.individual;
+        for (stash, points) in individual.iter() {
+            validators
+                .iter_mut()
+                .filter(|v| v.stash == *stash)
+                .for_each(|v| {
+                    (*v).maximum_history_total_eras += 1;
+                    (*v).maximum_history_total_points += points;
+                });
+        }
+    }
+
+    // Calculate a score based on the formula
+    // SCORE_1 = (1-MVR)*0.50 + BAR*0.25 + ((AVG_PV_POINTS - MIN_AVG_POINTS)/(MAX_AVG_PV_POINTS-MIN_AVG_PV_POINTS))*0.18 + (PV_SESSIONS/TOTAL_SESSIONS)*0.07
+    // SCORE_2 = SCORE*0.25 + (1-COMMISSION)*0.75
+
+    // Normalize avg_para_points
+    let avg_para_points: Vec<u32> = validators
+        .iter()
+        .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
+        .map(|v| v.avg_para_points)
+        .collect();
+    let max = avg_para_points.iter().max().unwrap_or_else(|| &0);
+    let min = avg_para_points.iter().min().unwrap_or_else(|| &0);
+
+    // Log maximum and minimum as it's useful to debug the repart score if nedeed
+    info!(
+        "Avg. para_points max: {} min: {} for the last {} sessions.",
+        max,
+        min,
+        records.total_full_epochs()
+    );
+
+    validators
+        .iter_mut()
+        .filter(|v| v.para_epochs >= 1 && v.missed_ratio.is_some())
+        .for_each(|v| {
+            let score = if max - min > 0 {
+                (1.0_f64 - v.missed_ratio.unwrap_or_default()) * 0.50_f64
+                    + v.bitfields_availability_ratio.unwrap_or_default() * 0.25_f64
+                    + ((v.avg_para_points as f64 - *min as f64) / (*max as f64 - *min as f64))
+                        * 0.18_f64
+                    + (v.para_epochs as f64 / records.total_full_epochs() as f64) * 0.07_f64
+            } else {
+                0.0_f64
+            };
+            (*v).score = score;
+            (*v).commission_score = score * 0.25 + (1.0 - v.commission) * 0.75;
+        });
+
+    debug!("validators {:?}", validators);
+
+    // Count TVP validators
+    let tvp_validators_total = validators
+        .iter()
+        .filter(|v| v.subset == Subset::TVP && v.para_epochs >= 1 && v.missed_ratio.is_some())
+        .count();
+
+    if tvp_validators_total > 0 {
+        // Network report data
+        let data = RawData {
+            network: network.clone(),
+            meta: metadata.clone(),
+            validators: validators.clone(),
+            records_total_full_epochs: records.total_full_epochs(),
+        };
+
+        let report = Report::from(data.clone());
+        onet.matrix()
+            .send_public_message(&report.message(), Some(&report.formatted_message()))
+            .await?;
+
+        // Trigger callout message to public rooms at the rate defined in config
+        let r = current_session_index as f64 % config.matrix_callout_epoch_rate as f64;
+        if r == 0.0_f64 {
+            let callout = Report::callout(data);
+            onet.matrix()
+                .send_callout_message(&callout.message(), Some(&callout.formatted_message()))
+                .await?;
+        }
+
+        // ---- Validators Performance Ranking Report data ----
+
+        // Set era/session details
+        let start_epoch = current_session_index - records.total_full_epochs();
+        if let Some(start_era) = records.get_era_index(Some(start_epoch)) {
+            let start_block = records
+                .start_block(Some(EpochKey(start_epoch)))
+                .unwrap_or(&0);
+
+            let end_epoch = current_session_index - 1;
+            if let Some(end_era) = records.get_era_index(Some(end_epoch)) {
+                let end_block = records
+                    .end_block(Some(EpochKey(current_session_index - 1)))
+                    .unwrap_or(&0);
+                let metadata = ReportMetadata {
+                    interval: Some(((*start_era, start_epoch), (*end_era, end_epoch))),
+                    blocks_interval: Some((*start_block, *end_block)),
+                    ..Default::default()
+                };
+
+                let data = RawDataRank {
+                    network: network.clone(),
+                    meta: metadata.clone(),
+                    report_type: ReportType::Insights,
+                    validators: validators.clone(),
+                    records_total_full_epochs: records.total_full_epochs(),
+                };
+
+                let report = Report::from(data);
+
+                // Save file
+                let filename = format!(
+                    "onet_{}_{}{}_{}{}.txt.gz",
+                    config.chain_name.to_lowercase(),
+                    start_era,
+                    start_epoch,
+                    end_era,
+                    end_epoch
+                );
+                report.save(&filename)?;
+
+                // Get upload file and send message DM
+                let path_filename = format!("{}{}", config.data_path, filename);
+                let file_size = fs::metadata(&path_filename)?.len();
+
+                if let Some(url) = onet.matrix().upload_file(&path_filename)? {
+                    if let Ok(subs) = get_subscribers_by_epoch(ReportType::Insights, None) {
+                        for user_id in subs.iter() {
+                            onet.matrix()
+                                .send_private_file(
+                                    user_id,
+                                    &filename,
+                                    &url,
+                                    Some(FileInfo::with_size(file_size)),
+                                )
+                                .await?;
+                            // NOTE: To not overflow matrix with messages just send maximum 2 per second
+                            thread::sleep(time::Duration::from_millis(500));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Trigger nomination at the rate defined in config
+        if config.pools_enabled {
+            if (current_session_index as f64 % config.pools_nominate_rate as f64)
+                == config.epoch_rate_threshold as f64
+            {
+                if records.total_full_epochs() >= config.pools_minimum_sessions {
+                    match try_run_nomination(&onet, &records, validators).await {
+                        Ok(message) => {
+                            onet.matrix()
+                                .send_public_message(&message, Some(&message))
+                                .await?;
+                        }
+                        Err(e) => error!("{}", e),
+                    }
+                } else {
+                    warn!(
+                        "Only {} full sessions recorded, at least {} are needed to trigger a nomination.",
+                        records.total_full_epochs(),
+                        config.pools_minimum_sessions
+                    );
+                }
+            }
+        }
+    } else {
+        let message = format!(
+            "💤 Skipping Network Report for {} // {} due to the status of the TVP validators not being successfully obtained.",
+                network.name,
+                metadata.active_era_index,
+        );
+        onet.matrix()
+            .send_public_message(&message, Some(&message))
+            .await?;
+    }
+
+    Ok(())
+}
+// **************************
+// NETWORK REPORT ON RELAY CHAIN -- END
+// **************************
+
 fn define_first_pool_call(
     validators: &mut Vec<&Validator>,
     maximum_nominations: Option<u32>,
-) -> Result<Call, OnetError> {
+) -> Result<AssetHubCall, OnetError> {
     let config = CONFIG.clone();
     let pool_id = config.pool_id_1;
     if pool_id == 0 {
@@ -2369,7 +2793,7 @@ fn define_first_pool_call(
         accounts.truncate(max);
 
         // Define call
-        let call = Call::NominationPools(NominationPoolsCall::nominate {
+        let call = AssetHubCall::NominationPools(NominationPoolsCall::nominate {
             pool_id: pool_id,
             validators: accounts,
         });
@@ -2384,7 +2808,7 @@ fn define_first_pool_call(
 fn define_second_pool_call(
     validators: &mut Vec<&Validator>,
     maximum_nominations: Option<u32>,
-) -> Result<Call, OnetError> {
+) -> Result<AssetHubCall, OnetError> {
     let config = CONFIG.clone();
     let pool_id = config.pool_id_2;
     if pool_id == 0 {
@@ -2421,7 +2845,7 @@ fn define_second_pool_call(
             .collect::<Vec<AccountId32>>();
 
         // Define call
-        let call = Call::NominationPools(NominationPoolsCall::nominate {
+        let call = AssetHubCall::NominationPools(NominationPoolsCall::nominate {
             pool_id: pool_id,
             validators: accounts,
         });
@@ -2433,153 +2857,162 @@ fn define_second_pool_call(
     )))
 }
 
-// DEPRECATED
+// DEPRECATED: Being left here for now as comments for future reference/use
+
 // * APR is the annualized average of all stashes from the last X eras.
-pub async fn _calculate_apr_from_stashes(
-    onet: &Onet,
-    stashes: Vec<AccountId32>,
-    block_hash: H256,
-) -> Result<f64, OnetError> {
-    let start = Instant::now();
-    let api = onet.client().clone();
-    let config = CONFIG.clone();
+// pub async fn _calculate_apr_from_stashes(
+//     onet: &Onet,
+//     stashes: Vec<AccountId32>,
+//     block_hash: H256,
+// ) -> Result<f64, OnetError> {
+//     let start = Instant::now();
+//     let api = onet.client().clone();
+//     let config = CONFIG.clone();
 
-    // Fetch active era index
-    let active_era_addr = node_runtime::storage().staking().active_era();
-    let active_era_index = match api.storage().at(block_hash).fetch(&active_era_addr).await? {
-        Some(info) => info.index,
-        None => return Err("Active era not defined".into()),
-    };
+//     // Fetch active era index
+//     let active_era_addr = relay_runtime::storage().staking().active_era();
+//     let active_era_index = match api.storage().at(block_hash).fetch(&active_era_addr).await? {
+//         Some(info) => info.index,
+//         None => return Err("Active era not defined".into()),
+//     };
 
-    let mut total_eras: u128 = 0;
-    let mut total_points: u128 = 0;
-    let mut total_reward: u128 = 0;
-    let mut nominees_total_eras: u128 = 0;
-    let mut nominees_total_points: u128 = 0;
-    let mut nominees_total_stake: u128 = 0;
-    let mut nominees_total_commission: u128 = 0;
+//     let mut total_eras: u128 = 0;
+//     let mut total_points: u128 = 0;
+//     let mut total_reward: u128 = 0;
+//     let mut nominees_total_eras: u128 = 0;
+//     let mut nominees_total_points: u128 = 0;
+//     let mut nominees_total_stake: u128 = 0;
+//     let mut nominees_total_commission: u128 = 0;
 
-    // Collect stash commission
-    for stash in stashes.iter() {
-        let validator_addr = node_runtime::storage().staking().validators(stash);
-        if let Some(validator) = api.storage().at(block_hash).fetch(&validator_addr).await? {
-            let Perbill(commission) = validator.commission;
-            nominees_total_commission += commission as u128;
-        }
-    }
+//     // Collect stash commission
+//     for stash in stashes.iter() {
+//         let validator_addr = relay_runtime::storage().staking().validators(stash);
+//         if let Some(validator) = api.storage().at(block_hash).fetch(&validator_addr).await? {
+//             let Perbill(commission) = validator.commission;
+//             nominees_total_commission += commission as u128;
+//         }
+//     }
 
-    // Collect chain data for maximum_history_eras
-    // let start_era_index = active_era_index - config.maximum_history_eras;
-    let start_era_index = active_era_index - 84;
-    for era_index in start_era_index..active_era_index {
-        // Fetch Era reward points
-        let era_reward_points_addr = node_runtime::storage()
-            .staking()
-            .eras_reward_points(&era_index);
-        if let Some(era_reward_points) = api
-            .storage()
-            .at(block_hash)
-            .fetch(&era_reward_points_addr)
-            .await?
-        {
-            for (stash, points) in era_reward_points.individual.iter() {
-                if stashes.contains(stash) {
-                    nominees_total_eras += 1;
-                    nominees_total_points += *points as u128;
+//     // Collect chain data for maximum_history_eras
+//     // let start_era_index = active_era_index - config.maximum_history_eras;
+//     let start_era_index = active_era_index - 84;
+//     for era_index in start_era_index..active_era_index {
+//         // Fetch Era reward points
+//         let era_reward_points_addr = relay_runtime::storage()
+//             .staking()
+//             .eras_reward_points(&era_index);
+//         if let Some(era_reward_points) = api
+//             .storage()
+//             .at(block_hash)
+//             .fetch(&era_reward_points_addr)
+//             .await?
+//         {
+//             for (stash, points) in era_reward_points.individual.iter() {
+//                 if stashes.contains(stash) {
+//                     nominees_total_eras += 1;
+//                     nominees_total_points += *points as u128;
 
-                    // Fetch Era stakers
-                    let eras_stakers_addr = node_runtime::storage()
-                        .staking()
-                        .eras_stakers(&era_index, stash);
-                    if let Some(eras_stakers) = api
-                        .storage()
-                        .at(block_hash)
-                        .fetch(&eras_stakers_addr)
-                        .await?
-                    {
-                        nominees_total_stake += eras_stakers.total;
-                    }
-                }
-            }
-            total_points += era_reward_points.total as u128;
-            total_eras += 1;
+//                     // Fetch Era stakers
+//                     let eras_stakers_addr = relay_runtime::storage()
+//                         .staking()
+//                         .eras_stakers(&era_index, stash);
+//                     if let Some(eras_stakers) = api
+//                         .storage()
+//                         .at(block_hash)
+//                         .fetch(&eras_stakers_addr)
+//                         .await?
+//                     {
+//                         nominees_total_stake += eras_stakers.total;
+//                     }
+//                 }
+//             }
+//             total_points += era_reward_points.total as u128;
+//             total_eras += 1;
 
-            // Fetch Era validator reward
-            let eras_validator_reward_addr = node_runtime::storage()
-                .staking()
-                .eras_validator_reward(&era_index);
-            if let Some(eras_validator_reward) = api
-                .storage()
-                .at(block_hash)
-                .fetch(&eras_validator_reward_addr)
-                .await?
-            {
-                total_reward += eras_validator_reward;
-            }
-        }
-    }
+//             // Fetch Era validator reward
+//             let eras_validator_reward_addr = relay_runtime::storage()
+//                 .staking()
+//                 .eras_validator_reward(&era_index);
+//             if let Some(eras_validator_reward) = api
+//                 .storage()
+//                 .at(block_hash)
+//                 .fetch(&eras_validator_reward_addr)
+//                 .await?
+//             {
+//                 total_reward += eras_validator_reward;
+//             }
+//         }
+//     }
 
-    debug!(
-        "nominees_total_eras: {} nominees_total_points: {} nominees_total_stake: {}",
-        nominees_total_eras, nominees_total_points, nominees_total_stake
-    );
-    debug!(
-        "total_eras: {} total_points: {} total_reward: {}",
-        total_eras, total_points, total_reward
-    );
+//     debug!(
+//         "nominees_total_eras: {} nominees_total_points: {} nominees_total_stake: {}",
+//         nominees_total_eras, nominees_total_points, nominees_total_stake
+//     );
+//     debug!(
+//         "total_eras: {} total_points: {} total_reward: {}",
+//         total_eras, total_points, total_reward
+//     );
 
-    if nominees_total_eras > 0 {
-        let avg_points_per_nominee_per_era = nominees_total_points / nominees_total_eras;
-        debug!(
-            "avg_points_per_nominee_per_era: {}",
-            avg_points_per_nominee_per_era
-        );
-        let avg_stake_per_nominee_per_era = nominees_total_stake / nominees_total_eras;
-        debug!(
-            "avg_stake_per_nominee_per_era: {}",
-            avg_stake_per_nominee_per_era
-        );
-        let avg_reward_per_era = total_reward / total_eras;
-        debug!("avg_reward_per_era: {}", avg_reward_per_era);
-        let avg_points_per_era = total_points / total_eras;
-        debug!("avg_points_per_era: {}", avg_points_per_era);
+//     if nominees_total_eras > 0 {
+//         let avg_points_per_nominee_per_era = nominees_total_points / nominees_total_eras;
+//         debug!(
+//             "avg_points_per_nominee_per_era: {}",
+//             avg_points_per_nominee_per_era
+//         );
+//         let avg_stake_per_nominee_per_era = nominees_total_stake / nominees_total_eras;
+//         debug!(
+//             "avg_stake_per_nominee_per_era: {}",
+//             avg_stake_per_nominee_per_era
+//         );
+//         let avg_reward_per_era = total_reward / total_eras;
+//         debug!("avg_reward_per_era: {}", avg_reward_per_era);
+//         let avg_points_per_era = total_points / total_eras;
+//         debug!("avg_points_per_era: {}", avg_points_per_era);
 
-        let avg_reward_per_nominee_per_era =
-            (avg_points_per_nominee_per_era * avg_reward_per_era) / avg_points_per_era;
-        debug!(
-            "avg_reward_per_nominee_per_era: {}",
-            avg_reward_per_nominee_per_era
-        );
+//         let avg_reward_per_nominee_per_era =
+//             (avg_points_per_nominee_per_era * avg_reward_per_era) / avg_points_per_era;
+//         debug!(
+//             "avg_reward_per_nominee_per_era: {}",
+//             avg_reward_per_nominee_per_era
+//         );
 
-        let avg_commission_per_nominee = nominees_total_commission / stashes.len() as u128;
-        debug!("avg_commission_per_nominee: {}", avg_commission_per_nominee);
+//         let avg_commission_per_nominee = nominees_total_commission / stashes.len() as u128;
+//         debug!("avg_commission_per_nominee: {}", avg_commission_per_nominee);
 
-        let commission = avg_commission_per_nominee as f64 / 1_000_000_000.0_f64;
-        let apr: f64 = (avg_reward_per_nominee_per_era as f64 * (1.0 - commission))
-            * (1.0 / avg_stake_per_nominee_per_era as f64)
-            * config.eras_per_day as f64
-            * 365.0;
-        debug!("APR: {} calculated ({:?})", apr, start.elapsed());
-        Ok(apr)
-    } else {
-        Ok(0.0_f64)
-    }
-}
+//         let commission = avg_commission_per_nominee as f64 / 1_000_000_000.0_f64;
+//         let apr: f64 = (avg_reward_per_nominee_per_era as f64 * (1.0 - commission))
+//             * (1.0 / avg_stake_per_nominee_per_era as f64)
+//             * config.eras_per_day as f64
+//             * 365.0;
+//         debug!("APR: {} calculated ({:?})", apr, start.elapsed());
+//         Ok(apr)
+//     } else {
+//         Ok(0.0_f64)
+//     }
+// }
 
+// ***************************************
+// NOMINATION POOLS ON ASSET HUB
+//  ***************************************
 pub async fn try_run_cache_nomination_pools(
-    block_number: BlockNumber,
-    block_hash: H256,
+    epoch_index: EpochIndex,
+    ah_block_number: BlockNumber,
+    ah_block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if config.cache_writer_enabled && config.pools_enabled {
         async_std::task::spawn(async move {
-            if let Err(e) = cache_nomination_pools(block_number, block_hash).await {
+            if let Err(e) =
+                cache_nomination_pools(epoch_index, ah_block_number, ah_block_hash).await
+            {
                 error!("cache_nomination_pools error: {:?}", e);
             }
         });
 
         async_std::task::spawn(async move {
-            if let Err(e) = cache_nomination_pools_stats(block_number, block_hash).await {
+            if let Err(e) =
+                cache_nomination_pools_stats(epoch_index, ah_block_number, ah_block_hash).await
+            {
                 error!("cache_nomination_pools_stats error: {:?}", e);
             }
         });
@@ -2588,8 +3021,10 @@ pub async fn try_run_cache_nomination_pools(
         // but since the APR is based on the current nominees and these can be changed within the session
         // we calculate the APR every new session for now
         async_std::task::spawn(async move {
-            if let Err(e) = cache_nomination_pools_nominees(block_number, block_hash).await {
-                error!("cache_nomination_pools_stats error: {:?}", e);
+            if let Err(e) =
+                cache_nomination_pools_nominees(epoch_index, ah_block_number, ah_block_hash).await
+            {
+                error!("cache_nomination_pools_nominees error: {:?}", e);
             }
         });
     }
@@ -2597,72 +3032,234 @@ pub async fn try_run_cache_nomination_pools(
 }
 
 pub async fn try_run_cache_nomination_pools_stats(
-    block_number: BlockNumber,
-    block_hash: H256,
+    epoch_index: EpochIndex,
+    ah_block_number: BlockNumber,
+    ah_block_hash: H256,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.cache_writer_enabled && config.pools_enabled {
-        // collect nomination stats every minute
-        if (block_number as f64 % 10.0_f64) == 0.0_f64 {
-            async_std::task::spawn(async move {
-                if let Err(e) = cache_nomination_pools_stats(block_number, block_hash).await {
-                    error!("cache_nomination_pools_stats error: {:?}", e);
-                }
-            });
-        }
+    if !config.cache_writer_enabled || !config.pools_enabled {
+        return Ok(());
+    }
+
+    // collect nomination stats every minute
+    if (ah_block_number as f64 % 10.0_f64) == 0.0_f64 {
+        async_std::task::spawn(async move {
+            if let Err(e) =
+                cache_nomination_pools_stats(epoch_index, ah_block_number, ah_block_hash).await
+            {
+                error!("cache_nomination_pools_stats error: {:?}", e);
+            }
+        });
     }
     Ok(())
 }
 
-pub async fn cache_nomination_pools_nominees(
-    block_number: BlockNumber,
-    block_hash: H256,
+pub async fn cache_nomination_pools(
+    epoch_index: EpochIndex,
+    ah_block_number: BlockNumber,
+    ah_block_hash: H256,
 ) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
     let start = Instant::now();
     let onet: Onet = Onet::new().await;
-    let api = onet.client().clone();
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+    let last_pool_id = fetch_last_pool_id(&ah_api, ah_block_hash).await?;
+
+    let mut some_pool = Some(1);
+    while let Some(pool_id) = some_pool {
+        if pool_id > last_pool_id {
+            some_pool = None;
+        } else {
+            // Verify if pool is valid
+            match fetch_bonded_pools(&ah_api, ah_block_hash, pool_id).await {
+                Ok(bonded) => {
+                    let metadata = fetch_pool_metadata(&ah_api, ah_block_hash, pool_id).await?;
+                    let BoundedVec(metadata) = metadata;
+                    let metadata = bytes_to_str(metadata);
+                    let mut pool = Pool::with_id_and_metadata(pool_id, metadata.clone());
+
+                    let state = match bonded.state {
+                        PoolState::Blocked => onet_pools::PoolState::Blocked,
+                        PoolState::Destroying => onet_pools::PoolState::Destroying,
+                        _ => onet_pools::PoolState::Open,
+                    };
+                    pool.state = state;
+
+                    // assign roles
+                    let mut depositor = Account::with_address(bonded.roles.depositor.clone());
+                    depositor.identity = get_identity(&onet, &bonded.roles.depositor, None).await?;
+                    let root = if let Some(root) = bonded.roles.root {
+                        let mut root_acc = Account::with_address(root.clone());
+                        root_acc.identity = get_identity(&onet, &root, None).await?;
+                        Some(root_acc)
+                    } else {
+                        None
+                    };
+                    let nominator = if let Some(acc) = bonded.roles.nominator {
+                        let mut nominator = Account::with_address(acc.clone());
+                        nominator.identity = get_identity(&onet, &acc, None).await?;
+                        Some(nominator)
+                    } else {
+                        None
+                    };
+                    let state_toggler = if let Some(acc) = bonded.roles.bouncer {
+                        let mut state_toggler = Account::with_address(acc.clone());
+                        state_toggler.identity = get_identity(&onet, &acc, None).await?;
+                        Some(state_toggler)
+                    } else {
+                        None
+                    };
+
+                    pool.roles = Some(Roles::with(depositor, root, nominator, state_toggler));
+                    pool.block_number = ah_block_number;
+
+                    cache_nomination_pool(&mut cache, &config, &pool, pool_id, epoch_index).await?;
+                }
+                Err(e) => debug!("{:?} {}", {}, e),
+            }
+
+            some_pool = Some(pool_id + 1);
+        }
+    }
+
+    // Log cache processed duration time
+    info!(
+        "AH Pools status cached #{} ({:?})",
+        ah_block_number,
+        start.elapsed()
+    );
+
+    Ok(())
+}
+
+pub async fn cache_nomination_pools_stats(
+    epoch_index: EpochIndex,
+    ah_block_number: BlockNumber,
+    ah_block_hash: H256,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    let start = Instant::now();
+    let onet: Onet = Onet::new().await;
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+    let last_pool_id = fetch_last_pool_id(&ah_api, ah_block_hash).await?;
+
+    let mut some_pool = Some(1);
+    while let Some(pool_id) = some_pool {
+        if pool_id > last_pool_id {
+            some_pool = None;
+        } else {
+            // Verify if pool is valid
+            match fetch_bonded_pools(&ah_api, ah_block_hash, pool_id).await {
+                Ok(bonded) => {
+                    let mut pool_stats = PoolStats::new();
+                    pool_stats.block_number = ah_block_number;
+
+                    pool_stats.points = bonded.points;
+                    pool_stats.member_counter = bonded.member_counter;
+
+                    // fetch pool stash account staked amount from staking pallet
+                    let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
+
+                    let staking_ledger =
+                        fetch_ledger_from_controller(&ah_api, ah_block_hash, &stash_account)
+                            .await?;
+                    pool_stats.staked = staking_ledger.active;
+                    pool_stats.unbonding = staking_ledger.total - staking_ledger.active;
+
+                    // fetch pool reward account free amount
+                    let stash_account = nomination_pool_account(AccountType::Reward, pool_id);
+                    let account_info =
+                        fetch_account_info(&ah_api, ah_block_hash, stash_account).await?;
+                    pool_stats.reward = account_info.data.free;
+
+                    cache_nomination_pool_stats(
+                        &mut cache,
+                        &config,
+                        &pool_stats,
+                        pool_id,
+                        epoch_index,
+                    )
+                    .await?;
+                }
+                Err(e) => debug!("{:?} {}", {}, e),
+            }
+
+            some_pool = Some(pool_id + 1);
+        }
+    }
+    // Log cache processed duration time
+    info!(
+        "AH Pools stats cached #{} ({:?})",
+        ah_block_number,
+        start.elapsed()
+    );
+
+    Ok(())
+}
+
+pub async fn cache_nomination_pools_nominees(
+    epoch_index: EpochIndex,
+    ah_block_number: BlockNumber,
+    ah_block_hash: H256,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    let start = Instant::now();
+    let onet: Onet = Onet::new().await;
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
     // fetch last pool id
-    let last_pool_id_addr = node_runtime::storage().nomination_pools().last_pool_id();
-    if let Some(last_pool_id) = api
-        .storage()
-        .at(block_hash)
-        .fetch(&last_pool_id_addr)
-        .await?
-    {
-        let active_era_addr = node_runtime::storage().staking().active_era();
-        let era_index = match api.storage().at(block_hash).fetch(&active_era_addr).await? {
-            Some(info) => info.index,
-            None => return Err("Active era not defined".into()),
-        };
-        let current_index_addr = node_runtime::storage().session().current_index();
-        let epoch_index = match api
-            .storage()
-            .at(block_hash)
-            .fetch(&current_index_addr)
-            .await?
-        {
-            Some(index) => index,
-            None => return Err("Current session index not defined".into()),
-        };
+    let last_pool_id = fetch_last_pool_id(&ah_api, ah_block_hash).await?;
 
-        let mut valid_pool = Some(1);
-        while let Some(pool_id) = valid_pool {
-            if pool_id > last_pool_id {
-                valid_pool = None;
-            } else {
-                let mut pool_nominees = PoolNominees::new();
-                pool_nominees.block_number = block_number;
+    let active_era_info = fetch_active_era_info(&ah_api, ah_block_hash).await?;
+    let era_index = active_era_info.index;
 
-                // fetch pool nominees
-                let pool_stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
-                let nominators_addr = node_runtime::storage()
-                    .staking()
-                    .nominators(&pool_stash_account);
-                if let Some(nominations) =
-                    api.storage().at(block_hash).fetch(&nominators_addr).await?
-                {
+    let mut some_pool = Some(1);
+    while let Some(pool_id) = some_pool {
+        if pool_id > last_pool_id {
+            some_pool = None;
+        } else {
+            // Verify if pool is valid
+            match fetch_bonded_pools(&ah_api, ah_block_hash, pool_id).await {
+                Ok(_) => {
+                    let mut pool_nominees = PoolNominees::new();
+                    pool_nominees.block_number = ah_block_number;
+                    let pool_stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
+
+                    // fetch pool nominees
+                    let Ok(nominations) =
+                        fetch_nominators(&ah_api, ah_block_hash, pool_stash_account.clone()).await
+                    else {
+                        debug!(
+                            "Failed to fetch pool nominees for pool ID: {} with stash account: {}",
+                            pool_id, pool_stash_account
+                        );
+                        cache_nomination_pool_nominees(
+                            &mut cache,
+                            &config,
+                            &pool_nominees,
+                            pool_id,
+                            epoch_index,
+                        )
+                        .await?;
+
+                        some_pool = Some(pool_id + 1);
+                        continue;
+                    };
+
                     // deconstruct targets
                     let BoundedVec(stashes) = nominations.targets;
 
@@ -2676,13 +3273,375 @@ pub async fn cache_nomination_pools_nominees(
                     // check active nominees
                     for stash in stashes {
                         // Identify which active validators have pool stake assigned
-                        let eras_stakers_paged_addr = node_runtime::storage()
+                        let eras_stakers_paged_addr = asset_hub_runtime::storage()
                             .staking()
-                            .eras_stakers_paged_iter2(&era_index, &stash);
-                        let mut iter = api
+                            .eras_stakers_paged_iter2(era_index, stash.clone());
+                        let mut iter = ah_api
                             .storage()
-                            .at_latest()
-                            .await?
+                            .at(ah_block_hash)
+                            .iter(eras_stakers_paged_addr)
+                            .await?;
+
+                        while let Some(Ok(storage_kv)) = iter.next().await {
+                            let BoundedExposurePage(exposure) = storage_kv.value;
+                            if let Some(individual) = exposure
+                                .others
+                                .iter()
+                                .find(|x| x.who == pool_stash_account.clone())
+                            {
+                                active.push(ActiveNominee::with(stash.clone(), individual.value));
+                            }
+                        }
+                    }
+                    pool_nominees.active = active;
+
+                    cache_nomination_pool_nominees(
+                        &mut cache,
+                        &config,
+                        &pool_nominees,
+                        pool_id,
+                        epoch_index,
+                    )
+                    .await?;
+                }
+                Err(e) => debug!("{:?} {}", {}, e),
+            }
+            some_pool = Some(pool_id + 1);
+        }
+    }
+    // Log cache processed duration time
+    info!(
+        "AH Pools nominees cached #{} ({:?})",
+        ah_block_number,
+        start.elapsed()
+    );
+
+    Ok(())
+}
+
+// ***************************************
+// NOMINATION POOLS ON RELAY CHAIN
+//  ***************************************
+pub async fn try_run_cache_nomination_pools_on_relay_chain(
+    epoch_index: EpochIndex,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+    current_era: Option<EraIndex>,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if config.cache_writer_enabled && config.pools_enabled {
+        async_std::task::spawn(async move {
+            if let Err(e) =
+                cache_nomination_pools_on_relay_chain(epoch_index, rc_block_number, rc_block_hash)
+                    .await
+            {
+                error!("cache_nomination_pools_on_relay_chain error: {:?}", e);
+            }
+        });
+
+        async_std::task::spawn(async move {
+            if let Err(e) = cache_nomination_pools_stats_on_relay_chain(
+                epoch_index,
+                rc_block_number,
+                rc_block_hash,
+            )
+            .await
+            {
+                error!("cache_nomination_pools_stats_on_relay_chain error: {:?}", e);
+            }
+        });
+
+        // NOTE: network_report is issued every era we could use the same config to cache nomination pools APR
+        // but since the APR is based on the current nominees and these can be changed within the session
+        // we calculate the APR every new session for now
+        async_std::task::spawn(async move {
+            if let Err(e) = cache_nomination_pools_nominees_on_relay_chain(
+                epoch_index,
+                rc_block_number,
+                rc_block_hash,
+                current_era,
+            )
+            .await
+            {
+                error!(
+                    "cache_nomination_pools_nominees_on_relay_chain error: {:?}",
+                    e
+                );
+            }
+        });
+    }
+    Ok(())
+}
+
+pub async fn try_run_cache_nomination_pools_stats_on_relay_chain(
+    epoch_index: EpochIndex,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if !config.cache_writer_enabled || !config.pools_enabled {
+        return Ok(());
+    }
+
+    // collect nomination stats every minute
+    if (rc_block_number as f64 % 10.0_f64) == 0.0_f64 {
+        async_std::task::spawn(async move {
+            if let Err(e) = cache_nomination_pools_stats_on_relay_chain(
+                epoch_index,
+                rc_block_number,
+                rc_block_hash,
+            )
+            .await
+            {
+                error!("cache_nomination_pools_stats_on_relay_chain error: {:?}", e);
+            }
+        });
+    }
+    Ok(())
+}
+
+pub async fn cache_nomination_pools_on_relay_chain(
+    epoch_index: EpochIndex,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    let start = Instant::now();
+    let onet: Onet = Onet::new().await;
+    let rc_api = onet.client().clone();
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+    let last_pool_id = super::storage::fetch_last_pool_id(&rc_api, rc_block_hash).await?;
+
+    let mut some_pool = Some(1);
+    while let Some(pool_id) = some_pool {
+        if pool_id > last_pool_id {
+            some_pool = None;
+        } else {
+            // Verify if pool is valid
+            match super::storage::fetch_bonded_pools(&rc_api, rc_block_hash, pool_id).await {
+                Ok(bonded) => {
+                    let metadata =
+                        super::storage::fetch_pool_metadata(&rc_api, rc_block_hash, pool_id)
+                            .await?;
+                    let relay_runtime::runtime_types::bounded_collections::bounded_vec::BoundedVec(
+                        metadata,
+                    ) = metadata;
+                    let metadata = bytes_to_str(metadata);
+                    let mut pool = Pool::with_id_and_metadata(pool_id, metadata.clone());
+
+                    let state = match bonded.state {
+                        relay_runtime::runtime_types::pallet_nomination_pools::PoolState::Blocked => onet_pools::PoolState::Blocked,
+                        relay_runtime::runtime_types::pallet_nomination_pools::PoolState::Destroying => onet_pools::PoolState::Destroying,
+                        _ => onet_pools::PoolState::Open,
+                    };
+                    pool.state = state;
+
+                    // assign roles
+                    let mut depositor = Account::with_address(bonded.roles.depositor.clone());
+                    depositor.identity = get_identity(&onet, &bonded.roles.depositor, None).await?;
+                    let root = if let Some(root) = bonded.roles.root {
+                        let mut root_acc = Account::with_address(root.clone());
+                        root_acc.identity = get_identity(&onet, &root, None).await?;
+                        Some(root_acc)
+                    } else {
+                        None
+                    };
+                    let nominator = if let Some(acc) = bonded.roles.nominator {
+                        let mut nominator = Account::with_address(acc.clone());
+                        nominator.identity = get_identity(&onet, &acc, None).await?;
+                        Some(nominator)
+                    } else {
+                        None
+                    };
+                    let state_toggler = if let Some(acc) = bonded.roles.bouncer {
+                        let mut state_toggler = Account::with_address(acc.clone());
+                        state_toggler.identity = get_identity(&onet, &acc, None).await?;
+                        Some(state_toggler)
+                    } else {
+                        None
+                    };
+
+                    pool.roles = Some(Roles::with(depositor, root, nominator, state_toggler));
+                    pool.block_number = rc_block_number;
+
+                    cache_nomination_pool(&mut cache, &config, &pool, pool_id, epoch_index).await?;
+                }
+                Err(e) => debug!("{:?} {}", {}, e),
+            }
+
+            some_pool = Some(pool_id + 1);
+        }
+    }
+
+    // Log cache processed duration time
+    info!(
+        "RC Pools status cached #{} ({:?})",
+        rc_block_number,
+        start.elapsed()
+    );
+
+    Ok(())
+}
+
+pub async fn cache_nomination_pools_stats_on_relay_chain(
+    epoch_index: EpochIndex,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    let start = Instant::now();
+    let onet: Onet = Onet::new().await;
+    let rc_api = onet.client().clone();
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+    let last_pool_id = super::storage::fetch_last_pool_id(&rc_api, rc_block_hash).await?;
+
+    let mut some_pool = Some(1);
+    while let Some(pool_id) = some_pool {
+        if pool_id > last_pool_id {
+            some_pool = None;
+        } else {
+            // Verify if pool is valid
+            match super::storage::fetch_bonded_pools(&rc_api, rc_block_hash, pool_id).await {
+                Ok(bonded) => {
+                    let mut pool_stats = PoolStats::new();
+                    pool_stats.block_number = rc_block_number;
+
+                    pool_stats.points = bonded.points;
+                    pool_stats.member_counter = bonded.member_counter;
+
+                    // fetch pool stash account staked amount from staking pallet
+                    let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
+
+                    let staking_ledger = super::storage::fetch_ledger_from_controller(
+                        &rc_api,
+                        rc_block_hash,
+                        &stash_account,
+                    )
+                    .await?;
+                    pool_stats.staked = staking_ledger.active;
+                    pool_stats.unbonding = staking_ledger.total - staking_ledger.active;
+
+                    // fetch pool reward account free amount
+                    let stash_account = nomination_pool_account(AccountType::Reward, pool_id);
+                    let account_info =
+                        super::storage::fetch_account_info(&rc_api, rc_block_hash, stash_account)
+                            .await?;
+                    pool_stats.reward = account_info.data.free;
+
+                    cache_nomination_pool_stats(
+                        &mut cache,
+                        &config,
+                        &pool_stats,
+                        pool_id,
+                        epoch_index,
+                    )
+                    .await?;
+                }
+                Err(e) => debug!("{:?} {}", {}, e),
+            }
+
+            some_pool = Some(pool_id + 1);
+        }
+    }
+    // Log cache processed duration time
+    info!(
+        "RC Pools stats cached #{} ({:?})",
+        rc_block_number,
+        start.elapsed()
+    );
+
+    Ok(())
+}
+
+pub async fn cache_nomination_pools_nominees_on_relay_chain(
+    epoch_index: EpochIndex,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+    current_era: Option<EraIndex>,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    let start = Instant::now();
+    let onet: Onet = Onet::new().await;
+    let rc_api = onet.client().clone();
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+    // fetch last pool id
+    let last_pool_id = super::storage::fetch_last_pool_id(&rc_api, rc_block_hash).await?;
+
+    let era_index = try_fetch_active_era_info(
+        &onet,
+        &rc_api,
+        &ah_api,
+        rc_block_number,
+        rc_block_hash,
+        current_era,
+    )
+    .await?;
+
+    let mut some_pool = Some(1);
+    while let Some(pool_id) = some_pool {
+        if pool_id > last_pool_id {
+            some_pool = None;
+        } else {
+            // Verify if pool is valid
+            match super::storage::fetch_bonded_pools(&rc_api, rc_block_hash, pool_id).await {
+                Ok(_) => {
+                    let mut pool_nominees = PoolNominees::new();
+                    pool_nominees.block_number = rc_block_number;
+                    let pool_stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
+
+                    // fetch pool nominees
+                    let Ok(nominations) = super::storage::fetch_nominators(
+                        &rc_api,
+                        rc_block_hash,
+                        pool_stash_account.clone(),
+                    )
+                    .await
+                    else {
+                        debug!(
+                            "Failed to fetch pool nominees for pool ID: {} with stash account: {}",
+                            pool_id, pool_stash_account
+                        );
+                        cache_nomination_pool_nominees(
+                            &mut cache,
+                            &config,
+                            &pool_nominees,
+                            pool_id,
+                            epoch_index,
+                        )
+                        .await?;
+
+                        some_pool = Some(pool_id + 1);
+                        continue;
+                    };
+
+                    // deconstruct targets
+                    let relay_runtime::runtime_types::bounded_collections::bounded_vec::BoundedVec(
+                        stashes,
+                    ) = nominations.targets;
+
+                    // DEPRECATE calculate APR
+                    // pool_nominees.apr =
+                    //     calculate_apr_from_stashes(&onet, stashes.clone(), block_hash).await?;
+
+                    pool_nominees.nominees = stashes.clone();
+
+                    let mut active = Vec::<ActiveNominee>::new();
+                    // check active nominees
+                    for stash in stashes {
+                        // Identify which active validators have pool stake assigned
+                        let eras_stakers_paged_addr = relay_runtime::storage()
+                            .staking()
+                            .eras_stakers_paged_iter2(era_index, stash.clone());
+                        let mut iter = rc_api
+                            .storage()
+                            .at(rc_block_hash)
                             .iter(eras_stakers_paged_addr)
                             .await?;
 
@@ -2691,7 +3650,7 @@ pub async fn cache_nomination_pools_nominees(
                                 .value
                                 .others
                                 .iter()
-                                .find(|x| x.who == pool_stash_account)
+                                .find(|x| x.who == pool_stash_account.clone())
                             {
                                 active.push(ActiveNominee::with(stash.clone(), individual.value));
                             }
@@ -2699,287 +3658,33 @@ pub async fn cache_nomination_pools_nominees(
                     }
                     pool_nominees.active = active;
 
-                    // serialize and cache pool
-                    let serialized = serde_json::to_string(&pool_nominees)?;
-                    redis::cmd("SET")
-                        .arg(CacheKey::NominationPoolNomineesByPoolAndSession(
-                            pool_id,
-                            epoch_index,
-                        ))
-                        .arg(serialized)
-                        .query_async(&mut cache as &mut Connection)
-                        .await
-                        .map_err(CacheError::RedisCMDError)?;
+                    cache_nomination_pool_nominees(
+                        &mut cache,
+                        &config,
+                        &pool_nominees,
+                        pool_id,
+                        epoch_index,
+                    )
+                    .await?;
                 }
-
-                valid_pool = Some(pool_id + 1);
+                Err(e) => debug!("{:?} {}", {}, e),
             }
+            some_pool = Some(pool_id + 1);
         }
-        // Log cache processed duration time
-        info!(
-            "Pools nominees #{} cached ({:?})",
-            epoch_index,
-            start.elapsed()
-        );
     }
+    // Log cache processed duration time
+    info!(
+        "RC Pools nominees cached #{} ({:?})",
+        rc_block_number,
+        start.elapsed()
+    );
 
     Ok(())
 }
 
-pub async fn cache_nomination_pools_stats(
-    block_number: BlockNumber,
-    block_hash: H256,
-) -> Result<(), OnetError> {
-    let start = Instant::now();
-    let onet: Onet = Onet::new().await;
-    let api = onet.client().clone();
-    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-
-    // fetch last pool id
-    let last_pool_id_addr = node_runtime::storage().nomination_pools().last_pool_id();
-    if let Some(last_pool_id) = api
-        .storage()
-        .at(block_hash)
-        .fetch(&last_pool_id_addr)
-        .await?
-    {
-        let current_index_addr = node_runtime::storage().session().current_index();
-        let epoch_index = match api
-            .storage()
-            .at(block_hash)
-            .fetch(&current_index_addr)
-            .await?
-        {
-            Some(index) => index,
-            None => return Err("Current session index not defined".into()),
-        };
-
-        // ***********************************************************************
-        // TODO: verify how to decode with the metadata available at the block_hash being queried
-        // SpecVersion > 1002000 changed nomination_pools.bonded_pools resopnse
-        // ***********************************************************************
-        let last_runtime_upgrade_addr = node_runtime::storage().system().last_runtime_upgrade();
-
-        if let Some(info) = api
-            .storage()
-            .at(block_hash)
-            .fetch(&last_runtime_upgrade_addr)
-            .await?
-        {
-            if info.spec_version >= 1002000 {
-                let mut valid_pool = Some(1);
-                while let Some(pool_id) = valid_pool {
-                    if pool_id > last_pool_id {
-                        valid_pool = None;
-                    } else {
-                        let mut pool_stats = PoolStats::new();
-                        pool_stats.block_number = block_number;
-
-                        let bonded_pools_addr = node_runtime::storage()
-                            .nomination_pools()
-                            .bonded_pools(&pool_id);
-                        if let Some(bonded) = api
-                            .storage()
-                            .at(block_hash)
-                            .fetch(&bonded_pools_addr)
-                            .await?
-                        {
-                            pool_stats.points = bonded.points;
-                            pool_stats.member_counter = bonded.member_counter;
-
-                            // fetch pool stash account staked amount
-                            // let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
-                            // let account_addr = node_runtime::storage().system().account(&stash_account);
-                            // if let Some(account_info) =
-                            //     api.storage().fetch(&account_addr, block_hash).await?
-                            // {
-                            //     pool_stats.staked = account_info.data.fee_frozen;
-                            // }
-
-                            // fetch pool stash account staked amount from staking pallet
-                            let stash_account =
-                                nomination_pool_account(AccountType::Bonded, pool_id);
-                            let ledger_addr =
-                                node_runtime::storage().staking().ledger(&stash_account);
-                            if let Some(data) =
-                                api.storage().at(block_hash).fetch(&ledger_addr).await?
-                            {
-                                pool_stats.staked = data.active;
-                                pool_stats.unbonding = data.total - data.active;
-                            }
-
-                            // fetch pool reward account free amount
-                            let stash_account =
-                                nomination_pool_account(AccountType::Reward, pool_id);
-                            let account_addr =
-                                node_runtime::storage().system().account(&stash_account);
-                            if let Some(account_info) =
-                                api.storage().at(block_hash).fetch(&account_addr).await?
-                            {
-                                pool_stats.reward = account_info.data.free;
-                            }
-
-                            // serialize and cache pool
-                            let serialized = serde_json::to_string(&pool_stats)?;
-                            redis::cmd("SET")
-                                .arg(CacheKey::NominationPoolStatsByPoolAndSession(
-                                    pool_id,
-                                    epoch_index,
-                                ))
-                                .arg(serialized)
-                                .query_async(&mut cache as &mut Connection)
-                                .await
-                                .map_err(CacheError::RedisCMDError)?;
-                        }
-
-                        valid_pool = Some(pool_id + 1);
-                    }
-                }
-                // Log cache processed duration time
-                info!(
-                    "Pools stats #{} cached ({:?})",
-                    epoch_index,
-                    start.elapsed()
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-pub async fn cache_nomination_pools(
-    block_number: BlockNumber,
-    block_hash: H256,
-) -> Result<(), OnetError> {
-    let start = Instant::now();
-    let onet: Onet = Onet::new().await;
-    let api = onet.client().clone();
-    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-
-    // fetch last pool id
-    let last_pool_id_addr = node_runtime::storage().nomination_pools().last_pool_id();
-    if let Some(last_pool_id) = api
-        .storage()
-        .at(block_hash)
-        .fetch(&last_pool_id_addr)
-        .await?
-    {
-        let current_index_addr = node_runtime::storage().session().current_index();
-        let epoch_index = match api
-            .storage()
-            .at(block_hash)
-            .fetch(&current_index_addr)
-            .await?
-        {
-            Some(index) => index,
-            None => return Err("Current session index not defined".into()),
-        };
-
-        // ***********************************************************************
-        // TODO: verify how to decode with the metadata available at the block_hash being queried
-        // SpecVersion > 1002000 changed nomination_pools.bonded_pools resopnse
-        // ***********************************************************************
-        let last_runtime_upgrade_addr = node_runtime::storage().system().last_runtime_upgrade();
-
-        if let Some(info) = api
-            .storage()
-            .at(block_hash)
-            .fetch(&last_runtime_upgrade_addr)
-            .await?
-        {
-            if info.spec_version >= 1002000 {
-                let mut valid_pool = Some(1);
-                while let Some(pool_id) = valid_pool {
-                    if pool_id > last_pool_id {
-                        valid_pool = None;
-                    } else {
-                        // Load chain data
-                        let metadata_addr = node_runtime::storage()
-                            .nomination_pools()
-                            .metadata(&pool_id);
-                        if let Some(BoundedVec(metadata)) =
-                            api.storage().at(block_hash).fetch(&metadata_addr).await?
-                        {
-                            let metadata = str(metadata);
-                            let mut pool = Pool::with_id_and_metadata(pool_id, metadata.clone());
-
-                            let bonded_pools_addr = node_runtime::storage()
-                                .nomination_pools()
-                                .bonded_pools(&pool_id);
-                            if let Some(bonded) = api
-                                .storage()
-                                .at(block_hash)
-                                .fetch(&bonded_pools_addr)
-                                .await?
-                            {
-                                let state = match bonded.state {
-                                    PoolState::Blocked => onet_pools::PoolState::Blocked,
-                                    PoolState::Destroying => onet_pools::PoolState::Destroying,
-                                    _ => onet_pools::PoolState::Open,
-                                };
-                                pool.state = state;
-
-                                // assign roles
-                                let mut depositor =
-                                    Account::with_address(bonded.roles.depositor.clone());
-                                depositor.identity =
-                                    get_identity(&onet, &bonded.roles.depositor, None).await?;
-                                let root = if let Some(root) = bonded.roles.root {
-                                    let mut root_acc = Account::with_address(root.clone());
-                                    root_acc.identity = get_identity(&onet, &root, None).await?;
-                                    Some(root_acc)
-                                } else {
-                                    None
-                                };
-                                let nominator = if let Some(acc) = bonded.roles.nominator {
-                                    let mut nominator = Account::with_address(acc.clone());
-                                    nominator.identity = get_identity(&onet, &acc, None).await?;
-                                    Some(nominator)
-                                } else {
-                                    None
-                                };
-                                let state_toggler = if let Some(acc) = bonded.roles.bouncer {
-                                    let mut state_toggler = Account::with_address(acc.clone());
-                                    state_toggler.identity =
-                                        get_identity(&onet, &acc, None).await?;
-                                    Some(state_toggler)
-                                } else {
-                                    None
-                                };
-
-                                pool.roles =
-                                    Some(Roles::with(depositor, root, nominator, state_toggler));
-                                pool.block_number = block_number;
-
-                                // serialize and cache pool
-                                let serialized = serde_json::to_string(&pool)?;
-                                redis::cmd("SET")
-                                    .arg(CacheKey::NominationPoolRecord(pool_id))
-                                    .arg(serialized)
-                                    .query_async(&mut cache as &mut Connection)
-                                    .await
-                                    .map_err(CacheError::RedisCMDError)?;
-                            }
-                        }
-                        // cache pool_id into a sorted set by session
-                        redis::cmd("ZADD")
-                            .arg(CacheKey::NominationPoolIdsBySession(epoch_index))
-                            .arg(0)
-                            .arg(pool_id)
-                            .query_async(&mut cache as &mut Connection)
-                            .await
-                            .map_err(CacheError::RedisCMDError)?;
-
-                        valid_pool = Some(pool_id + 1);
-                    }
-                }
-                // Log cache processed duration time
-                info!("Pools #{} cached ({:?})", epoch_index, start.elapsed());
-            }
-        }
-    }
-    Ok(())
-}
+// ***************************************
+// NOMINATION POOLS ON RELAY CHAIN -- END
+//  ***************************************
 
 async fn try_run_nomination(
     onet: &Onet,
@@ -2995,7 +3700,7 @@ async fn try_run_nomination(
     let signer: Keypair = get_signer_from_seed(&seed, None);
 
     // create a batch call to nominate both pools
-    let mut calls: Vec<Call> = vec![];
+    let mut calls: Vec<AssetHubCall> = vec![];
 
     // Define minimum para epochs to be considered in the nomination:
     // NOTE: this should be exactly the same as the minimum used in ranking
@@ -3032,7 +3737,7 @@ async fn try_run_nomination(
 
     if calls.len() > 0 {
         // Submit batch call with nominations
-        let tx = node_runtime::tx().utility().batch(calls).unvalidated();
+        let tx = asset_hub_runtime::tx().utility().batch(calls).unvalidated();
 
         let mut tx_progress = api
             .tx()
@@ -3096,176 +3801,11 @@ async fn try_run_nomination(
     ))
 }
 
-// TODO: DEPRECATE, no longer needed after runtime upgrade v1.2
-// async fn verify_oversubscribed(
-//     onet: &Onet,
-//     era_index: u32,
-//     stash: &AccountId32,
-//     block_hash: Option<H256>,
-// ) -> Result<bool, OnetError> {
-//     let api = onet.client().clone();
-
-//     let max_addr = node_runtime::constants()
-//         .staking()
-//         .max_nominator_rewarded_per_validator();
-//     let max: u32 = api.constants().at(&max_addr)?;
-
-//     let block_hash = match block_hash {
-//         Some(bh) => bh,
-//         None => onet
-//             .rpc()
-//             .chain_get_block_hash(None)
-//             .await?
-//             .expect("didn't pass a block number; qed"),
-//     };
-
-//     let eras_stakers_addr = node_runtime::storage()
-//         .staking()
-//         .eras_stakers(&era_index, stash);
-//     if let Some(exposure) = api
-//         .storage()
-//         .at(block_hash)
-//         .fetch(&eras_stakers_addr)
-//         .await?
-//     {
-//         return Ok(exposure.others.len() as u32 > max);
-//     }
-//     return Ok(false);
-// }
-
-async fn get_own_stake_via_controller(
-    onet: &Onet,
-    controller: &AccountId32,
-    block_hash: H256,
-) -> Result<u128, OnetError> {
-    let api = onet.client().clone();
-
-    let ledger_addr = node_runtime::storage().staking().ledger(controller);
-    if let Some(ledger) = api.storage().at(block_hash).fetch(&ledger_addr).await? {
-        return Ok(ledger.active);
-    }
-    return Ok(0);
-}
-
-async fn get_own_stake_via_stash(onet: &Onet, stash: &AccountId32) -> Result<u128, OnetError> {
-    let api = onet.client().clone();
-
-    let bonded_addr = node_runtime::storage().staking().bonded(stash);
-    if let Some(controller) = api.storage().at_latest().await?.fetch(&bonded_addr).await? {
-        let ledger_addr = node_runtime::storage().staking().ledger(controller);
-        if let Some(ledger) = api.storage().at_latest().await?.fetch(&ledger_addr).await? {
-            return Ok(ledger.active);
-        }
-    }
-    return Ok(0);
-}
-
-async fn get_display_name(onet: &Onet, stash: &AccountId32) -> Result<String, OnetError> {
-    if let Some(identity) = get_identity(&onet, &stash, None).await? {
-        return Ok(identity.to_string());
-    } else {
-        let s = &stash.to_string();
-        Ok(format!("{}...{}", &s[..6], &s[s.len() - 6..]))
-    }
-}
-
-#[async_recursion]
-async fn get_identity(
-    onet: &Onet,
-    stash: &AccountId32,
-    sub_account_name: Option<String>,
-) -> Result<Option<Identity>, OnetError> {
-    let api = if let Some(client) = onet.people_client() {
-        client.clone()
-    } else {
-        onet.client().clone()
-    };
-
-    let identity_of_addr = people_node_runtime::storage().identity().identity_of(stash);
-    match api
-        .storage()
-        .at_latest()
-        .await?
-        .fetch(&identity_of_addr)
-        .await?
-    {
-        Some(identity) => {
-            debug!("identity {:?}", identity);
-            let parent = parse_identity_data(identity.info.display);
-            let identity = match sub_account_name {
-                Some(child) => Identity::with_name_and_sub(parent, child),
-                None => Identity::with_name(parent),
-            };
-            Ok(Some(identity))
-        }
-        None => {
-            let super_of_addr = people_node_runtime::storage().identity().super_of(stash);
-            if let Some((parent_account, data)) = api
-                .storage()
-                .at_latest()
-                .await?
-                .fetch(&super_of_addr)
-                .await?
-            {
-                let sub_account_name = parse_identity_data(data);
-                return get_identity(&onet, &parent_account, Some(sub_account_name.to_string()))
-                    .await;
-            } else {
-                Ok(None)
-            }
-        }
-    }
-}
-
-//
-fn parse_identity_data(data: Data) -> String {
-    match data {
-        Data::Raw0(bytes) => str(bytes.to_vec()),
-        Data::Raw1(bytes) => str(bytes.to_vec()),
-        Data::Raw2(bytes) => str(bytes.to_vec()),
-        Data::Raw3(bytes) => str(bytes.to_vec()),
-        Data::Raw4(bytes) => str(bytes.to_vec()),
-        Data::Raw5(bytes) => str(bytes.to_vec()),
-        Data::Raw6(bytes) => str(bytes.to_vec()),
-        Data::Raw7(bytes) => str(bytes.to_vec()),
-        Data::Raw8(bytes) => str(bytes.to_vec()),
-        Data::Raw9(bytes) => str(bytes.to_vec()),
-        Data::Raw10(bytes) => str(bytes.to_vec()),
-        Data::Raw11(bytes) => str(bytes.to_vec()),
-        Data::Raw12(bytes) => str(bytes.to_vec()),
-        Data::Raw13(bytes) => str(bytes.to_vec()),
-        Data::Raw14(bytes) => str(bytes.to_vec()),
-        Data::Raw15(bytes) => str(bytes.to_vec()),
-        Data::Raw16(bytes) => str(bytes.to_vec()),
-        Data::Raw17(bytes) => str(bytes.to_vec()),
-        Data::Raw18(bytes) => str(bytes.to_vec()),
-        Data::Raw19(bytes) => str(bytes.to_vec()),
-        Data::Raw20(bytes) => str(bytes.to_vec()),
-        Data::Raw21(bytes) => str(bytes.to_vec()),
-        Data::Raw22(bytes) => str(bytes.to_vec()),
-        Data::Raw23(bytes) => str(bytes.to_vec()),
-        Data::Raw24(bytes) => str(bytes.to_vec()),
-        Data::Raw25(bytes) => str(bytes.to_vec()),
-        Data::Raw26(bytes) => str(bytes.to_vec()),
-        Data::Raw27(bytes) => str(bytes.to_vec()),
-        Data::Raw28(bytes) => str(bytes.to_vec()),
-        Data::Raw29(bytes) => str(bytes.to_vec()),
-        Data::Raw30(bytes) => str(bytes.to_vec()),
-        Data::Raw31(bytes) => str(bytes.to_vec()),
-        Data::Raw32(bytes) => str(bytes.to_vec()),
-        _ => format!("???"),
-    }
-}
-
-fn str(bytes: Vec<u8>) -> String {
-    format!("{}", String::from_utf8_lossy(&bytes))
-}
-
 async fn get_authority_index(
-    onet: &Onet,
+    rpc: &LegacyRpcMethods<PolkadotConfig>,
     block_hash: Option<H256>,
 ) -> Result<Option<AuthorityIndex>, OnetError> {
-    if let Some(header) = onet.rpc().chain_get_header(block_hash).await? {
+    if let Some(header) = rpc.chain_get_header(block_hash).await? {
         match header.digest {
             Digest { logs } => {
                 for digests in logs.iter() {
@@ -3292,18 +3832,36 @@ async fn get_authority_index(
     Ok(None)
 }
 
+/// Cache session stats records every new session
+/// The block hash given should be from the parent block where the
+/// `NewSession` event is present.
 pub async fn try_run_cache_session_stats_records(
-    block_hash: H256,
+    session_index: EpochIndex,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+    ah_block_hash: H256,
+    ah_parent_block_hash: H256,
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
-    if config.cache_writer_enabled {
-        async_std::task::spawn(async move {
-            if let Err(e) = cache_session_stats_records(block_hash, is_loading).await {
-                error!("try_run_cache_session_stats_records error: {:?}", e);
-            }
-        });
+    if !config.cache_writer_enabled {
+        return Ok(());
     }
+
+    async_std::task::spawn(async move {
+        if let Err(e) = cache_session_stats_records(
+            session_index,
+            rc_block_number,
+            rc_block_hash,
+            ah_block_hash,
+            ah_parent_block_hash,
+            is_loading,
+        )
+        .await
+        {
+            error!("try_run_cache_session_stats_records error: {:?}", e);
+        }
+    });
 
     Ok(())
 }
@@ -3311,488 +3869,680 @@ pub async fn try_run_cache_session_stats_records(
 /// ---
 /// cache all validators profile and snapshot session stats at the last block of the session
 pub async fn cache_session_stats_records(
-    block_hash: H256,
+    epoch_index: EpochIndex,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+    ah_block_hash: H256,
+    ah_parent_block_hash: H256,
     is_loading: bool,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
     let config = CONFIG.clone();
     let onet: Onet = Onet::new().await;
-    let api = onet.client().clone();
+    let rc_api = onet.client().clone();
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
     // Load network details
     let network = Network::load(onet.rpc()).await?;
 
-    // ---
-    // cache all validators profile every new session and snapshot session stats
+    // initialize network stats (cached syncing status)
+    let mut nss = NetworkSessionStats::new(epoch_index, rc_block_number);
 
-    if let Some(block) = onet.rpc().chain_get_header(Some(block_hash)).await? {
-        let active_era_addr = node_runtime::storage().staking().active_era();
-        let era_index = match api
-            .storage()
-            .at(block.parent_hash)
-            .fetch(&active_era_addr)
-            .await?
-        {
-            Some(info) => info.index,
-            None => return Err("Active era not defined".into()),
+    // Initialize validators vec
+    let mut validators: Vec<ValidatorProfileRecord> = Vec::new();
+
+    // Collect Nominators data (** heavy duty task **)
+    let nominators_map = collect_nominators_data(&ah_api, ah_block_hash).await?;
+
+    // Load TVP stashes
+    let tvp_stashes: Vec<AccountId32> = if onet.runtime().is_dn_supported() {
+        try_fetch_stashes_from_remote_url(is_loading, None).await?
+    } else {
+        Vec::new()
+    };
+
+    // Fetch active validators
+    let authorities = super::storage::fetch_authorities(&rc_api, rc_block_hash).await?;
+
+    // Fetch all validators
+    let validators_addr = asset_hub_runtime::storage().staking().validators_iter();
+    let mut iter = ah_api
+        .storage()
+        .at(ah_block_hash)
+        .iter(validators_addr)
+        .await?;
+    while let Some(Ok(storage_resp)) = iter.next().await {
+        // validator stash address
+        let stash = get_account_id_from_storage_key(storage_resp.key_bytes);
+        // create a new validator instance
+        let mut profile = ValidatorProfileRecord::new(stash.clone());
+        // validator controller address
+        let Ok(controller) = fetch_bonded_controller_account(ah_api, ah_block_hash, &stash).await
+        else {
+            warn!("Failed to fetch bonded_controller for stash {:?}", stash);
+            continue;
+        };
+        profile.controller = Some(controller.clone());
+        // get own stake
+        profile.own_stake = fetch_own_stake_via_stash(&ah_api, ah_block_hash, &controller).await?;
+
+        // deconstruct commisssion
+        let Perbill(commission) = storage_resp.value.commission;
+        profile.commission = commission;
+
+        // verify subset (1_000_000_000 = 100% commission)
+        profile.subset = if commission != 1_000_000_000 {
+            if !tvp_stashes.contains(&stash) {
+                Subset::NONTVP
+            } else {
+                Subset::TVP
+            }
+        } else {
+            Subset::C100
         };
 
-        let current_index_addr = node_runtime::storage().session().current_index();
-        let epoch_index = match api
-            .storage()
-            .at(block.parent_hash)
-            .fetch(&current_index_addr)
-            .await?
-        {
-            Some(index) => index,
-            None => return Err("Current session index not defined".into()),
-        };
+        // check if is in active set
+        profile.is_active = authorities.contains(&stash);
 
-        // initialize network stats (cached syncing status)
-        let mut nss = NetworkSessionStats::new(epoch_index, (block.number - 1) as u64);
-
-        // Initialize validators vec
-        let mut validators: Vec<ValidatorProfileRecord> = Vec::new();
-
-        // Collect Nominators data (** heavy duty task **)
-        let nominators_map = collect_nominators_data(&onet, block.parent_hash).await?;
-
-        // Load TVP stashes
-        let tvp_stashes: Vec<AccountId32> =
-            try_fetch_stashes_from_remote_url(is_loading, None).await?;
-
-        // Fetch active validators
-        let authorities_addr = node_runtime::storage().session().validators();
-        if let Some(authorities) = api
-            .storage()
-            .at(block.parent_hash)
-            .fetch(&authorities_addr)
-            .await?
-        {
-            // Fetch all validators
-            let validators_addr = node_runtime::storage().staking().validators_iter();
-            let mut iter = api
-                .storage()
-                .at(block.parent_hash)
-                .iter(validators_addr)
-                .await?;
-            while let Some(Ok(storage_resp)) = iter.next().await {
-                // validator stash address
-                let stash = get_account_id_from_storage_key(storage_resp.key_bytes);
-                // create a new validator instance
-                let mut v = ValidatorProfileRecord::new(stash.clone());
-                // validator controller address
-                let bonded_addr = node_runtime::storage().staking().bonded(&stash);
-                if let Some(controller) = api
-                    .storage()
-                    .at(block.parent_hash)
-                    .fetch(&bonded_addr)
-                    .await?
-                {
-                    v.controller = Some(controller.clone());
-                    // get own stake
-                    v.own_stake =
-                        get_own_stake_via_controller(&onet, &controller, block.parent_hash).await?;
-
-                    // deconstruct commisssion
-                    let Perbill(commission) = storage_resp.value.commission;
-                    v.commission = commission;
-
-                    // verify subset (1_000_000_000 = 100% commission)
-                    v.subset = if commission != 1_000_000_000 {
-                        if !tvp_stashes.contains(&stash) {
-                            Subset::NONTVP
-                        } else {
-                            Subset::TVP
-                        }
-                    } else {
-                        Subset::C100
-                    };
-
-                    // check if is in active set
-                    v.is_active = authorities.contains(&stash);
-
-                    // calculate session mvr and avg it with previous value
-                    v.mvr = try_calculate_avg_mvr_by_session_and_stash(
-                        &onet,
-                        epoch_index,
-                        stash.clone(),
-                    )
-                    .await?;
-                    // keep track of when mvr was updated
-                    if v.mvr.is_some() {
-                        v.mvr_session = Some(epoch_index);
-                    }
-
-                    // check if block nominations
-                    v.is_blocked = storage_resp.value.blocked;
-
-                    // get identity
-                    v.identity = get_identity(&onet, &stash, None).await?;
-
-                    // set nominators data
-                    if let Some(nominators) = nominators_map.get(&stash) {
-                        // TODO: Perhaps keep nominator stashes in a different struct
-                        // let nominators_stashes = nominators
-                        //     .iter()
-                        //     .map(|(x, _, _)| x.to_string())
-                        //     .collect::<Vec<String>>()
-                        //     .join(",");
-
-                        v.nominators_stake = nominators.iter().map(|(_, x, _)| x).sum();
-                        v.nominators_raw_stake = nominators.iter().map(|(_, x, y)| x / y).sum();
-                        v.nominators_counter = nominators.len().try_into().unwrap();
-                    }
-
-                    let serialized = serde_json::to_string(&v)?;
-                    redis::pipe()
-                        .atomic()
-                        .cmd("SET")
-                        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
-                        .arg(serialized)
-                        .cmd("EXPIRE")
-                        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
-                        .arg(config.cache_writer_prunning)
-                        .cmd("SADD")
-                        .arg(CacheKey::ValidatorAccountsBySession(epoch_index))
-                        .arg(stash.to_string())
-                        .cmd("EXPIRE")
-                        .arg(CacheKey::ValidatorAccountsBySession(epoch_index))
-                        .arg(config.cache_writer_prunning)
-                        // cache own_stake rank
-                        .cmd("ZADD")
-                        .arg(CacheKey::NomiBoardBySessionAndTrait(
-                            epoch_index,
-                            Trait::OwnStake,
-                        ))
-                        .arg(
-                            v.own_stake_trimmed(network.token_decimals as u32)
-                                .to_string(),
-                        ) // score
-                        .arg(stash.to_string())
-                        .cmd("EXPIRE")
-                        .arg(CacheKey::NomiBoardBySessionAndTrait(
-                            epoch_index,
-                            Trait::OwnStake,
-                        ))
-                        .arg(config.cache_writer_prunning)
-                        // cache nominators_stake rank
-                        .cmd("ZADD")
-                        .arg(CacheKey::NomiBoardBySessionAndTrait(
-                            epoch_index,
-                            Trait::NominatorsStake,
-                        ))
-                        .arg(
-                            v.nominators_stake_trimmed(network.token_decimals as u32)
-                                .to_string(),
-                        ) // score
-                        .arg(stash.to_string())
-                        .cmd("EXPIRE")
-                        .arg(CacheKey::NomiBoardBySessionAndTrait(
-                            epoch_index,
-                            Trait::NominatorsStake,
-                        ))
-                        .arg(config.cache_writer_prunning)
-                        // cache nominators_counter rank
-                        .cmd("ZADD")
-                        .arg(CacheKey::NomiBoardBySessionAndTrait(
-                            epoch_index,
-                            Trait::NominatorsCounter,
-                        ))
-                        .arg(v.nominators_counter.to_string()) // score
-                        .arg(stash.to_string())
-                        .cmd("EXPIRE")
-                        .arg(CacheKey::NomiBoardBySessionAndTrait(
-                            epoch_index,
-                            Trait::NominatorsCounter,
-                        ))
-                        .arg(config.cache_writer_prunning)
-                        .query_async(&mut cache as &mut Connection)
-                        .await
-                        .map_err(CacheError::RedisCMDError)?;
-
-                    validators.push(v);
-                }
-            }
-
-            // track chilled nodes by checking if a session authority is no longer part of the validator list
-            for stash in authorities.iter() {
-                if validators
-                    .iter()
-                    .find(|&p| p.stash.as_ref().unwrap() == stash)
-                    .is_none()
-                {
-                    // mark validator has chilled
-                    let v: ValidatorProfileRecord = if let Ok(serialized_data) = redis::cmd("GET")
-                        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
-                        .query_async::<Connection, String>(&mut cache as &mut Connection)
-                        .await
-                    {
-                        let mut v: ValidatorProfileRecord =
-                            serde_json::from_str(&serialized_data).unwrap_or_default();
-                        v.is_chilled = true;
-                        v
-                    } else {
-                        let mut v = ValidatorProfileRecord::new(stash.clone());
-                        v.identity = get_identity(&onet, &stash, None).await?;
-                        v.is_chilled = true;
-                        v
-                    };
-                    let serialized = serde_json::to_string(&v)?;
-                    redis::cmd("SET")
-                        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
-                        .arg(serialized)
-                        .query_async(&mut cache as &mut Connection)
-                        .await
-                        .map_err(CacheError::RedisCMDError)?;
-                    //
-                    validators.push(v);
-                }
-            }
-
-            nss.total_vals_chilled = validators
-                .iter_mut()
-                .filter(|v| v.is_chilled)
-                .count()
-                .try_into()
-                .unwrap();
-
-            // Fetch Era reward points
-            let era_reward_points_addr = node_runtime::storage()
-                .staking()
-                .eras_reward_points(&era_index);
-            if let Some(era_reward_points) = api
-                .storage()
-                .at(block.parent_hash)
-                .fetch(&era_reward_points_addr)
-                .await?
-            {
-                nss.total_reward_points = era_reward_points.total;
-
-                for (stash, points) in era_reward_points.individual.iter() {
-                    validators
-                        .iter_mut()
-                        .filter(|v| v.stash.is_some())
-                        .filter(|v| *(v.stash.as_ref().unwrap()) == *stash)
-                        .for_each(|v| {
-                            (*v).points = *points;
-                        });
-                }
-            }
-
-            // build stats
-            //
-            // general session stats
-            // total issuance
-            let total_issuance_addr = node_runtime::storage().balances().total_issuance();
-            if let Some(total_issuance) = api
-                .storage()
-                .at(block.parent_hash)
-                .fetch(&total_issuance_addr)
-                .await?
-            {
-                nss.total_issuance = total_issuance;
-            };
-
-            // total staked
-            let eras_total_stake_addr = node_runtime::storage()
-                .staking()
-                .eras_total_stake(&era_index);
-            if let Some(total_staked) = api
-                .storage()
-                .at(block.parent_hash)
-                .fetch(&eras_total_stake_addr)
-                .await?
-            {
-                nss.total_staked = total_staked;
-            };
-
-            // total rewarded from previous era
-            let eras_total_reward_addr = node_runtime::storage()
-                .staking()
-                .eras_validator_reward(&era_index - 1);
-            if let Some(last_rewarded) = api
-                .storage()
-                .at(block.parent_hash)
-                .fetch(&eras_total_reward_addr)
-                .await?
-            {
-                nss.last_rewarded = last_rewarded;
-            };
-
-            let subsets = vec![Subset::C100, Subset::NONTVP, Subset::TVP];
-            for subset in subsets {
-                let mut ss = SubsetStats::new(subset.clone());
-
-                // all validators
-                ss.vals_total = validators
-                    .iter()
-                    .filter(|v| v.subset == subset)
-                    .count()
-                    .try_into()
-                    .unwrap();
-
-                // check to skip subset stats if no validators
-                if ss.vals_total == 0 {
-                    continue;
-                }
-
-                // active validators
-                ss.vals_active = validators
-                    .iter()
-                    .filter(|v| v.is_active && v.subset == subset)
-                    .count()
-                    .try_into()
-                    .unwrap();
-
-                // own stake
-                let own_stakes: Vec<u128> = validators
-                    .iter()
-                    .filter(|v| v.subset == subset)
-                    .map(|v| v.own_stake)
-                    .collect();
-
-                ss.vals_own_stake_total = own_stakes.iter().sum::<u128>();
-                ss.vals_own_stake_avg = own_stakes.iter().sum::<u128>() / own_stakes.len() as u128;
-                ss.vals_own_stake_min = *own_stakes.iter().min().unwrap_or_else(|| &0);
-                ss.vals_own_stake_max = *own_stakes.iter().max().unwrap_or_else(|| &0);
-
-                // oversubscribed
-                ss.vals_oversubscribed = validators
-                    .iter()
-                    .filter(|v| v.is_oversubscribed && v.subset == subset)
-                    .count()
-                    .try_into()
-                    .unwrap();
-
-                // points
-                let points: Vec<u32> = validators
-                    .iter()
-                    .filter(|v| v.subset == subset)
-                    .map(|v| v.points)
-                    .collect();
-
-                ss.vals_points_total = points.iter().sum::<u32>();
-                ss.vals_points_avg = points.iter().sum::<u32>() / points.len() as u32;
-                ss.vals_points_min = *points.iter().min().unwrap_or_else(|| &0);
-                ss.vals_points_max = *points.iter().max().unwrap_or_else(|| &0);
-
-                // TODO: flagged (grade F) and exceptional A+ validators
-
-                nss.subsets.push(ss);
-            }
-
-            // serialize and cache
-            let serialized = serde_json::to_string(&nss)?;
-            redis::pipe()
-                .atomic()
-                .cmd("SET")
-                .arg(CacheKey::NetworkStatsBySession(Index::Num(
-                    epoch_index.into(),
-                )))
-                .arg(serialized)
-                .cmd("EXPIRE")
-                .arg(CacheKey::NetworkStatsBySession(Index::Num(
-                    epoch_index.into(),
-                )))
-                .arg(config.cache_writer_prunning)
-                .query_async(&mut cache as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
-
-            // Log sesssion cache processed duration time
-            info!(
-                "Session #{} stats cached ({:?})",
-                epoch_index,
-                start.elapsed()
-            );
+        // calculate session mvr and avg it with previous value
+        profile.mvr =
+            try_calculate_avg_mvr_by_session_and_stash(&onet, epoch_index, stash.clone()).await?;
+        // keep track of when mvr was updated
+        if profile.mvr.is_some() {
+            profile.mvr_session = Some(epoch_index);
         }
 
-        // Set synced session associated with era (useful for nomi boards)
-        let mut era_data: BTreeMap<String, String> = BTreeMap::new();
-        era_data.insert(String::from("synced_session"), epoch_index.to_string());
-        era_data.insert(
-            String::from(format!("synced_at_block:{}", epoch_index)),
-            (block.number - 1).to_string(),
-        );
+        // check if block nominations
+        profile.is_blocked = storage_resp.value.blocked;
 
-        // Build session limits
-        let limits = build_limits_from_session(&onet.cache.clone(), epoch_index).await?;
-        let limits_serialized = serde_json::to_string(&limits)?;
+        // get identity
+        profile.identity = get_identity(&onet, &stash, None).await?;
 
-        // Set era and limits associated with session (useful for nomi boards)
-        let mut session_data: BTreeMap<String, String> = BTreeMap::new();
-        session_data.insert(String::from("era"), era_index.to_string());
-        session_data.insert(String::from("limits"), limits_serialized.to_string());
+        // set nominators data
+        if let Some(nominators) = nominators_map.get(&stash) {
+            // TODO: Perhaps keep nominator stashes in a different struct
+            // let nominators_stashes = nominators
+            //     .iter()
+            //     .map(|(x, _, _)| x.to_string())
+            //     .collect::<Vec<String>>()
+            //     .join(",");
 
-        // by `epoch_index`
-        redis::pipe()
-            .atomic()
-            .cmd("HSET")
-            .arg(CacheKey::EraByIndex(Index::Num(era_index.into())))
-            .arg(era_data)
-            .cmd("EXPIRE")
-            .arg(CacheKey::EraByIndex(Index::Num(era_index.into())))
-            .arg(config.cache_writer_prunning)
-            .cmd("HSET")
-            .arg(CacheKey::NomiBoardEraBySession(epoch_index))
-            .arg(session_data)
-            .cmd("EXPIRE")
-            .arg(CacheKey::NomiBoardEraBySession(epoch_index))
-            .arg(config.cache_writer_prunning)
-            .cmd("SET")
-            .arg(CacheKey::EraByIndex(Index::Current))
-            .arg(era_index.to_string())
-            .query_async(&mut cache as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?;
+            profile.nominators_stake = nominators.iter().map(|(_, x, _)| x).sum();
+            profile.nominators_raw_stake = nominators.iter().map(|(_, x, y)| x / y).sum();
+            profile.nominators_counter = nominators.len().try_into().unwrap();
+        }
+
+        cache_validator_profile(&mut cache, &config, &profile, &network, &stash, epoch_index)
+            .await?;
+
+        validators.push(profile);
     }
+
+    // track chilled nodes by checking if a session authority is no longer part of the validator list
+    for stash in authorities.iter() {
+        if validators
+            .iter()
+            .find(|&p| p.stash.as_ref().unwrap() == stash)
+            .is_none()
+        {
+            // mark validator has chilled
+            let profile: ValidatorProfileRecord = if let Ok(serialized_data) = redis::cmd("GET")
+                .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+                .query_async::<Connection, String>(&mut cache as &mut Connection)
+                .await
+            {
+                let mut profile: ValidatorProfileRecord =
+                    serde_json::from_str(&serialized_data).unwrap_or_default();
+                profile.is_chilled = true;
+                profile
+            } else {
+                let mut profile = ValidatorProfileRecord::new(stash.clone());
+                profile.identity = get_identity(&onet, &stash, None).await?;
+                profile.is_chilled = true;
+                profile
+            };
+            cache_validator_profile_only(&mut cache, &config, &profile, &stash).await?;
+            //
+            validators.push(profile);
+        }
+    }
+
+    nss.total_vals_chilled = validators
+        .iter_mut()
+        .filter(|v| v.is_chilled)
+        .count()
+        .try_into()
+        .unwrap();
+
+    // Fetch Era reward points
+    // Note: era_reward_points are asynchronously sent RC->AH at the beginning of each session
+    // We want to know which points were collected up to the last block of the session, so we need to gather the active era
+    // from the parent AH block
+    let active_era_info = fetch_active_era_info(&ah_api, ah_parent_block_hash).await?;
+    let era_index = active_era_info.index;
+
+    // nss.total_reward_points = era_reward_points.total;
+
+    // NOTE: DEPRECATED era_reward_points in favor of validator points retrieved
+    // from asset_hub_staking_client.validator_points
+    //
+    // let era_reward_points = fetch_era_reward_points(&ah_api, ah_block_hash, era_index).await?;
+    // for (stash, points) in era_reward_points.individual {
+    //     validators
+    //         .iter_mut()
+    //         .filter(|v| v.stash.is_some())
+    //         .filter(|v| *(v.stash.as_ref().unwrap()) == *stash)
+    //         .for_each(|v| {
+    //             (*v).points = *points;
+    //         });
+    // }
+    //
+    // Fetch validator points from asset_hub_staking_client.validator_points
+    let storage_addr = relay_runtime::storage()
+        .staking_ah_client()
+        .validator_points_iter();
+    let mut iter = rc_api
+        .storage()
+        .at(rc_block_hash)
+        .iter(storage_addr)
+        .await?;
+    while let Some(Ok(storage_resp)) = iter.next().await {
+        let stash = get_account_id_from_storage_key(storage_resp.clone().key_bytes);
+        validators
+            .iter_mut()
+            .filter(|v| v.stash.is_some())
+            .filter(|v| *(v.stash.as_ref().unwrap()) == stash)
+            .for_each(|v| {
+                (*v).points = storage_resp.value;
+            });
+    }
+
+    // build stats
+    //
+    // general session stats
+    //
+    // total issuance
+    let total_issuance = fetch_total_issuance(&ah_api, ah_block_hash).await?;
+    nss.total_issuance = total_issuance;
+
+    // total staked
+    let total_staked = fetch_eras_total_stake(&ah_api, ah_block_hash, era_index).await?;
+    nss.total_staked = total_staked;
+
+    // total rewarded from previous era
+    let last_rewarded = fetch_eras_validator_reward(&ah_api, ah_block_hash, era_index - 1).await?;
+    nss.last_rewarded = last_rewarded;
+
+    let subsets = vec![Subset::C100, Subset::NONTVP, Subset::TVP];
+    for subset in subsets {
+        let mut ss = SubsetStats::new(subset.clone());
+
+        // all validators
+        ss.vals_total = validators
+            .iter()
+            .filter(|v| v.subset == subset)
+            .count()
+            .try_into()
+            .unwrap();
+
+        // check to skip subset stats if no validators
+        if ss.vals_total == 0 {
+            continue;
+        }
+
+        // active validators
+        ss.vals_active = validators
+            .iter()
+            .filter(|v| v.is_active && v.subset == subset)
+            .count()
+            .try_into()
+            .unwrap();
+
+        // own stake
+        let own_stakes: Vec<u128> = validators
+            .iter()
+            .filter(|v| v.subset == subset)
+            .map(|v| v.own_stake)
+            .collect();
+
+        ss.vals_own_stake_total = own_stakes.iter().sum::<u128>();
+        ss.vals_own_stake_avg = own_stakes.iter().sum::<u128>() / own_stakes.len() as u128;
+        ss.vals_own_stake_min = *own_stakes.iter().min().unwrap_or_else(|| &0);
+        ss.vals_own_stake_max = *own_stakes.iter().max().unwrap_or_else(|| &0);
+
+        // oversubscribed
+        ss.vals_oversubscribed = validators
+            .iter()
+            .filter(|v| v.is_oversubscribed && v.subset == subset)
+            .count()
+            .try_into()
+            .unwrap();
+
+        // points
+        let points: Vec<u32> = validators
+            .iter()
+            .filter(|v| v.subset == subset)
+            .map(|v| v.points)
+            .collect();
+
+        ss.vals_points_total = points.iter().sum::<u32>();
+        ss.vals_points_avg = points.iter().sum::<u32>() / points.len() as u32;
+        ss.vals_points_min = *points.iter().min().unwrap_or_else(|| &0);
+        ss.vals_points_max = *points.iter().max().unwrap_or_else(|| &0);
+
+        // TODO: flagged (grade F) and exceptional A+ validators
+
+        nss.subsets.push(ss);
+    }
+
+    cache_network_stats_at_session(&mut cache, &config, &nss, epoch_index).await?;
+
+    cache_board_limits_at_session(&mut cache, &config, rc_block_number, era_index, epoch_index)
+        .await?;
+
+    // Log sesssion cache processed duration time
+    info!(
+        "AH Session #{} stats cached ({:?})",
+        epoch_index,
+        start.elapsed()
+    );
+
+    Ok(())
+}
+
+/// Cache session stats records every new session
+/// The block hash given should be from the parent block where the
+/// `NewSession` event is present.
+pub async fn try_run_cache_session_stats_records_on_relay_chain(
+    session_index: EpochIndex,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+    is_loading: bool,
+    current_era: Option<EraIndex>,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if !config.cache_writer_enabled {
+        return Ok(());
+    }
+
+    async_std::task::spawn(async move {
+        if let Err(e) = cache_session_stats_records_on_relay_chain(
+            session_index,
+            rc_block_number,
+            rc_block_hash,
+            is_loading,
+            current_era,
+        )
+        .await
+        {
+            error!(
+                "try_run_cache_session_stats_records_on_relay_chain error: {:?}",
+                e
+            );
+        }
+    });
+
+    Ok(())
+}
+
+/// ---
+/// cache all validators profile and snapshot session stats at the last block of the session
+pub async fn cache_session_stats_records_on_relay_chain(
+    epoch_index: EpochIndex,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+    is_loading: bool,
+    current_era: Option<EraIndex>,
+) -> Result<(), OnetError> {
+    let start = Instant::now();
+    let config = CONFIG.clone();
+    let onet: Onet = Onet::new().await;
+    let rc_api = onet.client().clone();
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
+
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+    // Load network details
+    let network = Network::load(onet.rpc()).await?;
+
+    // initialize network stats (cached syncing status)
+    let mut nss = NetworkSessionStats::new(epoch_index, rc_block_number);
+
+    // Initialize validators vec
+    let mut validators: Vec<ValidatorProfileRecord> = Vec::new();
+
+    // Collect Nominators data (** heavy duty task **)
+    let nominators_map = collect_nominators_data_on_relay_chain(&rc_api, rc_block_hash).await?;
+
+    // Load TVP stashes
+    let tvp_stashes: Vec<AccountId32> = if onet.runtime().is_dn_supported() {
+        try_fetch_stashes_from_remote_url(is_loading, None).await?
+    } else {
+        Vec::new()
+    };
+
+    // Fetch active validators
+    let authorities = super::storage::fetch_authorities(&rc_api, rc_block_hash).await?;
+
+    // Fetch all validators
+    let validators_addr = relay_runtime::storage().staking().validators_iter();
+    let mut iter = rc_api
+        .storage()
+        .at(rc_block_hash)
+        .iter(validators_addr)
+        .await?;
+    while let Some(Ok(storage_resp)) = iter.next().await {
+        // validator stash address
+        let stash = get_account_id_from_storage_key(storage_resp.key_bytes);
+        // create a new validator instance
+        let mut profile = ValidatorProfileRecord::new(stash.clone());
+        // validator controller address
+        let Ok(controller) =
+            super::storage::fetch_bonded_controller_account(&rc_api, rc_block_hash, &stash).await
+        else {
+            warn!("Failed to fetch bonded_controller for stash {:?}", stash);
+            continue;
+        };
+        profile.controller = Some(controller.clone());
+        // get own stake
+        profile.own_stake =
+            super::storage::fetch_own_stake_via_stash(&rc_api, rc_block_hash, &controller).await?;
+
+        // deconstruct commisssion
+        let relay_runtime::runtime_types::sp_arithmetic::per_things::Perbill(commission) =
+            storage_resp.value.commission;
+        profile.commission = commission;
+
+        // verify subset (1_000_000_000 = 100% commission)
+        profile.subset = if commission != 1_000_000_000 {
+            if !tvp_stashes.contains(&stash) {
+                Subset::NONTVP
+            } else {
+                Subset::TVP
+            }
+        } else {
+            Subset::C100
+        };
+
+        // check if is in active set
+        profile.is_active = authorities.contains(&stash);
+
+        // calculate session mvr and avg it with previous value
+        profile.mvr =
+            try_calculate_avg_mvr_by_session_and_stash(&onet, epoch_index, stash.clone()).await?;
+        // keep track of when mvr was updated
+        if profile.mvr.is_some() {
+            profile.mvr_session = Some(epoch_index);
+        }
+
+        // check if block nominations
+        profile.is_blocked = storage_resp.value.blocked;
+
+        // get identity
+        profile.identity = get_identity(&onet, &stash, None).await?;
+
+        // set nominators data
+        if let Some(nominators) = nominators_map.get(&stash) {
+            // TODO: Perhaps keep nominator stashes in a different struct
+            // let nominators_stashes = nominators
+            //     .iter()
+            //     .map(|(x, _, _)| x.to_string())
+            //     .collect::<Vec<String>>()
+            //     .join(",");
+
+            profile.nominators_stake = nominators.iter().map(|(_, x, _)| x).sum();
+            profile.nominators_raw_stake = nominators.iter().map(|(_, x, y)| x / y).sum();
+            profile.nominators_counter = nominators.len().try_into().unwrap();
+        }
+
+        cache_validator_profile(&mut cache, &config, &profile, &network, &stash, epoch_index)
+            .await?;
+
+        validators.push(profile);
+    }
+
+    // track chilled nodes by checking if a session authority is no longer part of the validator list
+    for stash in authorities.iter() {
+        if validators
+            .iter()
+            .find(|&p| p.stash.as_ref().unwrap() == stash)
+            .is_none()
+        {
+            // mark validator has chilled
+            let profile: ValidatorProfileRecord = if let Ok(serialized_data) = redis::cmd("GET")
+                .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+                .query_async::<Connection, String>(&mut cache as &mut Connection)
+                .await
+            {
+                let mut profile: ValidatorProfileRecord =
+                    serde_json::from_str(&serialized_data).unwrap_or_default();
+                profile.is_chilled = true;
+                profile
+            } else {
+                let mut profile = ValidatorProfileRecord::new(stash.clone());
+                profile.identity = get_identity(&onet, &stash, None).await?;
+                profile.is_chilled = true;
+                profile
+            };
+            cache_validator_profile_only(&mut cache, &config, &profile, &stash).await?;
+            //
+            validators.push(profile);
+        }
+    }
+
+    nss.total_vals_chilled = validators
+        .iter_mut()
+        .filter(|v| v.is_chilled)
+        .count()
+        .try_into()
+        .unwrap();
+
+    // Fetch Era reward points
+    // Note: era_reward_points are asynchronously sent RC->AH at the beginning of each session
+    // We want to know which points were collected up to the last block of the session, so we need to gather the active era
+    // from the parent AH block
+    let era_index = try_fetch_active_era_info(
+        &onet,
+        &rc_api,
+        &ah_api,
+        rc_block_number,
+        rc_block_hash,
+        current_era,
+    )
+    .await?;
+
+    let era_reward_points =
+        super::storage::fetch_era_reward_points(&rc_api, rc_block_hash, era_index).await?;
+    nss.total_reward_points = era_reward_points.total;
+    for (stash, points) in era_reward_points.individual {
+        validators
+            .iter_mut()
+            .filter(|v| v.stash.is_some())
+            .filter(|v| *(v.stash.as_ref().unwrap()) == stash)
+            .for_each(|v| {
+                (*v).points = points;
+            });
+    }
+
+    // build stats
+    //
+    // general session stats
+    //
+    // total issuance
+    let total_issuance = super::storage::fetch_total_issuance(&rc_api, rc_block_hash).await?;
+    nss.total_issuance = total_issuance;
+
+    // total staked
+    let total_staked =
+        super::storage::fetch_eras_total_stake(&rc_api, rc_block_hash, era_index).await?;
+    nss.total_staked = total_staked;
+
+    // total rewarded from previous era
+    let last_rewarded =
+        super::storage::fetch_eras_validator_reward(&rc_api, rc_block_hash, era_index - 1).await?;
+    nss.last_rewarded = last_rewarded;
+
+    let subsets = vec![Subset::C100, Subset::NONTVP, Subset::TVP];
+    for subset in subsets {
+        let mut ss = SubsetStats::new(subset.clone());
+
+        // all validators
+        ss.vals_total = validators
+            .iter()
+            .filter(|v| v.subset == subset)
+            .count()
+            .try_into()
+            .unwrap();
+
+        // check to skip subset stats if no validators
+        if ss.vals_total == 0 {
+            continue;
+        }
+
+        // active validators
+        ss.vals_active = validators
+            .iter()
+            .filter(|v| v.is_active && v.subset == subset)
+            .count()
+            .try_into()
+            .unwrap();
+
+        // own stake
+        let own_stakes: Vec<u128> = validators
+            .iter()
+            .filter(|v| v.subset == subset)
+            .map(|v| v.own_stake)
+            .collect();
+
+        ss.vals_own_stake_total = own_stakes.iter().sum::<u128>();
+        ss.vals_own_stake_avg = own_stakes.iter().sum::<u128>() / own_stakes.len() as u128;
+        ss.vals_own_stake_min = *own_stakes.iter().min().unwrap_or_else(|| &0);
+        ss.vals_own_stake_max = *own_stakes.iter().max().unwrap_or_else(|| &0);
+
+        // oversubscribed
+        ss.vals_oversubscribed = validators
+            .iter()
+            .filter(|v| v.is_oversubscribed && v.subset == subset)
+            .count()
+            .try_into()
+            .unwrap();
+
+        // points
+        let points: Vec<u32> = validators
+            .iter()
+            .filter(|v| v.subset == subset)
+            .map(|v| v.points)
+            .collect();
+
+        ss.vals_points_total = points.iter().sum::<u32>();
+        ss.vals_points_avg = points.iter().sum::<u32>() / points.len() as u32;
+        ss.vals_points_min = *points.iter().min().unwrap_or_else(|| &0);
+        ss.vals_points_max = *points.iter().max().unwrap_or_else(|| &0);
+
+        // TODO: flagged (grade F) and exceptional A+ validators
+
+        nss.subsets.push(ss);
+    }
+
+    cache_network_stats_at_session(&mut cache, &config, &nss, epoch_index).await?;
+
+    cache_board_limits_at_session(&mut cache, &config, rc_block_number, era_index, epoch_index)
+        .await?;
+
+    // Log sesssion cache processed duration time
+    info!(
+        "RC Session #{} stats cached ({:?})",
+        epoch_index,
+        start.elapsed()
+    );
 
     Ok(())
 }
 
 async fn collect_nominators_data(
-    onet: &Onet,
-    block_hash: H256,
+    api: &OnlineClient<PolkadotConfig>,
+    ah_block_hash: H256,
 ) -> Result<BTreeMap<AccountId32, Vec<(AccountId32, u128, u128)>>, OnetError> {
     let start = Instant::now();
-    let api = onet.client().clone();
 
     // BTreeMap<AccountId32, Vec<(AccountId32, u128, u32)>> = validator_stash : [(nominator_stash, nominator_total_stake, number_of_nominations)]
     let mut nominators_map: BTreeMap<AccountId32, Vec<(AccountId32, u128, u128)>> = BTreeMap::new();
 
     let mut counter = 0;
-    let storage_addr = node_runtime::storage().staking().nominators_iter();
-    let mut iter = api.storage().at(block_hash).iter(storage_addr).await?;
+    let storage_addr = asset_hub_runtime::storage().staking().nominators_iter();
+    let mut iter = api.storage().at(ah_block_hash).iter(storage_addr).await?;
     while let Some(Ok(storage_resp)) = iter.next().await {
         let nominator_stash = get_account_id_from_storage_key(storage_resp.key_bytes);
-        let bonded_addr = node_runtime::storage()
-            .staking()
-            .bonded(&nominator_stash.clone());
-        if let Some(controller) = api.storage().at_latest().await?.fetch(&bonded_addr).await? {
-            let ledger_addr = node_runtime::storage().staking().ledger(&controller);
-            let nominator_stake =
-                if let Some(ledger) = api.storage().at_latest().await?.fetch(&ledger_addr).await? {
-                    ledger.total
-                } else {
-                    0
-                };
+        let controller =
+            fetch_bonded_controller_account(&api, ah_block_hash, &nominator_stash).await?;
 
-            let BoundedVec(targets) = storage_resp.value.targets.clone();
-            for target in targets.iter() {
-                let n = nominators_map.entry(target.clone()).or_insert(vec![]);
-                n.push((
-                    nominator_stash.clone(),
-                    nominator_stake,
-                    targets.len().try_into().unwrap(),
-                ));
-            }
+        let staking_ledger = fetch_ledger_from_controller(&api, ah_block_hash, &controller).await?;
+        let nominator_stake = staking_ledger.total;
+
+        let BoundedVec(targets) = storage_resp.value.targets.clone();
+        for target in targets.iter() {
+            let n = nominators_map.entry(target.clone()).or_insert(vec![]);
+            n.push((
+                nominator_stash.clone(),
+                nominator_stake,
+                targets.len().try_into().unwrap(),
+            ));
         }
+
         counter += 1;
     }
     info!(
-        "Total Nominators {} collected ({:?})",
+        "AH Total Nominators {} collected ({:?})",
+        counter,
+        start.elapsed()
+    );
+    Ok(nominators_map)
+}
+
+async fn collect_nominators_data_on_relay_chain(
+    api: &OnlineClient<PolkadotConfig>,
+    rc_block_hash: H256,
+) -> Result<BTreeMap<AccountId32, Vec<(AccountId32, u128, u128)>>, OnetError> {
+    let start = Instant::now();
+
+    // BTreeMap<AccountId32, Vec<(AccountId32, u128, u32)>> = validator_stash : [(nominator_stash, nominator_total_stake, number_of_nominations)]
+    let mut nominators_map: BTreeMap<AccountId32, Vec<(AccountId32, u128, u128)>> = BTreeMap::new();
+
+    let mut counter = 0;
+    let storage_addr = relay_runtime::storage().staking().nominators_iter();
+    let mut iter = api.storage().at(rc_block_hash).iter(storage_addr).await?;
+    while let Some(Ok(storage_resp)) = iter.next().await {
+        let nominator_stash = get_account_id_from_storage_key(storage_resp.key_bytes);
+        let controller =
+            super::storage::fetch_bonded_controller_account(&api, rc_block_hash, &nominator_stash)
+                .await?;
+
+        let staking_ledger =
+            super::storage::fetch_ledger_from_controller(&api, rc_block_hash, &controller).await?;
+        let nominator_stake = staking_ledger.total;
+
+        let relay_runtime::runtime_types::bounded_collections::bounded_vec::BoundedVec(targets) =
+            storage_resp.value.targets.clone();
+        for target in targets.iter() {
+            let n = nominators_map.entry(target.clone()).or_insert(vec![]);
+            n.push((
+                nominator_stash.clone(),
+                nominator_stake,
+                targets.len().try_into().unwrap(),
+            ));
+        }
+
+        counter += 1;
+    }
+    info!(
+        "RC Total Nominators {} collected ({:?})",
         counter,
         start.elapsed()
     );
@@ -3885,4 +4635,170 @@ pub async fn calculate_mvr_by_session_and_stash(
     }
 
     Ok(None)
+}
+
+/// Helper fetch functions
+///
+
+/// Fetch session start block at the specified block hash
+async fn fetch_session_start_block(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<SessionStartBlock, OnetError> {
+    let addr = relay_runtime::storage()
+        .para_scheduler()
+        .session_start_block();
+
+    api.storage().at(hash).fetch(&addr).await?.ok_or_else(|| {
+        OnetError::from(format!(
+            "Session start block not defined at block hash {hash}"
+        ))
+    })
+}
+
+/// Fetch asset hub included block_hash at the specified relay chain block hash
+async fn fetch_asset_hub_block_hash(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<Option<H256>, OnetError> {
+    let config = CONFIG.clone();
+
+    // Fetch events
+    let events = api.events().at(hash).await?;
+    for event in events.iter() {
+        let event = event?;
+        if let Some(ev) = event.as_event::<CandidateIncluded>()? {
+            if ev.0.descriptor.para_id == Id(config.asset_hub_para_id) {
+                return Ok(Some(ev.0.descriptor.para_head));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Fetch asset hub block header info at the specified block hash
+async fn fetch_asset_hub_block_info(
+    rpc: &LegacyRpcMethods<PolkadotConfig>,
+    hash: H256,
+) -> Result<(BlockNumber, H256), OnetError> {
+    rpc.chain_get_header(Some(hash))
+        .await?
+        .map(|header| (header.number.into(), header.parent_hash))
+        .ok_or_else(|| {
+            OnetError::from(format!(
+                "AH Block number not available at block hash {hash:?}"
+            ))
+        })
+}
+
+/// Fetch relay chain block hash from a specified block number
+async fn fetch_relay_chain_block_hash(
+    rpc: &LegacyRpcMethods<PolkadotConfig>,
+    block_number: BlockNumber,
+) -> Result<H256, OnetError> {
+    rpc.chain_get_block_hash(Some(block_number.into()))
+        .await?
+        .ok_or_else(|| {
+            OnetError::from(format!(
+                "Relay block hash not available at block number {block_number}"
+            ))
+        })
+}
+
+/// Try to fetch relay chain block hash from a specified block number, wait if not available
+/// Note: Cap retries up to 100 times ~= 10minutes
+async fn try_fetch_relay_chain_block_hash(
+    rpc: &LegacyRpcMethods<PolkadotConfig>,
+    block_number: BlockNumber,
+) -> Result<H256, OnetError> {
+    let mut retries = 100;
+    while retries > 0 {
+        match fetch_relay_chain_block_hash(rpc, block_number).await {
+            Ok(hash) => {
+                return Ok(hash);
+            }
+            Err(err) => {
+                if retries == 1 {
+                    // Last retry, return the error
+                    return Err(OnetError::from(format!("{err} after 100 retries")));
+                }
+                warn!(
+                    "{err} -> Waiting 6 seconds and retrying ({} retries left)",
+                    retries - 1
+                );
+                async_std::task::sleep(std::time::Duration::from_secs(6)).await;
+                retries -= 1;
+            }
+        };
+    }
+    Err(OnetError::from(format!(
+        "Relay block hash not available at block number {block_number} after 100 retries"
+    )))
+}
+
+/// Fetch the included asset hub block hash from a specified relay chain block number
+#[async_recursion]
+async fn fetch_asset_hub_block_hash_from_relay_chain(
+    onet: &Onet,
+    rc_block_number: BlockNumber,
+    rc_block_hash: H256,
+) -> Result<H256, OnetError> {
+    let rc_api = onet.relay_client().clone();
+    let rc_rpc = onet.relay_rpc().clone();
+    if let Some(hash) = fetch_asset_hub_block_hash(&rc_api, rc_block_hash).await? {
+        return Ok(hash);
+    }
+
+    let rc_next_block_number = rc_block_number + 1;
+    let rc_next_block_hash =
+        try_fetch_relay_chain_block_hash(&rc_rpc, rc_next_block_number).await?;
+
+    fetch_asset_hub_block_hash_from_relay_chain(onet, rc_next_block_number, rc_next_block_hash)
+        .await
+}
+
+// NOTE: is_staking_live_on_asset_hub is a temporary sanity check related to
+// Asset Hub Migration and Staking operations
+pub async fn is_staking_live_on_asset_hub(
+    onet: &Onet,
+    rc_block_hash: H256,
+) -> Result<bool, OnetError> {
+    let api = onet.client().clone();
+
+    let migration_stage_addr = relay_runtime::storage().rc_migrator().rc_migration_stage();
+    let migration_stage = api
+        .storage()
+        .at(rc_block_hash)
+        .fetch(&migration_stage_addr)
+        .await?;
+
+    if let Some(stage) = migration_stage {
+        match stage {
+            MigrationStage::MigrationDone => {
+                // All staking is available at AH at this stage
+                let staking_operating_mode_addr =
+                    relay_runtime::storage().staking_ah_client().mode();
+                let staking_operating_mode = api
+                    .storage()
+                    .at(rc_block_hash)
+                    .fetch(&staking_operating_mode_addr)
+                    .await?;
+
+                if let Some(mode) = staking_operating_mode {
+                    match mode {
+                        OperatingMode::Active => {
+                            return Ok(true);
+                        }
+                        _ => {
+                            return Ok(false);
+                        }
+                    }
+                }
+            }
+            _ => {
+                return Ok(false);
+            }
+        }
+    }
+    return Ok(false);
 }
