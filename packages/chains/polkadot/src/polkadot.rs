@@ -3546,6 +3546,7 @@ pub async fn cache_nomination_pools_stats_on_relay_chain(
                         Ok(account_info) => account_info,
                         Err(e) => {
                             debug!("{:?}", e);
+                            some_pool = Some(pool_id + 1);
                             continue;
                         }
                     };
