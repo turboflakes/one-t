@@ -1667,26 +1667,36 @@ pub async fn track_records(
     let backing_votes = super::storage::fetch_on_chain_votes(&rc_api, rc_block_hash).await?;
 
     // Fetch and Track authority points
-    if is_staking_live_on_asset_hub {
-        fetch_and_track_authority_points(
-            &rc_api,
-            records,
-            block_authority_index,
-            session_index,
-            rc_block_hash,
-        )
-        .await?;
-    } else {
-        fetch_and_track_authority_points_before_ahm(
-            &rc_api,
-            records,
-            &backing_votes,
-            block_authority_index,
-            session_index,
-            rc_block_hash,
-        )
-        .await?;
-    }
+    // NOTE: Verify at which stage in the migration we can than fetch and track authority points
+    // from the staking_ah_client
+    fetch_and_track_authority_points(
+        &rc_api,
+        records,
+        block_authority_index,
+        session_index,
+        rc_block_hash,
+    )
+    .await?;
+    // if is_staking_live_on_asset_hub {
+    //     fetch_and_track_authority_points(
+    //         &rc_api,
+    //         records,
+    //         block_authority_index,
+    //         session_index,
+    //         rc_block_hash,
+    //     )
+    //     .await?;
+    // } else {
+    //     fetch_and_track_authority_points_before_ahm(
+    //         &rc_api,
+    //         records,
+    //         &backing_votes,
+    //         block_authority_index,
+    //         session_index,
+    //         rc_block_hash,
+    //     )
+    //     .await?;
+    // }
 
     // Track authority votes
     track_authority_votes(
@@ -3525,9 +3535,20 @@ pub async fn cache_nomination_pools_stats_on_relay_chain(
 
                     // fetch pool reward account free amount
                     let stash_account = nomination_pool_account(AccountType::Reward, pool_id);
-                    let account_info =
-                        super::storage::fetch_account_info(&rc_api, rc_block_hash, stash_account)
-                            .await?;
+
+                    let account_info = match super::storage::fetch_account_info(
+                        &rc_api,
+                        rc_block_hash,
+                        stash_account,
+                    )
+                    .await
+                    {
+                        Ok(account_info) => account_info,
+                        Err(e) => {
+                            warn!("{:?}", e);
+                            continue;
+                        }
+                    };
                     pool_stats.reward = account_info.data.free;
 
                     cache_nomination_pool_stats(
