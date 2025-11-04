@@ -1371,7 +1371,7 @@ async fn fetch_and_track_authority_points(
 }
 
 /// Fetch validator points and track points collected per authority method to be used BEFORE AHM
-async fn _fetch_and_track_authority_points_before_ahm(
+async fn fetch_and_track_authority_points_before_ahm(
     api: &OnlineClient<PolkadotConfig>,
     records: &mut Records,
     backing_votes: &OnChainVotes,
@@ -1638,7 +1638,7 @@ pub async fn track_records(
     records: &mut Records,
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
-    _is_staking_live_on_asset_hub: bool,
+    is_staking_live_on_asset_hub: bool,
 ) -> Result<(), OnetError> {
     // Update records current block number
     records.set_relay_chain_block_number(rc_block_number.into());
@@ -1671,34 +1671,26 @@ pub async fn track_records(
     // Fetch and Track authority points
     // NOTE: Verify at which stage in the migration we can than fetch and track authority points
     // from the staking_ah_client
-    fetch_and_track_authority_points(
-        &rc_api,
-        records,
-        block_authority_index,
-        session_index,
-        rc_block_hash,
-    )
-    .await?;
-    // if is_staking_live_on_asset_hub {
-    //     fetch_and_track_authority_points(
-    //         &rc_api,
-    //         records,
-    //         block_authority_index,
-    //         session_index,
-    //         rc_block_hash,
-    //     )
-    //     .await?;
-    // } else {
-    //     fetch_and_track_authority_points_before_ahm(
-    //         &rc_api,
-    //         records,
-    //         &backing_votes,
-    //         block_authority_index,
-    //         session_index,
-    //         rc_block_hash,
-    //     )
-    //     .await?;
-    // }
+    if is_staking_live_on_asset_hub {
+        fetch_and_track_authority_points(
+            &rc_api,
+            records,
+            block_authority_index,
+            session_index,
+            rc_block_hash,
+        )
+        .await?;
+    } else {
+        fetch_and_track_authority_points_before_ahm(
+            &rc_api,
+            records,
+            &backing_votes,
+            block_authority_index,
+            session_index,
+            rc_block_hash,
+        )
+        .await?;
+    }
 
     // Track authority votes
     track_authority_votes(
