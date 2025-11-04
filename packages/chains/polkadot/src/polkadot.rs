@@ -4770,7 +4770,14 @@ pub async fn is_staking_live_on_asset_hub(
         .storage()
         .at(rc_block_hash)
         .fetch(&migration_stage_addr)
-        .await?;
+        .await
+        .unwrap_or_else(|err| match err {
+            subxt::Error::Metadata(_) => None,
+            _ => {
+                warn!("{err} at block hash {rc_block_hash:?}");
+                None
+            }
+        });
 
     if let Some(stage) = migration_stage {
         match stage {
