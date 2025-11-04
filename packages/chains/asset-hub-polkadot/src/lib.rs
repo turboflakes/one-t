@@ -170,15 +170,13 @@ pub async fn fetch_last_pool_id(
         .nomination_pools()
         .last_pool_id();
 
-    api.storage()
-        .at(ah_block_hash)
-        .fetch(&addr)
-        .await?
-        .ok_or_else(|| {
-            OnetError::PoolError(format!(
-                "Last pool ID not defined at block hash {ah_block_hash:?}"
-            ))
-        })
+    match api.storage().at(ah_block_hash).fetch(&addr).await? {
+        Some(pool_id) => Ok(pool_id),
+        None => {
+            warn!("Last pool ID not defined at block hash {ah_block_hash:?}");
+            Ok(0)
+        }
+    }
 }
 
 /// Fetch bonded pools at the specified block hash

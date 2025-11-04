@@ -3082,7 +3082,7 @@ pub async fn cache_nomination_pools(
 
     let mut some_pool = Some(1);
     while let Some(pool_id) = some_pool {
-        if pool_id > last_pool_id {
+        if pool_id > last_pool_id || last_pool_id == 0 {
             some_pool = None;
         } else {
             // Verify if pool is valid
@@ -3165,7 +3165,7 @@ pub async fn cache_nomination_pools_stats(
 
     let mut some_pool = Some(1);
     while let Some(pool_id) = some_pool {
-        if pool_id > last_pool_id {
+        if pool_id > last_pool_id || last_pool_id == 0 {
             some_pool = None;
         } else {
             // Verify if pool is valid
@@ -3239,7 +3239,7 @@ pub async fn cache_nomination_pools_nominees(
 
     let mut some_pool = Some(1);
     while let Some(pool_id) = some_pool {
-        if pool_id > last_pool_id {
+        if pool_id > last_pool_id || last_pool_id == 0 {
             some_pool = None;
         } else {
             // Verify if pool is valid
@@ -3425,7 +3425,7 @@ pub async fn cache_nomination_pools_on_relay_chain(
 
     let mut some_pool = Some(1);
     while let Some(pool_id) = some_pool {
-        if pool_id > last_pool_id {
+        if pool_id > last_pool_id || last_pool_id == 0 {
             some_pool = None;
         } else {
             // Verify if pool is valid
@@ -3509,7 +3509,7 @@ pub async fn cache_nomination_pools_stats_on_relay_chain(
 
     let mut some_pool = Some(1);
     while let Some(pool_id) = some_pool {
-        if pool_id > last_pool_id {
+        if pool_id > last_pool_id || last_pool_id == 0 {
             some_pool = None;
         } else {
             // Verify if pool is valid
@@ -3608,7 +3608,7 @@ pub async fn cache_nomination_pools_nominees_on_relay_chain(
 
     let mut some_pool = Some(1);
     while let Some(pool_id) = some_pool {
-        if pool_id > last_pool_id {
+        if pool_id > last_pool_id || pool_id == 0 {
             some_pool = None;
         } else {
             // Verify if pool is valid
