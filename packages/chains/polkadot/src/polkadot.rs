@@ -704,6 +704,8 @@ async fn process_relay_chain_events(
                 fetch_asset_hub_block_hash_from_relay_chain(&onet, rc_block_number, rc_block_hash)
                     .await?;
 
+            // NOTE: This is a temporary solution to handle the edge case where the Asset Hub is in progress and staking is being migrated.
+            // As soon as a few sessions have passed, we can remove this check and rely on the session index alone.
             if is_staking_live_on_asset_hub {
                 process_new_session_event(
                     &rc_api,
@@ -4803,7 +4805,7 @@ pub async fn is_staking_live_on_asset_hub(
 
     if let Some(stage) = migration_stage {
         match stage {
-            MigrationStage::MigrationDone => {
+            MigrationStage::MigrationDone | MigrationStage::CoolOff { .. } => {
                 // All staking is available at AH at this stage
                 let staking_operating_mode_addr =
                     relay_runtime::storage().staking_ah_client().mode();
@@ -4815,7 +4817,7 @@ pub async fn is_staking_live_on_asset_hub(
 
                 if let Some(mode) = staking_operating_mode {
                     match mode {
-                        OperatingMode::Active => {
+                        OperatingMode::Active | OperatingMode::Buffered => {
                             return Ok(true);
                         }
                         _ => {
