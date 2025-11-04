@@ -3610,7 +3610,7 @@ pub async fn cache_nomination_pools_nominees_on_relay_chain(
 
     let mut some_pool = Some(1);
     while let Some(pool_id) = some_pool {
-        if pool_id > last_pool_id || pool_id == 0 {
+        if pool_id > last_pool_id || last_pool_id == 0 {
             some_pool = None;
         } else {
             // Verify if pool is valid
