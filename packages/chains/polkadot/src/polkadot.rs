@@ -1369,7 +1369,7 @@ async fn fetch_and_track_authority_points(
 }
 
 /// Fetch validator points and track points collected per authority method to be used BEFORE AHM
-async fn fetch_and_track_authority_points_before_ahm(
+async fn _fetch_and_track_authority_points_before_ahm(
     api: &OnlineClient<PolkadotConfig>,
     records: &mut Records,
     backing_votes: &OnChainVotes,
@@ -1636,7 +1636,7 @@ pub async fn track_records(
     records: &mut Records,
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
-    is_staking_live_on_asset_hub: bool,
+    _is_staking_live_on_asset_hub: bool,
 ) -> Result<(), OnetError> {
     // Update records current block number
     records.set_relay_chain_block_number(rc_block_number.into());
@@ -3545,7 +3545,7 @@ pub async fn cache_nomination_pools_stats_on_relay_chain(
                     {
                         Ok(account_info) => account_info,
                         Err(e) => {
-                            warn!("{:?}", e);
+                            debug!("{:?}", e);
                             continue;
                         }
                     };
