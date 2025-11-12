@@ -22,6 +22,7 @@
 use codec;
 use std::{str::Utf8Error, string::String};
 use subxt_metadata::TryFromError as MetadataTryFromError;
+use subxt::utils::H256;
 use thiserror::Error;
 
 /// On specific error messages
@@ -59,6 +60,8 @@ pub enum OnetError {
     PoolError(String),
     #[error("Box error: {0}")]
     BoxError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
+    #[error("Relay parent block number not found for hash {0}")]
+    RelayParentNumber(H256),
     #[error("Other error: {0}")]
     Other(String),
 }
