@@ -22,7 +22,7 @@
 use crate::error::CacheError;
 use crate::limits::build_limits_from_session;
 use crate::types::{CacheKey, ChainKey, Index, Trait, Verbosity};
-use log::info;
+use log::{info};
 use onet_config::{Config, CONFIG};
 use onet_records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, NetworkSessionStats,
@@ -625,14 +625,14 @@ async fn cache_session_by_index(
             "current",
         ))))
         .arg(current_epoch.to_string())
-        //NOTE: make session_stats available to previous session by copying stats from previous block
+        // NOTE: Make session_stats available to the previous session by copying stats from the last block
+        // of the previous session. The REPLACE option removes the destination key before copying the value to it.
         .cmd("COPY")
-        .arg(CacheKey::BlockByIndexStats(Index::Num(
-            *finalized_block - 1,
-        )))
+        .arg(CacheKey::BlockByIndexStats(Index::Num(*start_block - 1)))
         .arg(CacheKey::SessionByIndexStats(Index::Num(
             (current_epoch - 1).into(),
         )))
+        .arg("REPLACE")
         .cmd("EXPIRE")
         .arg(CacheKey::SessionByIndexStats(Index::Num(
             (current_epoch - 1).into(),
