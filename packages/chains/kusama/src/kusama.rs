@@ -2973,373 +2973,6 @@ pub async fn cache_nomination_pools_nominees(
     Ok(())
 }
 
-// ***************************************
-// NOMINATION POOLS ON RELAY CHAIN
-//  ***************************************
-pub async fn try_run_cache_nomination_pools_on_relay_chain(
-    epoch_index: EpochIndex,
-    rc_block_number: BlockNumber,
-    rc_block_hash: H256,
-    current_era: Option<EraIndex>,
-) -> Result<(), OnetError> {
-    let config = CONFIG.clone();
-    if config.cache_writer_enabled && config.pools_enabled {
-        async_std::task::spawn(async move {
-            if let Err(e) =
-                cache_nomination_pools_on_relay_chain(epoch_index, rc_block_number, rc_block_hash)
-                    .await
-            {
-                error!("cache_nomination_pools_on_relay_chain error: {:?}", e);
-            }
-        });
-
-        async_std::task::spawn(async move {
-            if let Err(e) = cache_nomination_pools_stats_on_relay_chain(
-                epoch_index,
-                rc_block_number,
-                rc_block_hash,
-            )
-            .await
-            {
-                error!("cache_nomination_pools_stats_on_relay_chain error: {:?}", e);
-            }
-        });
-
-        // NOTE: network_report is issued every era we could use the same config to cache nomination pools APR
-        // but since the APR is based on the current nominees and these can be changed within the session
-        // we calculate the APR every new session for now
-        async_std::task::spawn(async move {
-            if let Err(e) = cache_nomination_pools_nominees_on_relay_chain(
-                epoch_index,
-                rc_block_number,
-                rc_block_hash,
-                current_era,
-            )
-            .await
-            {
-                error!(
-                    "cache_nomination_pools_nominees_on_relay_chain error: {:?}",
-                    e
-                );
-            }
-        });
-    }
-    Ok(())
-}
-
-pub async fn try_run_cache_nomination_pools_stats_on_relay_chain(
-    epoch_index: EpochIndex,
-    rc_block_number: BlockNumber,
-    rc_block_hash: H256,
-) -> Result<(), OnetError> {
-    let config = CONFIG.clone();
-    if !config.cache_writer_enabled || !config.pools_enabled {
-        return Ok(());
-    }
-
-    // collect nomination stats every minute
-    if (rc_block_number as f64 % 10.0_f64) == 0.0_f64 {
-        async_std::task::spawn(async move {
-            if let Err(e) = cache_nomination_pools_stats_on_relay_chain(
-                epoch_index,
-                rc_block_number,
-                rc_block_hash,
-            )
-            .await
-            {
-                error!("cache_nomination_pools_stats_on_relay_chain error: {:?}", e);
-            }
-        });
-    }
-    Ok(())
-}
-
-pub async fn cache_nomination_pools_on_relay_chain(
-    epoch_index: EpochIndex,
-    rc_block_number: BlockNumber,
-    rc_block_hash: H256,
-) -> Result<(), OnetError> {
-    let config = CONFIG.clone();
-    let start = Instant::now();
-    let onet: Onet = Onet::new().await;
-    let rc_api = onet.client().clone();
-    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-
-    let last_pool_id = super::storage::fetch_last_pool_id(&rc_api, rc_block_hash).await?;
-
-    let mut some_pool = Some(1);
-    while let Some(pool_id) = some_pool {
-        if pool_id > last_pool_id {
-            some_pool = None;
-        } else {
-            // Verify if pool is valid
-            match super::storage::fetch_bonded_pools(&rc_api, rc_block_hash, pool_id).await {
-                Ok(bonded) => {
-                    let metadata =
-                        super::storage::fetch_pool_metadata(&rc_api, rc_block_hash, pool_id)
-                            .await?;
-                    let relay_runtime::runtime_types::bounded_collections::bounded_vec::BoundedVec(
-                        metadata,
-                    ) = metadata;
-                    let metadata = bytes_to_str(metadata);
-                    let mut pool = Pool::with_id_and_metadata(pool_id, metadata.clone());
-
-                    let state = match bonded.state {
-                        relay_runtime::runtime_types::pallet_nomination_pools::PoolState::Blocked => onet_pools::PoolState::Blocked,
-                        relay_runtime::runtime_types::pallet_nomination_pools::PoolState::Destroying => onet_pools::PoolState::Destroying,
-                        _ => onet_pools::PoolState::Open,
-                    };
-                    pool.state = state;
-
-                    // assign roles
-                    let mut depositor = Account::with_address(bonded.roles.depositor.clone());
-                    depositor.identity = get_identity(&onet, &bonded.roles.depositor, None).await?;
-                    let root = if let Some(root) = bonded.roles.root {
-                        let mut root_acc = Account::with_address(root.clone());
-                        root_acc.identity = get_identity(&onet, &root, None).await?;
-                        Some(root_acc)
-                    } else {
-                        None
-                    };
-                    let nominator = if let Some(acc) = bonded.roles.nominator {
-                        let mut nominator = Account::with_address(acc.clone());
-                        nominator.identity = get_identity(&onet, &acc, None).await?;
-                        Some(nominator)
-                    } else {
-                        None
-                    };
-                    let state_toggler = if let Some(acc) = bonded.roles.bouncer {
-                        let mut state_toggler = Account::with_address(acc.clone());
-                        state_toggler.identity = get_identity(&onet, &acc, None).await?;
-                        Some(state_toggler)
-                    } else {
-                        None
-                    };
-
-                    pool.roles = Some(Roles::with(depositor, root, nominator, state_toggler));
-                    pool.block_number = rc_block_number;
-
-                    cache_nomination_pool(&mut cache, &config, &pool, pool_id, epoch_index).await?;
-                }
-                Err(e) => debug!("{:?} {}", {}, e),
-            }
-
-            some_pool = Some(pool_id + 1);
-        }
-    }
-
-    // Log cache processed duration time
-    info!(
-        "RC Pools status cached #{} ({:?})",
-        rc_block_number,
-        start.elapsed()
-    );
-
-    Ok(())
-}
-
-pub async fn cache_nomination_pools_stats_on_relay_chain(
-    epoch_index: EpochIndex,
-    rc_block_number: BlockNumber,
-    rc_block_hash: H256,
-) -> Result<(), OnetError> {
-    let config = CONFIG.clone();
-    let start = Instant::now();
-    let onet: Onet = Onet::new().await;
-    let rc_api = onet.client().clone();
-    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-
-    let last_pool_id = super::storage::fetch_last_pool_id(&rc_api, rc_block_hash).await?;
-
-    let mut some_pool = Some(1);
-    while let Some(pool_id) = some_pool {
-        if pool_id > last_pool_id {
-            some_pool = None;
-        } else {
-            // Verify if pool is valid
-            match super::storage::fetch_bonded_pools(&rc_api, rc_block_hash, pool_id).await {
-                Ok(bonded) => {
-                    let mut pool_stats = PoolStats::new();
-                    pool_stats.block_number = rc_block_number;
-
-                    pool_stats.points = bonded.points;
-                    pool_stats.member_counter = bonded.member_counter;
-
-                    // fetch pool stash account staked amount from staking pallet
-                    let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
-
-                    let staking_ledger = super::storage::fetch_ledger_from_controller(
-                        &rc_api,
-                        rc_block_hash,
-                        &stash_account,
-                    )
-                    .await?;
-                    pool_stats.staked = staking_ledger.active;
-                    pool_stats.unbonding = staking_ledger.total - staking_ledger.active;
-
-                    // fetch pool reward account free amount
-                    let stash_account = nomination_pool_account(AccountType::Reward, pool_id);
-                    let account_info =
-                        super::storage::fetch_account_info(&rc_api, rc_block_hash, stash_account)
-                            .await?;
-                    pool_stats.reward = account_info.data.free;
-
-                    cache_nomination_pool_stats(
-                        &mut cache,
-                        &config,
-                        &pool_stats,
-                        pool_id,
-                        epoch_index,
-                    )
-                    .await?;
-                }
-                Err(e) => debug!("{:?} {}", {}, e),
-            }
-
-            some_pool = Some(pool_id + 1);
-        }
-    }
-    // Log cache processed duration time
-    info!(
-        "RC Pools stats cached #{} ({:?})",
-        rc_block_number,
-        start.elapsed()
-    );
-
-    Ok(())
-}
-
-pub async fn cache_nomination_pools_nominees_on_relay_chain(
-    epoch_index: EpochIndex,
-    rc_block_number: BlockNumber,
-    rc_block_hash: H256,
-    current_era: Option<EraIndex>,
-) -> Result<(), OnetError> {
-    let config = CONFIG.clone();
-    let start = Instant::now();
-    let onet: Onet = Onet::new().await;
-    let rc_api = onet.client().clone();
-    let ah_api = onet
-        .asset_hub_client()
-        .as_ref()
-        .expect("AH API to be available");
-    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-
-    // fetch last pool id
-    let last_pool_id = super::storage::fetch_last_pool_id(&rc_api, rc_block_hash).await?;
-
-    let era_index = try_fetch_active_era_info(
-        &onet,
-        &rc_api,
-        &ah_api,
-        rc_block_number,
-        rc_block_hash,
-        current_era,
-    )
-    .await?;
-
-    let mut some_pool = Some(1);
-    while let Some(pool_id) = some_pool {
-        if pool_id > last_pool_id {
-            some_pool = None;
-        } else {
-            // Verify if pool is valid
-            match super::storage::fetch_bonded_pools(&rc_api, rc_block_hash, pool_id).await {
-                Ok(_) => {
-                    let mut pool_nominees = PoolNominees::new();
-                    pool_nominees.block_number = rc_block_number;
-                    let pool_stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
-
-                    // fetch pool nominees
-                    let Ok(nominations) = super::storage::fetch_nominators(
-                        &rc_api,
-                        rc_block_hash,
-                        pool_stash_account.clone(),
-                    )
-                    .await
-                    else {
-                        debug!(
-                            "Failed to fetch pool nominees for pool ID: {} with stash account: {}",
-                            pool_id, pool_stash_account
-                        );
-                        cache_nomination_pool_nominees(
-                            &mut cache,
-                            &config,
-                            &pool_nominees,
-                            pool_id,
-                            epoch_index,
-                        )
-                        .await?;
-
-                        some_pool = Some(pool_id + 1);
-                        continue;
-                    };
-
-                    // deconstruct targets
-                    let relay_runtime::runtime_types::bounded_collections::bounded_vec::BoundedVec(
-                        stashes,
-                    ) = nominations.targets;
-
-                    // DEPRECATE calculate APR
-                    // pool_nominees.apr =
-                    //     calculate_apr_from_stashes(&onet, stashes.clone(), block_hash).await?;
-
-                    pool_nominees.nominees = stashes.clone();
-
-                    let mut active = Vec::<ActiveNominee>::new();
-                    // check active nominees
-                    for stash in stashes {
-                        // Identify which active validators have pool stake assigned
-                        let eras_stakers_paged_addr = relay_runtime::storage()
-                            .staking()
-                            .eras_stakers_paged_iter2(era_index, stash.clone());
-                        let mut iter = rc_api
-                            .storage()
-                            .at(rc_block_hash)
-                            .iter(eras_stakers_paged_addr)
-                            .await?;
-
-                        while let Some(Ok(storage_kv)) = iter.next().await {
-                            if let Some(individual) = storage_kv
-                                .value
-                                .others
-                                .iter()
-                                .find(|x| x.who == pool_stash_account.clone())
-                            {
-                                active.push(ActiveNominee::with(stash.clone(), individual.value));
-                            }
-                        }
-                    }
-                    pool_nominees.active = active;
-
-                    cache_nomination_pool_nominees(
-                        &mut cache,
-                        &config,
-                        &pool_nominees,
-                        pool_id,
-                        epoch_index,
-                    )
-                    .await?;
-                }
-                Err(e) => debug!("{:?} {}", {}, e),
-            }
-            some_pool = Some(pool_id + 1);
-        }
-    }
-    // Log cache processed duration time
-    info!(
-        "RC Pools nominees cached #{} ({:?})",
-        rc_block_number,
-        start.elapsed()
-    );
-
-    Ok(())
-}
-
-// ***************************************
-// NOMINATION POOLS ON RELAY CHAIN -- END
-//  ***************************************
-
 async fn try_run_nomination(
     onet: &Onet,
     records: &Records,
@@ -4348,7 +3981,7 @@ async fn fetch_session_start_block(
 }
 
 /// Fetch asset hub included block_hash at the specified relay chain block hash
-async fn fetch_asset_hub_block_hash(
+async fn fetch_asset_hub_included_block_hash(
     api: &OnlineClient<PolkadotConfig>,
     hash: H256,
 ) -> Result<Option<H256>, OnetError> {
@@ -4367,6 +4000,20 @@ async fn fetch_asset_hub_block_hash(
     Ok(None)
 }
 
+/// Fetch AH block hash from a specified block number
+async fn fetch_asset_hub_block_hash(
+    rpc: &LegacyRpcMethods<PolkadotConfig>,
+    block_number: BlockNumber,
+) -> Result<H256, OnetError> {
+    rpc.chain_get_block_hash(Some(block_number.into()))
+        .await?
+        .ok_or_else(|| {
+            OnetError::from(format!(
+                "AH block hash not available at block number {block_number}"
+            ))
+        })
+}
+
 /// Fetch asset hub block header info at the specified block hash
 async fn fetch_asset_hub_block_info(
     rpc: &LegacyRpcMethods<PolkadotConfig>,
@@ -4382,6 +4029,37 @@ async fn fetch_asset_hub_block_info(
         })
 }
 
+/// Try to fetch asset hub block info from a specified block hash, wait if not available
+/// Note: Cap retries up to 100 times ~= 10minutes
+async fn try_fetch_asset_hub_block_info(
+    rpc: &LegacyRpcMethods<PolkadotConfig>,
+    hash: H256,
+) -> Result<(BlockNumber, H256), OnetError> {
+    let mut retries = 100;
+    while retries > 0 {
+        match fetch_asset_hub_block_info(rpc, hash).await {
+            Ok(info) => {
+                return Ok(info);
+            }
+            Err(err) => {
+                if retries == 1 {
+                    // Last retry, return the error
+                    return Err(OnetError::from(format!("{err} after 100 retries")));
+                }
+                warn!(
+                    "{err} -> Waiting 6 seconds and retrying ({} retries left)",
+                    retries - 1
+                );
+                async_std::task::sleep(std::time::Duration::from_secs(6)).await;
+                retries -= 1;
+            }
+        };
+    }
+    Err(OnetError::from(format!(
+        "AH block info not available at block hash {hash} after 100 retries"
+    )))
+}
+
 /// Fetch relay chain block hash from a specified block number
 async fn fetch_relay_chain_block_hash(
     rpc: &LegacyRpcMethods<PolkadotConfig>,
@@ -4391,7 +4069,7 @@ async fn fetch_relay_chain_block_hash(
         .await?
         .ok_or_else(|| {
             OnetError::from(format!(
-                "Relay block hash not available at block number {block_number}"
+                "RC block hash not available at block number {block_number}"
             ))
         })
 }
@@ -4435,11 +4113,40 @@ async fn fetch_asset_hub_block_hash_from_relay_chain(
     rc_block_hash: H256,
 ) -> Result<H256, OnetError> {
     let rc_api = onet.relay_client().clone();
-    let rc_rpc = onet.relay_rpc().clone();
-    if let Some(hash) = fetch_asset_hub_block_hash(&rc_api, rc_block_hash).await? {
-        return Ok(hash);
-    }
 
+    // 1. Fetch the included asset hub block hash from the specified relay chain block number
+    if let Some(hash) = fetch_asset_hub_included_block_hash(&rc_api, rc_block_hash).await? {
+        let ah_api = onet
+            .asset_hub_client()
+            .as_ref()
+            .expect("AH API to be available");
+        let ah_rpc = onet
+            .asset_hub_rpc()
+            .as_ref()
+            .expect("AH RPC to be available")
+            .clone();
+        // 2. Verify if the RC parent_block_number included in AH block is equal to the rc_block_number being queried
+        // If not fetch the next AH block and try again
+        let mut ah_next_block_hash = hash;
+        let mut ah_block_number_opt: Option<u64> = None;
+        loop {
+            let parent_block_number =
+                fetch_relay_parent_block_number(&ah_api, ah_next_block_hash).await?;
+            if parent_block_number == rc_block_number {
+                return Ok(ah_next_block_hash);
+            }
+            // Fetch AH block_number from current hash, add 1 and fetch to get the next AH hash
+            ah_block_number_opt = if let Some(n) = ah_block_number_opt {
+                Some(n + 1)
+            } else {
+                let (n, _) = try_fetch_asset_hub_block_info(&ah_rpc, ah_next_block_hash).await?;
+                Some(n + 1)
+            };
+            let ah_block_number = ah_block_number_opt.unwrap();
+            ah_next_block_hash = fetch_asset_hub_block_hash(&ah_rpc, ah_block_number).await?;
+        }
+    }
+    let rc_rpc = onet.relay_rpc().clone();
     let rc_next_block_number = rc_block_number + 1;
     let rc_next_block_hash =
         try_fetch_relay_chain_block_hash(&rc_rpc, rc_next_block_number).await?;
@@ -4447,3 +4154,24 @@ async fn fetch_asset_hub_block_hash_from_relay_chain(
     fetch_asset_hub_block_hash_from_relay_chain(onet, rc_next_block_number, rc_next_block_hash)
         .await
 }
+
+// /// Fetch the included asset hub block hash from a specified relay chain block number
+// #[async_recursion]
+// async fn fetch_asset_hub_block_hash_from_relay_chain(
+//     onet: &Onet,
+//     rc_block_number: BlockNumber,
+//     rc_block_hash: H256,
+// ) -> Result<H256, OnetError> {
+//     let rc_api = onet.relay_client().clone();
+//     let rc_rpc = onet.relay_rpc().clone();
+//     if let Some(hash) = fetch_asset_hub_block_hash(&rc_api, rc_block_hash).await? {
+//         return Ok(hash);
+//     }
+
+//     let rc_next_block_number = rc_block_number + 1;
+//     let rc_next_block_hash =
+//         try_fetch_relay_chain_block_hash(&rc_rpc, rc_next_block_number).await?;
+
+//     fetch_asset_hub_block_hash_from_relay_chain(onet, rc_next_block_number, rc_next_block_hash)
+//         .await
+// }
