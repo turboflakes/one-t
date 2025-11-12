@@ -28,6 +28,7 @@ pub use asset_hub_runtime::{
     balances::storage::types::total_issuance::TotalIssuance,
     nomination_pools::storage::types::bonded_pools::BondedPools,
     nomination_pools::storage::types::metadata::Metadata as PoolMetadata,
+    parachain_system::calls::types::SetValidationData,
     runtime_types::bounded_collections::bounded_vec::BoundedVec,
     runtime_types::frame_system::AccountInfo,
     runtime_types::pallet_balances::types::AccountData,
@@ -342,4 +343,18 @@ pub async fn fetch_total_issuance(
         .fetch(&addr)
         .await?
         .ok_or_else(|| OnetError::from(format!("Total issuance not found at block hash {hash}")))
+}
+
+/// Fetch the RC parent block number from the persisted validation data in the AH block
+pub async fn fetch_relay_parent_block_number(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<u64, OnetError> {
+    let extrinsics = api.blocks().at(hash).await?.extrinsics().await?;
+    for res in extrinsics.find::<SetValidationData>() {
+        let extrinsic = res?;
+        return Ok(extrinsic.value.data.validation_data.relay_parent_number as u64);
+    }
+
+    return Err(OnetError::RelayParentNumber(hash));
 }

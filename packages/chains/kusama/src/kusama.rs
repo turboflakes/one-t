@@ -43,8 +43,8 @@ use onet_asset_hub_kusama::{
     fetch_account_info, fetch_active_era_info, fetch_bonded_controller_account, fetch_bonded_pools,
     fetch_era_reward_points, fetch_eras_total_stake, fetch_eras_validator_reward,
     fetch_first_session_from_active_era, fetch_last_pool_id, fetch_ledger_from_controller,
-    fetch_nominators, fetch_own_stake_via_stash, fetch_pool_metadata, fetch_total_issuance,
-    AssetHubCall, NominationPoolsCall,
+    fetch_nominators, fetch_own_stake_via_stash, fetch_pool_metadata,
+    fetch_relay_parent_block_number, fetch_total_issuance, AssetHubCall, NominationPoolsCall,
 };
 use onet_cache::{
     cache_best_block, cache_board_limits_at_session, cache_finalized_block,
@@ -133,8 +133,6 @@ use relay_runtime::{
         // frame_system::AccountInfo,
         // frame_system::LastRuntimeUpgradeInfo,
         // pallet_balances::types::AccountData,
-        pallet_rc_migrator::MigrationStage,
-        pallet_staking_async_ah_client::OperatingMode,
         polkadot_parachain_primitives::primitives::Id,
         polkadot_primitives::v8::AvailabilityBitfield,
         polkadot_primitives::v8::CoreIndex,
@@ -217,27 +215,9 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     );
     info!("Start from AH Block Hash {:?}", ah_block_hash);
 
-    let is_staking_live_on_asset_hub = is_staking_live_on_asset_hub(&onet, rc_block_hash).await?;
-    warn!(
-        "Is staking Live on Asset Hub: {}",
-        is_staking_live_on_asset_hub
-    );
-
     // Fetch active era index
-    let era_index = if is_staking_live_on_asset_hub {
-        let active_era_info = fetch_active_era_info(&ah_api, ah_block_hash).await?;
-        active_era_info.index
-    } else {
-        try_fetch_active_era_info(
-            &onet,
-            &rc_api,
-            &ah_api,
-            start_block_number,
-            rc_block_hash,
-            None,
-        )
-        .await?
-    };
+    let active_era_info = fetch_active_era_info(&ah_api, ah_block_hash).await?;
+    let era_index = active_era_info.index;
 
     // Cache Nomination pools
     // try_run_cache_pools_era(era_index, false).await?;
@@ -265,31 +245,13 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     info!("Start records: {:?}", records);
 
     // Initialize subscribers records
-    initialize_records(
-        &rc_api,
-        &ah_api,
-        &mut records,
-        rc_block_hash,
-        ah_block_hash,
-        is_staking_live_on_asset_hub,
-    )
-    .await?;
+    initialize_records(&rc_api, &ah_api, &mut records, rc_block_hash, ah_block_hash).await?;
 
     // Initialize cache
     if config.cache_writer_enabled {
         let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-        let first_session_index = if is_staking_live_on_asset_hub {
-            fetch_first_session_from_active_era(&ah_api, ah_block_hash).await?
-        } else {
-            try_fetch_first_session_from_active_era(
-                &rc_api,
-                &ah_api,
-                rc_block_hash,
-                ah_block_hash,
-                era_index,
-            )
-            .await?
-        };
+        let first_session_index =
+            fetch_first_session_from_active_era(&ah_api, ah_block_hash).await?;
 
         cache_records_at_new_session(&mut cache, &records, first_session_index).await?;
         cache_records(&mut cache, &records).await?;
@@ -420,8 +382,6 @@ pub async fn process_finalized_block(
         current_metadata,
     } = setup_processing_context(onet, rc_block_number).await?;
 
-    let is_staking_live_on_asset_hub = is_staking_live_on_asset_hub(&onet, rc_block_hash).await?;
-
     // Process RC events with the parent_metadata
     process_relay_chain_events(
         &onet,
@@ -434,7 +394,6 @@ pub async fn process_finalized_block(
         rc_block_number,
         rc_block_hash,
         is_loading,
-        is_staking_live_on_asset_hub,
     )
     .await?;
 
@@ -449,15 +408,7 @@ pub async fn process_finalized_block(
 
     // Update records
     // Note: these records should be updated after the switch of session
-    track_records(
-        &rc_api,
-        &rc_rpc,
-        records,
-        rc_block_number,
-        rc_block_hash,
-        is_staking_live_on_asset_hub,
-    )
-    .await?;
+    track_records(&rc_api, &rc_rpc, records, rc_block_number, rc_block_hash).await?;
 
     let config = CONFIG.clone();
     if config.cache_writer_enabled {
@@ -590,77 +541,6 @@ async fn try_fetch_active_era_info(
     Ok(era_index)
 }
 
-async fn try_fetch_first_session_from_active_era(
-    rc_api: &OnlineClient<PolkadotConfig>,
-    ah_api: &OnlineClient<PolkadotConfig>,
-    rc_block_hash: H256,
-    ah_block_hash: H256,
-    era_index: u32,
-) -> Result<u32, OnetError> {
-    let session_index = match super::storage::fetch_first_session_from_active_era(
-        &rc_api,
-        rc_block_hash,
-        era_index,
-    )
-    .await
-    {
-        Ok(session_index) => session_index,
-        Err(err) => {
-            warn!("No longer on RC -> {err:?}");
-            match fetch_first_session_from_active_era(&ah_api, ah_block_hash).await {
-                Ok(session_index) => session_index,
-                Err(err) => {
-                    warn!("Not available on AH -> {err:?}");
-                    return Err(err);
-                }
-            }
-        }
-    };
-
-    Ok(session_index)
-}
-
-async fn try_fetch_era_reward_points(
-    rc_api: &OnlineClient<PolkadotConfig>,
-    ah_api: &OnlineClient<PolkadotConfig>,
-    rc_block_hash: H256,
-    ah_block_hash: H256,
-    era_index: u32,
-) -> Result<BTreeMap<AccountId32, Points>, OnetError> {
-    // NOTE_1: Fetch era reward points are only needed if staking is still LIVE on RC
-    // NOTE_2: When AHM is InProgress, the staking state at some point will no longer be available at RC,
-    // so we need to verify if state is already available at AH;
-    // NOTE_3: We than loop over all reward points and map them to easier retrieval later on and less storage calls
-
-    let mut era_reward_points_map: BTreeMap<AccountId32, Points> = BTreeMap::new();
-    match super::storage::fetch_era_reward_points(&rc_api, rc_block_hash, era_index).await {
-        Ok(erp) => {
-            erp.individual.iter().for_each(|(stash, points)| {
-                era_reward_points_map
-                    .entry(stash.clone())
-                    .or_insert(*points);
-            });
-        }
-        Err(err) => {
-            warn!("No longer on RC -> {err:?}");
-            match fetch_era_reward_points(&ah_api, ah_block_hash, era_index).await {
-                Ok(erp) => {
-                    erp.individual.0.iter().for_each(|(stash, points)| {
-                        era_reward_points_map
-                            .entry(stash.clone())
-                            .or_insert(*points);
-                    });
-                }
-                Err(err) => {
-                    warn!("Not available on AH -> {err:?}");
-                    return Err(err);
-                }
-            }
-        }
-    };
-    Ok(era_reward_points_map)
-}
-
 async fn process_relay_chain_events(
     onet: &Onet,
     rc_api: &OnlineClient<PolkadotConfig>,
@@ -672,7 +552,6 @@ async fn process_relay_chain_events(
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
     is_loading: bool,
-    is_staking_live_on_asset_hub: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     let events = rc_api.events().at(rc_block_hash).await?;
@@ -694,7 +573,6 @@ async fn process_relay_chain_events(
                     subscribers,
                     records,
                     is_loading,
-                    is_staking_live_on_asset_hub,
                 )
                 .await?;
             }
@@ -704,90 +582,19 @@ async fn process_relay_chain_events(
                 fetch_asset_hub_block_hash_from_relay_chain(&onet, rc_block_number, rc_block_hash)
                     .await?;
 
-            if is_staking_live_on_asset_hub {
-                process_new_session_event(
-                    &rc_api,
-                    &ah_api,
-                    records,
-                    ev.clone(),
-                    rc_block_number,
-                    rc_block_hash,
-                    ah_block_hash,
-                    is_loading,
-                    is_staking_live_on_asset_hub,
-                )
-                .await?;
-            } else {
-                // NOTE_1: Edge case while AHM is InProgress and staking is being migrated;
-                // If a NewSession event occurs we need to fetch the active era info from the Asset Hub
-                let era_index = try_fetch_active_era_info(
-                    &onet,
-                    &rc_api,
-                    &ah_api,
-                    rc_block_number,
-                    rc_block_hash,
-                    Some(records.current_era()),
-                )
-                .await?;
-
-                // NOTE: If staking is not live yet on AH, keep normal operations on RC.
-                let previous_epoch_era_index = switch_new_session(
-                    &rc_api,
-                    &ah_api,
-                    records,
-                    subscribers,
-                    ev.session_index.clone(),
-                    era_index.clone(),
-                    rc_block_number,
-                    rc_block_hash,
-                    ah_block_hash,
-                    is_staking_live_on_asset_hub,
-                )
-                .await?;
-
-                // Cache records at the start of each session
-                if config.cache_writer_enabled {
-                    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-                    let first_session_index = try_fetch_first_session_from_active_era(
-                        &rc_api,
-                        &ah_api,
-                        rc_block_hash,
-                        ah_block_hash,
-                        era_index,
-                    )
-                    .await?;
-                    cache_records_at_new_session(&mut cache, records, first_session_index).await?;
-                }
-
-                // Cache session stats records every new session
-                try_run_cache_session_stats_records_on_relay_chain(
-                    ev.session_index.clone() - 1,
-                    rc_block_number,
-                    rc_block_hash,
-                    is_loading,
-                    Some(records.current_era()),
-                )
-                .await?;
-
-                // Cache nomination pools every new session
-                try_run_cache_nomination_pools_on_relay_chain(
-                    ev.session_index.clone(),
-                    rc_block_number,
-                    rc_block_hash,
-                    Some(records.current_era()),
-                )
-                .await?;
-
-                // Run matrix reports every new session
-                try_run_matrix_reports(records, subscribers, previous_epoch_era_index, is_loading)
-                    .await?;
-            }
+            process_new_session_event(
+                &rc_api,
+                &ah_api,
+                records,
+                ev.clone(),
+                rc_block_number,
+                rc_block_hash,
+                ah_block_hash,
+                is_loading,
+            )
+            .await?;
         } else if let Some(ev) = event.as_event::<relay_runtime::staking::events::EraPaid>()? {
             info!("RC Event {:?}", ev);
-            if !is_staking_live_on_asset_hub {
-                // Note: Network public report is based on the previous era index and parent hash
-                try_run_network_report_on_relay_chain(ev.era_index, &records, is_loading).await?;
-            }
         } else if let Some(ev) = event.as_event::<RootStored>()? {
             info!("RC Event {:?}", ev);
         } else if let Some(ev) = event.as_event::<ValidatorSetReceived>()? {
@@ -797,16 +604,6 @@ async fn process_relay_chain_events(
         } else if let Some(ev) = event.as_event::<StageTransition>()? {
             info!("RC Event {:?}", ev);
         }
-    }
-
-    if !is_staking_live_on_asset_hub {
-        // Cache pool stats every 10 minutes
-        try_run_cache_nomination_pools_stats_on_relay_chain(
-            records.current_epoch(),
-            rc_block_number,
-            rc_block_hash,
-        )
-        .await?;
     }
 
     Ok(())
@@ -821,7 +618,6 @@ async fn process_new_session_event(
     rc_block_hash: H256,
     ah_block_hash: H256,
     is_loading: bool,
-    is_staking_live_on_asset_hub: bool,
 ) -> Result<(), OnetError> {
     process_new_session(
         &rc_api,
@@ -831,7 +627,6 @@ async fn process_new_session_event(
         rc_block_number,
         rc_block_hash,
         ah_block_hash,
-        is_staking_live_on_asset_hub,
     )
     .await?;
 
@@ -845,20 +640,22 @@ async fn process_new_session_event(
 async fn process_asset_hub_events(
     onet: &Onet,
     _rc_api: &OnlineClient<PolkadotConfig>,
-    _rc_rpc: &LegacyRpcMethods<PolkadotConfig>,
+    rc_rpc: &LegacyRpcMethods<PolkadotConfig>,
     ah_api: &OnlineClient<PolkadotConfig>,
     ah_rpc: &LegacyRpcMethods<PolkadotConfig>,
-    rc_block_number: BlockNumber,
-    rc_block_hash: H256,
+    _rc_block_number: BlockNumber,
+    _rc_block_hash: H256,
     ah_block_hash: H256,
     subscribers: &mut Subscribers,
     records: &mut Records,
     is_loading: bool,
-    is_staking_live_on_asset_hub: bool,
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     let (ah_block_number, ah_parent_block_hash) =
         fetch_asset_hub_block_info(ah_rpc, ah_block_hash).await?;
+
+    // Fetch the RC Parent block
+    let rc_parent_number = fetch_relay_parent_block_number(ah_api, ah_block_hash).await?;
 
     let events = ah_api.events().at(ah_block_hash).await?;
 
@@ -871,24 +668,26 @@ async fn process_asset_hub_events(
                 ev.active_era,
                 subscribers,
                 records,
-                rc_block_number,
+                rc_parent_number,
                 Some(ah_block_number),
             )?;
 
-            // Cache records at the start of each session
-            if config.cache_writer_enabled {
-                let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-                let first_session_index =
-                    fetch_first_session_from_active_era(&ah_api, ah_block_hash).await?;
-                cache_records_at_new_session(&mut cache, records, first_session_index).await?;
-            }
+            // Init cache session records every new session
+            try_run_init_cache_records_at_new_session(onet, ah_block_hash, records).await?;
 
             // Cache session stats records every new session with data collected
-            // from the parent AH block hash
+            // at last block of the session (Grandparent RC block number)
+            let rc_grandparent_block_hash =
+                fetch_relay_chain_block_hash(rc_rpc, rc_parent_number - 1).await?;
+
+            let rc_parent_block_hash =
+                try_fetch_relay_chain_block_hash(&rc_rpc, rc_parent_number).await?;
+
             try_run_cache_session_stats_records(
                 ev.starting_session - 1,
-                rc_block_number,
-                rc_block_hash,
+                rc_parent_number,
+                rc_parent_block_hash,
+                rc_grandparent_block_hash,
                 ah_block_hash,
                 ah_parent_block_hash,
                 is_loading,
@@ -906,10 +705,8 @@ async fn process_asset_hub_events(
             info!("AH Event {:?}", ev);
         } else if let Some(ev) = event.as_event::<asset_hub_runtime::staking::events::EraPaid>()? {
             info!("AH Event {:?}", ev);
-            if is_staking_live_on_asset_hub {
-                // Note: Network public report is based on the previous era index and parent hash
-                try_run_network_report(ev.era_index, &records, is_loading).await?;
-            }
+            // Note: Network public report is based on the previous era index and parent hash
+            try_run_network_report(ev.era_index, &records, is_loading).await?;
         } else if let Some(ev) = event.as_event::<SessionReportReceived>()? {
             info!("AH Event {:?}", ev);
         } else if let Some(ev) = event.as_event::<OffenceReceived>()? {
@@ -924,17 +721,11 @@ async fn process_asset_hub_events(
         // || pallet == "MultiBlockUnsigned"
     }
 
-    records.set_asset_hub_block_number(ah_block_number, rc_block_number);
+    records.set_asset_hub_block_number(ah_block_number, rc_parent_number);
 
-    if is_staking_live_on_asset_hub {
-        // Cache pool stats every 10 minutes
-        try_run_cache_nomination_pools_stats(
-            records.current_epoch(),
-            ah_block_number,
-            ah_block_hash,
-        )
+    // Cache pool stats every 10 minutes
+    try_run_cache_nomination_pools_stats(records.current_epoch(), ah_block_number, ah_block_hash)
         .await?;
-    }
 
     // Cache finalized block
     if config.cache_writer_enabled {
@@ -955,7 +746,6 @@ pub async fn switch_new_session(
     rc_block_number: u64,
     rc_block_hash: H256,
     ah_block_hash: H256,
-    is_staking_live_on_asset_hub: bool,
 ) -> Result<EraIndex, OnetError> {
     let config = CONFIG.clone();
 
@@ -977,15 +767,7 @@ pub async fn switch_new_session(
     }
 
     // Initialize records for new epoch
-    initialize_records(
-        &rc_api,
-        &ah_api,
-        records,
-        rc_block_hash,
-        ah_block_hash,
-        is_staking_live_on_asset_hub,
-    )
-    .await?;
+    initialize_records(&rc_api, &ah_api, records, rc_block_hash, ah_block_hash).await?;
 
     // Remove older keys, default is maximum_history_eras + 1
     records.remove(EpochKey(
@@ -1011,22 +793,13 @@ pub async fn process_new_session(
     rc_block_number: u64,
     rc_block_hash: H256,
     ah_block_hash: H256,
-    is_staking_live_on_asset_hub: bool,
 ) -> Result<(), OnetError> {
     // Update records current Epoch
     records.set_new_epoch(new_session_index);
     // Update records current block number
     records.set_relay_chain_block_number(rc_block_number.into());
     // Initialize records for new epoch
-    initialize_records(
-        &rc_api,
-        &ah_api,
-        records,
-        rc_block_hash,
-        ah_block_hash,
-        is_staking_live_on_asset_hub,
-    )
-    .await?;
+    initialize_records(&rc_api, &ah_api, records, rc_block_hash, ah_block_hash).await?;
 
     Ok(())
 }
@@ -1148,29 +921,11 @@ pub async fn try_run_cache_discovery_records(
 
 pub async fn initialize_records(
     rc_api: &OnlineClient<PolkadotConfig>,
-    ah_api: &OnlineClient<PolkadotConfig>,
+    _ah_api: &OnlineClient<PolkadotConfig>,
     records: &mut Records,
     rc_block_hash: H256,
-    ah_block_hash: H256,
-    is_staking_live_on_asset_hub: bool,
+    _ah_block_hash: H256,
 ) -> Result<(), OnetError> {
-    // NOTE: Fetch era reward points are only needed if staking is still LIVE on RC
-    // When AHM is InProgress, the staking state at some point will no longer be available at RC,
-    // So we need to verify if state is already available at AH
-    let era_reward_points_map = if !is_staking_live_on_asset_hub {
-        let m = try_fetch_era_reward_points(
-            &rc_api,
-            &ah_api,
-            rc_block_hash,
-            ah_block_hash,
-            records.current_era(),
-        )
-        .await?;
-        Some(m)
-    } else {
-        None
-    };
-
     // Fetch active validators
     let authorities = super::storage::fetch_authorities(&rc_api, rc_block_hash).await?;
 
@@ -1217,24 +972,12 @@ pub async fn initialize_records(
                         {
                             if let Some(address) = authorities.get(*auth_idx as usize) {
                                 // Fetch peer points
-                                let points = if is_staking_live_on_asset_hub {
-                                    super::storage::fetch_validator_points(
-                                        &rc_api,
-                                        rc_block_hash,
-                                        address.clone(),
-                                    )
-                                    .await?
-                                } else {
-                                    if let Some(ref erp) = era_reward_points_map {
-                                        if let Some(points) = erp.get(&address) {
-                                            *points
-                                        } else {
-                                            0
-                                        }
-                                    } else {
-                                        0
-                                    }
-                                };
+                                let points = super::storage::fetch_validator_points(
+                                    &rc_api,
+                                    rc_block_hash,
+                                    address.clone(),
+                                )
+                                .await?;
 
                                 // Define AuthorityRecord
                                 let authority_record =
@@ -1288,20 +1031,9 @@ pub async fn initialize_records(
                 }
             }
         } else {
-            let points = if is_staking_live_on_asset_hub {
+            let points =
                 super::storage::fetch_validator_points(&rc_api, rc_block_hash, stash.clone())
-                    .await?
-            } else {
-                if let Some(ref erp) = era_reward_points_map {
-                    if let Some(points) = erp.get(&stash) {
-                        *points
-                    } else {
-                        0
-                    }
-                } else {
-                    0
-                }
-            };
+                    .await?;
 
             let authority_record =
                 AuthorityRecord::with_index_address_and_points(auth_idx, stash.clone(), points);
@@ -1359,71 +1091,6 @@ async fn fetch_and_track_authority_points(
                     para_record.update_points(
                         latest_points_collected,
                         block_authority_index == authority_idx,
-                    );
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Fetch validator points and track points collected per authority method to be used BEFORE AHM
-async fn fetch_and_track_authority_points_before_ahm(
-    api: &OnlineClient<PolkadotConfig>,
-    records: &mut Records,
-    backing_votes: &OnChainVotes,
-    block_authority_index: AuthorityIndex,
-    session_index: SessionIndex,
-    block_hash: H256,
-) -> Result<(), OnetError> {
-    let era_reward_points_addr = relay_runtime::storage()
-        .staking()
-        .eras_reward_points(records.current_era());
-    if let Some(era_reward_points) = api
-        .storage()
-        .at(block_hash)
-        .fetch(&era_reward_points_addr)
-        .await?
-    {
-        if let Some(authorities) = records.get_authorities(Some(EpochKey(session_index))) {
-            // Find groupIdx and peers for each authority
-            for authority_idx in authorities.iter() {
-                let mut latest_points_collected: u32 = 0;
-
-                if let Some(authority_record) =
-                    records.get_mut_authority_record(*authority_idx, Some(backing_votes.session))
-                {
-                    if authority_record.address().is_some() {
-                        // Collect current points
-                        let current_points = if let Some((_s, points)) = era_reward_points
-                            .individual
-                            .iter()
-                            .find(|(s, _p)| s == authority_record.address().unwrap())
-                        {
-                            *points
-                        } else {
-                            0
-                        };
-
-                        // Update authority current points and get the difference
-                        latest_points_collected =
-                            authority_record.update_current_points(current_points);
-                    }
-                }
-
-                // Get para_record for the same on chain votes session
-                if let Some(para_record) =
-                    records.get_mut_para_record(*authority_idx, Some(backing_votes.session))
-                {
-                    // Increment current para_id latest_points_collected
-                    // and authored blocks if is the author of the finalized block
-                    // and the backing_votes session is the same as the current session
-                    // NOTE: At the first block of a session the backing_votes.session still references session().current_index - 1
-                    para_record.update_points(
-                        latest_points_collected,
-                        block_authority_index == *authority_idx
-                            && backing_votes.session == session_index,
                     );
                 }
             }
@@ -1636,7 +1303,6 @@ pub async fn track_records(
     records: &mut Records,
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
-    is_staking_live_on_asset_hub: bool,
 ) -> Result<(), OnetError> {
     // Update records current block number
     records.set_relay_chain_block_number(rc_block_number.into());
@@ -1667,26 +1333,14 @@ pub async fn track_records(
     let backing_votes = super::storage::fetch_on_chain_votes(&rc_api, rc_block_hash).await?;
 
     // Fetch and Track authority points
-    if is_staking_live_on_asset_hub {
-        fetch_and_track_authority_points(
-            &rc_api,
-            records,
-            block_authority_index,
-            session_index,
-            rc_block_hash,
-        )
-        .await?;
-    } else {
-        fetch_and_track_authority_points_before_ahm(
-            &rc_api,
-            records,
-            &backing_votes,
-            block_authority_index,
-            session_index,
-            rc_block_hash,
-        )
-        .await?;
-    }
+    fetch_and_track_authority_points(
+        &rc_api,
+        records,
+        block_authority_index,
+        session_index,
+        rc_block_hash,
+    )
+    .await?;
 
     // Track authority votes
     track_authority_votes(
@@ -3832,6 +3486,30 @@ async fn get_authority_index(
     Ok(None)
 }
 
+/// Cache records at the start of each session
+pub async fn try_run_init_cache_records_at_new_session(
+    onet: &Onet,
+    ah_block_hash: H256,
+    records: &mut Records,
+) -> Result<(), OnetError> {
+    let config = CONFIG.clone();
+    if !config.cache_writer_enabled {
+        return Ok(());
+    }
+
+    let ah_api = onet
+        .asset_hub_client()
+        .as_ref()
+        .expect("AH API to be available");
+
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+    let first_session = fetch_first_session_from_active_era(&ah_api, ah_block_hash).await?;
+
+    cache_records_at_new_session(&mut cache, records, first_session).await?;
+
+    Ok(())
+}
+
 /// Cache session stats records every new session
 /// The block hash given should be from the parent block where the
 /// `NewSession` event is present.
@@ -3839,6 +3517,7 @@ pub async fn try_run_cache_session_stats_records(
     session_index: EpochIndex,
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
+    rc_parent_block_hash: H256,
     ah_block_hash: H256,
     ah_parent_block_hash: H256,
     is_loading: bool,
@@ -3853,6 +3532,7 @@ pub async fn try_run_cache_session_stats_records(
             session_index,
             rc_block_number,
             rc_block_hash,
+            rc_parent_block_hash,
             ah_block_hash,
             ah_parent_block_hash,
             is_loading,
@@ -3872,6 +3552,7 @@ pub async fn cache_session_stats_records(
     epoch_index: EpochIndex,
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
+    rc_parent_block_hash: H256,
     ah_block_hash: H256,
     ah_parent_block_hash: H256,
     is_loading: bool,
@@ -3949,8 +3630,12 @@ pub async fn cache_session_stats_records(
         profile.is_active = authorities.contains(&stash);
 
         // calculate session mvr and avg it with previous value
-        profile.mvr =
-            try_calculate_avg_mvr_by_session_and_stash(&onet, epoch_index, stash.clone()).await?;
+        profile.mvr = try_calculate_avg_mvr_by_session_and_stash_from_cache(
+            &onet,
+            epoch_index,
+            stash.clone(),
+        )
+        .await?;
         // keep track of when mvr was updated
         if profile.mvr.is_some() {
             profile.mvr_session = Some(epoch_index);
@@ -4025,29 +3710,12 @@ pub async fn cache_session_stats_records(
     let active_era_info = fetch_active_era_info(&ah_api, ah_parent_block_hash).await?;
     let era_index = active_era_info.index;
 
-    // nss.total_reward_points = era_reward_points.total;
-
-    // NOTE: DEPRECATED era_reward_points in favor of validator points retrieved
-    // from asset_hub_staking_client.validator_points
-    //
-    // let era_reward_points = fetch_era_reward_points(&ah_api, ah_block_hash, era_index).await?;
-    // for (stash, points) in era_reward_points.individual {
-    //     validators
-    //         .iter_mut()
-    //         .filter(|v| v.stash.is_some())
-    //         .filter(|v| *(v.stash.as_ref().unwrap()) == *stash)
-    //         .for_each(|v| {
-    //             (*v).points = *points;
-    //         });
-    // }
-    //
-    // Fetch validator points from asset_hub_staking_client.validator_points
     let storage_addr = relay_runtime::storage()
         .staking_ah_client()
         .validator_points_iter();
     let mut iter = rc_api
         .storage()
-        .at(rc_block_hash)
+        .at(rc_parent_block_hash)
         .iter(storage_addr)
         .await?;
     while let Some(Ok(storage_resp)) = iter.next().await {
@@ -4060,6 +3728,25 @@ pub async fn cache_session_stats_records(
                 (*v).points = storage_resp.value;
             });
     }
+
+    // Sum all validator points aggregated during the session
+    nss.total_reward_points = validators.iter().map(|v| v.points).sum();
+
+    // NOTE: DEPRECATED era_reward_points in favor of validator points retrieved
+    // from asset_hub_staking_client.validator_points
+    //
+    // let era_reward_points = fetch_era_reward_points(&ah_api, ah_block_hash, era_index).await?;
+    // nss.total_reward_points = era_reward_points.total;
+    // for (stash, points) in era_reward_points.individual {
+    //     validators
+    //         .iter_mut()
+    //         .filter(|v| v.stash.is_some())
+    //         .filter(|v| *(v.stash.as_ref().unwrap()) == *stash)
+    //         .for_each(|v| {
+    //             (*v).points = *points;
+    //         });
+    // }
+    //
 
     // build stats
     //
@@ -4275,8 +3962,12 @@ pub async fn cache_session_stats_records_on_relay_chain(
         profile.is_active = authorities.contains(&stash);
 
         // calculate session mvr and avg it with previous value
-        profile.mvr =
-            try_calculate_avg_mvr_by_session_and_stash(&onet, epoch_index, stash.clone()).await?;
+        profile.mvr = try_calculate_avg_mvr_by_session_and_stash_from_cache(
+            &onet,
+            epoch_index,
+            stash.clone(),
+        )
+        .await?;
         // keep track of when mvr was updated
         if profile.mvr.is_some() {
             profile.mvr_session = Some(epoch_index);
@@ -4549,7 +4240,7 @@ async fn collect_nominators_data_on_relay_chain(
     Ok(nominators_map)
 }
 
-pub async fn try_calculate_avg_mvr_by_session_and_stash(
+pub async fn try_calculate_avg_mvr_by_session_and_stash_from_cache(
     onet: &Onet,
     session_index: EpochIndex,
     stash: AccountId32,
@@ -4755,50 +4446,4 @@ async fn fetch_asset_hub_block_hash_from_relay_chain(
 
     fetch_asset_hub_block_hash_from_relay_chain(onet, rc_next_block_number, rc_next_block_hash)
         .await
-}
-
-// NOTE: is_staking_live_on_asset_hub is a temporary sanity check related to
-// Asset Hub Migration and Staking operations
-pub async fn is_staking_live_on_asset_hub(
-    onet: &Onet,
-    rc_block_hash: H256,
-) -> Result<bool, OnetError> {
-    let api = onet.client().clone();
-
-    let migration_stage_addr = relay_runtime::storage().rc_migrator().rc_migration_stage();
-    let migration_stage = api
-        .storage()
-        .at(rc_block_hash)
-        .fetch(&migration_stage_addr)
-        .await?;
-
-    if let Some(stage) = migration_stage {
-        match stage {
-            MigrationStage::MigrationDone => {
-                // All staking is available at AH at this stage
-                let staking_operating_mode_addr =
-                    relay_runtime::storage().staking_ah_client().mode();
-                let staking_operating_mode = api
-                    .storage()
-                    .at(rc_block_hash)
-                    .fetch(&staking_operating_mode_addr)
-                    .await?;
-
-                if let Some(mode) = staking_operating_mode {
-                    match mode {
-                        OperatingMode::Active => {
-                            return Ok(true);
-                        }
-                        _ => {
-                            return Ok(false);
-                        }
-                    }
-                }
-            }
-            _ => {
-                return Ok(false);
-            }
-        }
-    }
-    return Ok(false);
 }
