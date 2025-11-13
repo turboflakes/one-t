@@ -373,7 +373,7 @@ pub async fn get_discovery_data(
         let key = AuthorityKey::from(original_key.to_string());
         match get_address_from_authority_key(&key, conn).await {
             Ok(stash) => {
-                warn!(
+                debug!(
                     "Discovery data not found for stash: {} key: {}",
                     stash, original_key
                 );
