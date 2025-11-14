@@ -210,9 +210,6 @@ async fn subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetError> {
         SupportedRuntime::Kusama => kusama::init_and_subscribe_on_chain_events(onet).await,
         SupportedRuntime::Paseo => paseo::init_and_subscribe_on_chain_events(onet).await,
         SupportedRuntime::Westend => westend::init_and_subscribe_on_chain_events(onet).await,
-        // SupportedRuntime::WestendNext => {
-        //     westend_next::init_and_subscribe_on_chain_events(onet).await
-        // }
-        _ => todo!(),
+        // _ => todo!(),
     }
 }
