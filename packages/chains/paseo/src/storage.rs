@@ -42,6 +42,7 @@ use crate::paseo::{
     },
 };
 
+use log::warn;
 use onet_core::error::OnetError;
 use onet_records::{EraIndex, Points};
 use subxt::{
@@ -71,17 +72,17 @@ pub async fn fetch_active_era_info(
 pub async fn fetch_first_session_from_active_era(
     api: &OnlineClient<PolkadotConfig>,
     rc_block_hash: H256,
+    era_index: u32,
 ) -> Result<u32, OnetError> {
-    let active_era = fetch_active_era_info(api, rc_block_hash).await?;
     let bonded_eras = fetch_bonded_eras(api, rc_block_hash).await?;
 
     for (era_index, session_index) in bonded_eras {
-        if era_index == active_era.index {
+        if era_index == era_index {
             return Ok(session_index);
         }
     }
     Err(OnetError::from(format!(
-        "First session not found for active era {active_era:?} at block hash {rc_block_hash:?}"
+        "First session not found for active era {era_index:?} at block hash {rc_block_hash:?}"
     )))
 }
 
@@ -279,6 +280,20 @@ pub async fn fetch_ledger_from_controller(
         })
 }
 
+/// Fetch stash own stake given a stash at the specified block hash
+pub async fn fetch_own_stake_via_stash(
+    api: &OnlineClient<PolkadotConfig>,
+    rc_block_hash: H256,
+    stash: &AccountId32,
+) -> Result<u128, OnetError> {
+    let Ok(staking_ledger) = fetch_ledger_from_controller(api, rc_block_hash, stash).await else {
+        warn!("Failed to fetch staking_ledger for stash {:?}", stash);
+        return Ok(0);
+    };
+
+    return Ok(staking_ledger.active);
+}
+
 /// Fetch the set of authorities (validators) at the specified block hash
 pub async fn fetch_authorities(
     api: &OnlineClient<PolkadotConfig>,
@@ -322,28 +337,6 @@ pub async fn fetch_validator_points(
         .fetch(&addr)
         .await?
         .map_or(Ok(0), |points| Ok(points))
-}
-
-// Fetch validator points at the specified block hash from era reward points
-// Note: this function is deprecated and will be removed in the future
-pub async fn fetch_validator_points_from_era_reward_points_deprecated(
-    stash: AccountId32,
-    era_reward_points: Option<EraRewardPoints<AccountId32>>
-) -> Result<Points, OnetError> {
-
-    let points = if let Some(ref erp) = era_reward_points {
-        if let Some((_s, points)) =
-            erp.individual.iter().find(|(s, _p)| *s == stash)
-        {
-            *points
-        } else {
-            0
-        }
-    } else {
-        0
-    };
-
-    Ok(points)
 }
 
 /// Fetch para validator groups at the specified block hash

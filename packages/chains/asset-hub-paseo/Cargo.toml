@@ -11,6 +11,7 @@ edition.workspace = true
 onet-core = { path = "../../core" }
 onet-records = { path = "../../records" }
 codec = { workspace = true }
+log = { workspace = true }
 subxt = { workspace = true }
 scale-decode = { workspace = true }
 scale-encode = { workspace = true }

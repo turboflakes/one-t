@@ -28,6 +28,7 @@ pub use asset_hub_runtime::{
     balances::storage::types::total_issuance::TotalIssuance,
     nomination_pools::storage::types::bonded_pools::BondedPools,
     nomination_pools::storage::types::metadata::Metadata as PoolMetadata,
+    parachain_system::calls::types::SetValidationData,
     runtime_types::bounded_collections::bounded_vec::BoundedVec,
     runtime_types::frame_system::AccountInfo,
     runtime_types::pallet_balances::types::AccountData,
@@ -36,9 +37,9 @@ pub use asset_hub_runtime::{
     staking::storage::types::eras_total_stake::ErasTotalStake,
     staking::storage::types::nominators::Nominators,
 };
-
+use log::warn;
 use onet_core::error::OnetError;
-use onet_records::EraIndex;
+use onet_records::{EraIndex, Points};
 use subxt::{
     utils::{AccountId32, H256},
     OnlineClient, PolkadotConfig,
@@ -228,7 +229,7 @@ pub async fn fetch_era_reward_points(
     api: &OnlineClient<PolkadotConfig>,
     ah_block_hash: H256,
     era: EraIndex,
-) -> Result<EraRewardPoints, OnetError> {
+) -> Result<Option<EraRewardPoints>, OnetError> {
     let addr = asset_hub_runtime::storage()
         .staking()
         .eras_reward_points(era);
@@ -236,12 +237,8 @@ pub async fn fetch_era_reward_points(
     api.storage()
         .at(ah_block_hash)
         .fetch(&addr)
-        .await?
-        .ok_or_else(|| {
-            OnetError::from(format!(
-                "Era reward points not found at block hash {ah_block_hash:?} and era {era}",
-            ))
-        })
+        .await
+        .map_err(|e| e.into())
 }
 
 /// Fetch controller bonded account given a stash at the specified block hash
@@ -282,6 +279,20 @@ pub async fn fetch_ledger_from_controller(
         })
 }
 
+/// Fetch stash own stake given a stash at the specified block hash
+pub async fn fetch_own_stake_via_stash(
+    api: &OnlineClient<PolkadotConfig>,
+    ah_block_hash: H256,
+    stash: &AccountId32,
+) -> Result<u128, OnetError> {
+    let Ok(staking_ledger) = fetch_ledger_from_controller(api, ah_block_hash, stash).await else {
+        warn!("Failed to fetch staking_ledger for stash {:?}", stash);
+        return Ok(0);
+    };
+
+    return Ok(staking_ledger.active);
+}
+
 /// Fetch account info given a stash at the specified block hash
 pub async fn fetch_account_info(
     api: &OnlineClient<PolkadotConfig>,
@@ -297,6 +308,25 @@ pub async fn fetch_account_info(
         .ok_or_else(|| OnetError::from(format!("Account info not found at block hash {hash}")))
 }
 
+// Fetch validator points at the specified block hash from era reward points
+// Note: this function is deprecated and will be removed in the future
+pub async fn fetch_validator_points_from_era_reward_points_deprecated(
+    stash: AccountId32,
+    era_reward_points: Option<EraRewardPoints>,
+) -> Result<Points, OnetError> {
+    let points = if let Some(ref erp) = era_reward_points {
+        if let Some((_s, points)) = erp.individual.0.iter().find(|(s, _p)| *s == stash) {
+            *points
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    Ok(points)
+}
+
 /// Fetch total issuance at the specified block hash
 pub async fn fetch_total_issuance(
     api: &OnlineClient<PolkadotConfig>,
@@ -309,4 +339,18 @@ pub async fn fetch_total_issuance(
         .fetch(&addr)
         .await?
         .ok_or_else(|| OnetError::from(format!("Total issuance not found at block hash {hash}")))
+}
+
+/// Fetch the RC parent block number from the persisted validation data in the AH block
+pub async fn fetch_relay_parent_block_number(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<u64, OnetError> {
+    let extrinsics = api.blocks().at(hash).await?.extrinsics().await?;
+    for res in extrinsics.find::<SetValidationData>() {
+        let extrinsic = res?;
+        return Ok(extrinsic.value.data.validation_data.relay_parent_number as u64);
+    }
+
+    return Err(OnetError::RelayParentNumber(hash));
 }
