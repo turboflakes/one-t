@@ -1165,6 +1165,7 @@ impl AuthorityRecord {
             index: Some(index),
             address: Some(address),
             start_points,
+            old_points: start_points,
             end_points: Some(start_points),
             ..Default::default()
         }
@@ -1193,6 +1194,14 @@ impl AuthorityRecord {
             } else {
                 0
             }
+        } else {
+            self.start_points
+        }
+    }
+
+    pub fn era_points(&self) -> Points {
+        if let Some(end_points) = self.end_points {
+            end_points
         } else {
             self.start_points
         }
@@ -2235,7 +2244,7 @@ mod tests {
         assert_eq!(ar.authority_index(), Some(authority_idx));
         assert_eq!(ar.address(), Some(&account));
         assert_eq!(ar.start_points(), 300);
-        assert_eq!(ar.end_points().is_none(), false);
+        assert_eq!(ar.end_points(), Some(300));
 
         let pr = ParaRecord::with_index_group_and_peers(1, 2, vec![456, 789]);
         assert_eq!(pr.para_index(), &1);
@@ -2262,7 +2271,8 @@ mod tests {
             assert_eq!(ar.start_points(), 300);
             assert_eq!(ar.end_points().is_some(), true);
             assert_eq!(ar.end_points().unwrap(), 1900);
-            assert_eq!(ar.points(), 1900);
+            assert_eq!(ar.points(), 1600);
+            assert_eq!(ar.era_points(), 1900);
         }
 
         // Increment authored blocks and current points
