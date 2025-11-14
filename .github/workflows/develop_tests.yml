@@ -1,0 +1,42 @@
+on:
+  push:
+    branches:
+      - develop
+
+name: Rust CI - Development
+
+jobs:
+  check:
+    name: Run Tests
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install Rust latest stable
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          # TODO: Use `toolchain: stable` once wasm-bindgen-macro is stable
+          #
+          # Compiling wasm-bindgen-macro v0.2.97
+          # error[E0554]: `#![feature]` may not be used on the stable release channel
+          # Error:  --> /home/runner/.cargo/registry/src/index.crates.io-6f17d22bba15001f/wasm-bindgen-macro-0.2.97/src/lib.rs:4:5
+          #
+          toolchain: nightly
+          override: true
+          components: rustfmt, clippy
+
+      - name: Install protobuf
+        run: sudo apt-get install protobuf-compiler
+
+      - name: Run cargo test
+        uses: actions-rs/cargo@v1
+        env:
+          ONET_CONFIG_FILENAME: .env.example
+        with:
+          command: test
+
+      - name: Clean cargo target
+        uses: actions-rs/cargo@v1
+        with:
+          command: clean
