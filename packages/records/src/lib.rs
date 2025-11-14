@@ -1189,7 +1189,7 @@ impl AuthorityRecord {
     pub fn points(&self) -> Points {
         if let Some(end_points) = self.end_points {
             if end_points >= self.start_points {
-                end_points
+                end_points - self.start_points
             } else {
                 0
             }
