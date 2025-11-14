@@ -8,7 +8,7 @@ name: Rust CI - Development
 jobs:
   check:
     name: Run Tests
-    runs-on: self-hosted
+    runs-on: [self-hosted, ubuntu-latest]
     steps:
       - uses: actions/checkout@v2
 
