@@ -28,6 +28,7 @@ pub use asset_hub_runtime::{
     balances::storage::types::total_issuance::TotalIssuance,
     nomination_pools::storage::types::bonded_pools::BondedPools,
     nomination_pools::storage::types::metadata::Metadata as PoolMetadata,
+    parachain_system::calls::types::SetValidationData,
     runtime_types::bounded_collections::bounded_vec::BoundedVec,
     runtime_types::frame_system::AccountInfo,
     runtime_types::pallet_balances::types::AccountData,
@@ -170,13 +171,15 @@ pub async fn fetch_last_pool_id(
         .nomination_pools()
         .last_pool_id();
 
-    match api.storage().at(ah_block_hash).fetch(&addr).await? {
-        Some(pool_id) => Ok(pool_id),
-        None => {
-            warn!("Last pool ID not defined at block hash {ah_block_hash:?}");
-            Ok(0)
-        }
-    }
+    api.storage()
+        .at(ah_block_hash)
+        .fetch(&addr)
+        .await?
+        .ok_or_else(|| {
+            OnetError::PoolError(format!(
+                "Last pool ID not defined at block hash {ah_block_hash:?}"
+            ))
+        })
 }
 
 /// Fetch bonded pools at the specified block hash
@@ -226,7 +229,7 @@ pub async fn fetch_era_reward_points(
     api: &OnlineClient<PolkadotConfig>,
     ah_block_hash: H256,
     era: EraIndex,
-) -> Result<EraRewardPoints, OnetError> {
+) -> Result<Option<EraRewardPoints>, OnetError> {
     let addr = asset_hub_runtime::storage()
         .staking()
         .eras_reward_points(era);
@@ -234,12 +237,8 @@ pub async fn fetch_era_reward_points(
     api.storage()
         .at(ah_block_hash)
         .fetch(&addr)
-        .await?
-        .ok_or_else(|| {
-            OnetError::from(format!(
-                "Era reward points not found at block hash {ah_block_hash:?} and era {era}",
-            ))
-        })
+        .await
+        .map_err(|e| e.into())
 }
 
 /// Fetch controller bonded account given a stash at the specified block hash
@@ -340,4 +339,18 @@ pub async fn fetch_total_issuance(
         .fetch(&addr)
         .await?
         .ok_or_else(|| OnetError::from(format!("Total issuance not found at block hash {hash}")))
+}
+
+/// Fetch the RC parent block number from the persisted validation data in the AH block
+pub async fn fetch_relay_parent_block_number(
+    api: &OnlineClient<PolkadotConfig>,
+    hash: H256,
+) -> Result<u64, OnetError> {
+    let extrinsics = api.blocks().at(hash).await?.extrinsics().await?;
+    for res in extrinsics.find::<SetValidationData>() {
+        let extrinsic = res?;
+        return Ok(extrinsic.value.data.validation_data.relay_parent_number as u64);
+    }
+
+    return Err(OnetError::RelayParentNumber(hash));
 }
