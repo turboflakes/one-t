@@ -580,7 +580,7 @@ async fn get_validator_by_stash_and_index(
             "At session {} the validator address {} was not found.",
             session_index, stash
         );
-        warn!("{}", msg);
+        debug!("{}", msg);
         if hide_address {
             return Ok((
                 ValidatorResult {
