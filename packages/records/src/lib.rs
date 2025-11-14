@@ -1143,6 +1143,9 @@ pub struct AuthorityRecord {
     start_points: Points,
     #[serde(rename = "ep")]
     end_points: Option<Points>,
+    #[serde(default)]
+    #[serde(skip)]
+    old_points: Points,
     #[serde(rename = "ab")]
     authored_blocks: Vec<BlockNumber>,
     #[serde(default)]
@@ -1151,6 +1154,8 @@ pub struct AuthorityRecord {
 }
 
 impl AuthorityRecord {
+    // NOTE: The start_points should be the value earned up to the last session.
+    // If is the first session of an Era than should be zero
     pub fn with_index_address_and_points(
         index: AuthorityIndex,
         address: AccountId32,
@@ -1220,6 +1225,13 @@ impl AuthorityRecord {
         self.is_flagged
     }
 
+    // NOTE: With async RC <-> AH the current_points expected to be recieved in this function
+    // are the points earned within the current session. Before AHM the current_points expected
+    // was the aggregated points for the active era.
+    //
+    // To keep the same behavior as before AHM, we need to update end_points with the
+    // difference between the points collected in previous block (old_points)
+    // and the ones collected in the current block (current_points).
     pub fn update_current_points(&mut self, current_points: Points) -> Points {
         fn diff(current: Points, last: Points) -> Points {
             if current > last {
@@ -1229,19 +1241,39 @@ impl AuthorityRecord {
             }
         }
         if let Some(end_points) = self.end_points {
-            // Note: only update end_points if current_points > end_points
-            if current_points > end_points {
-                self.end_points = Some(current_points);
-            }
-            // calculate diff and return
-            return diff(current_points, end_points);
+            let aditional_points = diff(current_points, self.old_points);
+            self.old_points = current_points;
+            self.end_points = Some(aditional_points + end_points);
+            return aditional_points;
         } else {
-            // update end_points if None with current_points value
+            self.old_points = current_points;
             self.end_points = Some(current_points);
-            // calculate diff and return
-            return diff(current_points, self.start_points);
+            return diff(current_points, 0);
         };
     }
+
+    // pub fn DEPRECATED_update_current_points(&mut self, current_points: Points) -> Points {
+    //     fn diff(current: Points, last: Points) -> Points {
+    //         if current > last {
+    //             current - last
+    //         } else {
+    //             0
+    //         }
+    //     }
+    //     if let Some(end_points) = self.end_points {
+    //         // Note: only update end_points if current_points > end_points
+    //         if current_points > end_points {
+    //             self.end_points = Some(current_points);
+    //         }
+    //         // calculate diff and return
+    //         return diff(current_points, end_points);
+    //     } else {
+    //         // update end_points if None with current_points value
+    //         self.end_points = Some(current_points);
+    //         // calculate diff and return
+    //         return diff(current_points, self.start_points);
+    //     };
+    // }
 }
 
 impl Validity for AuthorityRecord {

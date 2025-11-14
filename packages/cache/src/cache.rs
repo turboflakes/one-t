@@ -22,7 +22,7 @@
 use crate::error::CacheError;
 use crate::limits::build_limits_from_session;
 use crate::types::{CacheKey, ChainKey, Index, Trait, Verbosity};
-use log::{info};
+use log::info;
 use onet_config::{Config, CONFIG};
 use onet_records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, EpochIndex, EraIndex, NetworkSessionStats,
@@ -354,6 +354,12 @@ async fn cache_session_stats(
         .cmd("EXPIRE")
         .arg(CacheKey::SessionByIndex(Index::Num(current_epoch.into())))
         .arg(config.cache_writer_prunning)
+        // cache current_epoch as the `current` session
+        .cmd("SET")
+        .arg(CacheKey::SessionByIndex(Index::Str(String::from(
+            "current",
+        ))))
+        .arg(current_epoch.to_string())
         .query_async::<_, ()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;

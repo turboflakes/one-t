@@ -229,7 +229,7 @@ pub async fn fetch_era_reward_points(
     api: &OnlineClient<PolkadotConfig>,
     ah_block_hash: H256,
     era: EraIndex,
-) -> Result<EraRewardPoints, OnetError> {
+) -> Result<Option<EraRewardPoints>, OnetError> {
     let addr = asset_hub_runtime::storage()
         .staking()
         .eras_reward_points(era);
@@ -237,12 +237,8 @@ pub async fn fetch_era_reward_points(
     api.storage()
         .at(ah_block_hash)
         .fetch(&addr)
-        .await?
-        .ok_or_else(|| {
-            OnetError::from(format!(
-                "Era reward points not found at block hash {ah_block_hash:?} and era {era}",
-            ))
-        })
+        .await
+        .map_err(|e| e.into())
 }
 
 /// Fetch controller bonded account given a stash at the specified block hash
