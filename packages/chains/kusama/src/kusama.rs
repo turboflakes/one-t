@@ -126,7 +126,6 @@ use relay_runtime::{
     para_scheduler::storage::types::session_start_block::SessionStartBlock,
     para_scheduler::storage::types::validator_groups::ValidatorGroups,
     paras_shared::storage::types::active_validator_indices::ActiveValidatorIndices,
-    rc_migrator::events::StageTransition,
     runtime_types::{
         // frame_system::AccountInfo,
         // frame_system::LastRuntimeUpgradeInfo,
@@ -562,8 +561,6 @@ async fn process_relay_chain_events(
             info!("RC Event {:?}", ev);
         } else if let Some(ev) = event.as_event::<NewAuthorities>()? {
             info!("RC Event NewAuthorities: {:?}", ev.authority_set.len());
-        } else if let Some(ev) = event.as_event::<StageTransition>()? {
-            info!("RC Event {:?}", ev);
         }
     }
 

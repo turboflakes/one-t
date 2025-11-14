@@ -4526,6 +4526,7 @@ dependencies = [
  "onet-matrix",
  "onet-paseo",
  "onet-polkadot",
+ "onet-westend",
  "sp-core",
  "subxt",
 ]
@@ -4583,6 +4584,19 @@ dependencies = [
 
 [[package]]
 name = "onet-asset-hub-polkadot"
+version = "1.5.0"
+dependencies = [
+ "log",
+ "onet-core",
+ "onet-records",
+ "parity-scale-codec",
+ "scale-decode",
+ "scale-encode",
+ "subxt",
+]
+
+[[package]]
+name = "onet-asset-hub-westend"
 version = "1.5.0"
 dependencies = [
  "log",
@@ -4812,6 +4826,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "onet-people-westend"
+version = "1.5.0"
+dependencies = [
+ "async-recursion",
+ "log",
+ "onet-core",
+ "onet-records",
+ "subxt",
+]
+
+[[package]]
 name = "onet-polkadot"
 version = "1.5.0"
 dependencies = [
@@ -4875,6 +4900,35 @@ dependencies = [
  "serde",
  "subxt",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "onet-westend"
+version = "1.5.0"
+dependencies = [
+ "async-recursion",
+ "async-std",
+ "hex",
+ "log",
+ "onet-api",
+ "onet-asset-hub-westend",
+ "onet-cache",
+ "onet-config",
+ "onet-core",
+ "onet-discovery",
+ "onet-dn",
+ "onet-matrix",
+ "onet-mcda",
+ "onet-people-westend",
+ "onet-pools",
+ "onet-records",
+ "onet-report",
+ "parity-scale-codec",
+ "redis",
+ "serde",
+ "serde_json",
+ "subxt",
+ "subxt-signer",
 ]
 
 [[package]]
