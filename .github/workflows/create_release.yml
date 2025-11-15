@@ -9,7 +9,7 @@ name: Rust CI - Create Release
 jobs:
   check:
     name: Create Release
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v2
 
@@ -28,7 +28,9 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install protobuf
-        run: sudo apt-get install protobuf-compiler
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends protobuf-compiler
 
       - name: Run cargo test
         uses: actions-rs/cargo@v1
