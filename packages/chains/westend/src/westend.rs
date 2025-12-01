@@ -197,7 +197,6 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     );
 
     let start_block_number = init_start_block_number(&onet).await?;
-
     // get block hash from the start block
     let rc_block_hash =
         try_fetch_relay_chain_block_hash(&rc_rpc, start_block_number.into()).await?;
@@ -3337,7 +3336,7 @@ async fn fetch_asset_hub_block_hash_from_relay_chain(
         loop {
             let parent_block_number =
                 fetch_relay_parent_block_number(&ah_api, ah_next_block_hash).await?;
-            if parent_block_number == rc_block_number {
+            if parent_block_number >= rc_block_number {
                 return Ok(ah_next_block_hash);
             }
             // Fetch AH block_number from current hash, add 1 and fetch to get the next AH hash
@@ -3359,24 +3358,3 @@ async fn fetch_asset_hub_block_hash_from_relay_chain(
     fetch_asset_hub_block_hash_from_relay_chain(onet, rc_next_block_number, rc_next_block_hash)
         .await
 }
-
-// /// Fetch the included asset hub block hash from a specified relay chain block number
-// #[async_recursion]
-// async fn fetch_asset_hub_block_hash_from_relay_chain(
-//     onet: &Onet,
-//     rc_block_number: BlockNumber,
-//     rc_block_hash: H256,
-// ) -> Result<H256, OnetError> {
-//     let rc_api = onet.relay_client().clone();
-//     let rc_rpc = onet.relay_rpc().clone();
-//     if let Some(hash) = fetch_asset_hub_block_hash(&rc_api, rc_block_hash).await? {
-//         return Ok(hash);
-//     }
-
-//     let rc_next_block_number = rc_block_number + 1;
-//     let rc_next_block_hash =
-//         try_fetch_relay_chain_block_hash(&rc_rpc, rc_next_block_number).await?;
-
-//     fetch_asset_hub_block_hash_from_relay_chain(onet, rc_next_block_number, rc_next_block_hash)
-//         .await
-// }
