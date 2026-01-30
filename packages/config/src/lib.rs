@@ -107,6 +107,11 @@ fn default_maximum_reports() -> u32 {
     6
 }
 
+/// provides default value for maximum_fetch_retries if ONET_MAXIMUM_FETCH_RETRIES env var is not set
+fn default_maximum_fetch_retries() -> u32 {
+    100
+}
+
 /// provides default value for callout_epoch_rate if ONET_MATRIX_CALLOUT_EPOCH_RATE env var is not set
 fn default_matrix_callout_epoch_rate() -> u32 {
     6
@@ -322,6 +327,8 @@ pub struct Config {
     pub blocks_where_metadata_is_fetched_from_previous_block: Vec<String>,
     #[serde(default = "default_epoch_rate_threshold")]
     pub epoch_rate_threshold: u32,
+    #[serde(default = "default_maximum_fetch_retries")]
+    pub maximum_fetch_retries: u32,
     // ranking
     #[serde(default = "default_maximum_top_ranking")]
     pub maximum_top_ranking: u32,

@@ -3219,6 +3219,38 @@ async fn fetch_asset_hub_block_hash(
         })
 }
 
+/// Try to fetch asset hub block hash from a specified block number, wait if not available
+/// Note: Cap retries up to 100 times ~= 10minutes
+async fn try_fetch_asset_hub_block_hash(
+    rpc: &LegacyRpcMethods<PolkadotConfig>,
+    block_number: BlockNumber,
+) -> Result<H256, OnetError> {
+    let config = CONFIG.clone();
+    let mut retries = config.maximum_fetch_retries;
+    while retries > 0 {
+        match fetch_asset_hub_block_hash(rpc, block_number).await {
+            Ok(hash) => {
+                return Ok(hash);
+            }
+            Err(err) => {
+                if retries == 1 {
+                    // Last retry, return the error
+                    return Err(OnetError::from(format!("{err} after {} retries", config.maximum_fetch_retries)));
+                }
+                warn!(
+                    "{err} -> Waiting 6 seconds and retrying ({} retries left)",
+                    retries - 1
+                );
+                async_std::task::sleep(std::time::Duration::from_secs(6)).await;
+                retries -= 1;
+            }
+        };
+    }
+    Err(OnetError::from(format!(
+        "Asset hub block hash not available at block number {block_number} after 100 retries"
+    )))
+}
+
 /// Fetch asset hub block header info at the specified block hash
 async fn fetch_asset_hub_block_info(
     rpc: &LegacyRpcMethods<PolkadotConfig>,
@@ -3240,7 +3272,8 @@ async fn try_fetch_asset_hub_block_info(
     rpc: &LegacyRpcMethods<PolkadotConfig>,
     hash: H256,
 ) -> Result<(BlockNumber, H256), OnetError> {
-    let mut retries = 100;
+    let config = CONFIG.clone();
+    let mut retries = config.maximum_fetch_retries;
     while retries > 0 {
         match fetch_asset_hub_block_info(rpc, hash).await {
             Ok(info) => {
@@ -3249,7 +3282,7 @@ async fn try_fetch_asset_hub_block_info(
             Err(err) => {
                 if retries == 1 {
                     // Last retry, return the error
-                    return Err(OnetError::from(format!("{err} after 100 retries")));
+                    return Err(OnetError::from(format!("{err} after {} retries", config.maximum_fetch_retries)));
                 }
                 warn!(
                     "{err} -> Waiting 6 seconds and retrying ({} retries left)",
@@ -3285,7 +3318,8 @@ async fn try_fetch_relay_chain_block_hash(
     rpc: &LegacyRpcMethods<PolkadotConfig>,
     block_number: BlockNumber,
 ) -> Result<H256, OnetError> {
-    let mut retries = 100;
+    let config = CONFIG.clone();
+    let mut retries = config.maximum_fetch_retries;
     while retries > 0 {
         match fetch_relay_chain_block_hash(rpc, block_number).await {
             Ok(hash) => {
@@ -3294,7 +3328,7 @@ async fn try_fetch_relay_chain_block_hash(
             Err(err) => {
                 if retries == 1 {
                     // Last retry, return the error
-                    return Err(OnetError::from(format!("{err} after 100 retries")));
+                    return Err(OnetError::from(format!("{err} after {} retries", config.maximum_fetch_retries)));
                 }
                 warn!(
                     "{err} -> Waiting 6 seconds and retrying ({} retries left)",
@@ -3348,7 +3382,7 @@ async fn fetch_asset_hub_block_hash_from_relay_chain(
                 Some(n + 1)
             };
             let ah_block_number = ah_block_number_opt.unwrap();
-            ah_next_block_hash = fetch_asset_hub_block_hash(&ah_rpc, ah_block_number).await?;
+            ah_next_block_hash = try_fetch_asset_hub_block_hash(&ah_rpc, ah_block_number).await?;
         }
     }
     let rc_rpc = onet.relay_rpc().clone();
