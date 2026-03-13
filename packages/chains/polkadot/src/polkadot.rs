@@ -3235,7 +3235,10 @@ async fn try_fetch_asset_hub_block_hash(
             Err(err) => {
                 if retries == 1 {
                     // Last retry, return the error
-                    return Err(OnetError::from(format!("{err} after {} retries", config.maximum_fetch_retries)));
+                    return Err(OnetError::from(format!(
+                        "{err} after {} retries",
+                        config.maximum_fetch_retries
+                    )));
                 }
                 warn!(
                     "{err} -> Waiting 6 seconds and retrying ({} retries left)",
@@ -3282,7 +3285,10 @@ async fn try_fetch_asset_hub_block_info(
             Err(err) => {
                 if retries == 1 {
                     // Last retry, return the error
-                    return Err(OnetError::from(format!("{err} after {} retries", config.maximum_fetch_retries)));
+                    return Err(OnetError::from(format!(
+                        "{err} after {} retries",
+                        config.maximum_fetch_retries
+                    )));
                 }
                 warn!(
                     "{err} -> Waiting 6 seconds and retrying ({} retries left)",
@@ -3328,7 +3334,10 @@ async fn try_fetch_relay_chain_block_hash(
             Err(err) => {
                 if retries == 1 {
                     // Last retry, return the error
-                    return Err(OnetError::from(format!("{err} after {} retries", config.maximum_fetch_retries)));
+                    return Err(OnetError::from(format!(
+                        "{err} after {} retries",
+                        config.maximum_fetch_retries
+                    )));
                 }
                 warn!(
                     "{err} -> Waiting 6 seconds and retrying ({} retries left)",

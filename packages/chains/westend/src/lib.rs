@@ -20,5 +20,5 @@
 // SOFTWARE.
 //
 pub mod custom_types;
-pub mod westend;
 pub mod storage;
+pub mod westend;

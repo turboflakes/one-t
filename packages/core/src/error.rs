@@ -21,8 +21,8 @@
 
 use codec;
 use std::{str::Utf8Error, string::String};
-use subxt_metadata::TryFromError as MetadataTryFromError;
 use subxt::utils::H256;
+use subxt_metadata::TryFromError as MetadataTryFromError;
 use thiserror::Error;
 
 /// On specific error messages
