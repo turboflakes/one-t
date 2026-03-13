@@ -131,11 +131,11 @@ use relay_runtime::{
         // frame_system::LastRuntimeUpgradeInfo,
         // pallet_balances::types::AccountData,
         polkadot_parachain_primitives::primitives::Id,
-        polkadot_primitives::v8::AvailabilityBitfield,
-        polkadot_primitives::v8::CoreIndex,
-        polkadot_primitives::v8::DisputeStatement,
-        polkadot_primitives::v8::ValidatorIndex,
-        polkadot_primitives::v8::ValidityAttestation,
+        polkadot_primitives::v9::AvailabilityBitfield,
+        polkadot_primitives::v9::CoreIndex,
+        polkadot_primitives::v9::DisputeStatement,
+        polkadot_primitives::v9::ValidatorIndex,
+        polkadot_primitives::v9::ValidityAttestation,
         // polkadot_runtime_parachains::scheduler::common::Assignment,
         // polkadot_runtime_parachains::scheduler::pallet::CoreOccupied,
         sp_authority_discovery::app::Public,
@@ -3235,7 +3235,10 @@ async fn try_fetch_asset_hub_block_hash(
             Err(err) => {
                 if retries == 1 {
                     // Last retry, return the error
-                    return Err(OnetError::from(format!("{err} after {} retries", config.maximum_fetch_retries)));
+                    return Err(OnetError::from(format!(
+                        "{err} after {} retries",
+                        config.maximum_fetch_retries
+                    )));
                 }
                 warn!(
                     "{err} -> Waiting 6 seconds and retrying ({} retries left)",
@@ -3282,7 +3285,10 @@ async fn try_fetch_asset_hub_block_info(
             Err(err) => {
                 if retries == 1 {
                     // Last retry, return the error
-                    return Err(OnetError::from(format!("{err} after {} retries", config.maximum_fetch_retries)));
+                    return Err(OnetError::from(format!(
+                        "{err} after {} retries",
+                        config.maximum_fetch_retries
+                    )));
                 }
                 warn!(
                     "{err} -> Waiting 6 seconds and retrying ({} retries left)",
@@ -3328,7 +3334,10 @@ async fn try_fetch_relay_chain_block_hash(
             Err(err) => {
                 if retries == 1 {
                     // Last retry, return the error
-                    return Err(OnetError::from(format!("{err} after {} retries", config.maximum_fetch_retries)));
+                    return Err(OnetError::from(format!(
+                        "{err} after {} retries",
+                        config.maximum_fetch_retries
+                    )));
                 }
                 warn!(
                     "{err} -> Waiting 6 seconds and retrying ({} retries left)",
