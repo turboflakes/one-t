@@ -30,10 +30,10 @@ use onet_asset_hub_polkadot::{
             pallet_staking_async::pallet::pallet::BoundedExposurePage,
             sp_arithmetic::per_things::Perbill,
         },
-        staking::events::PagedElectionProceeded,
+        // staking::events::PagedElectionProceeded,
         staking::events::SessionRotated,
-        staking_rc_client::events::OffenceReceived,
-        staking_rc_client::events::SessionReportReceived,
+        // staking_rc_client::events::OffenceReceived,
+        // staking_rc_client::events::SessionReportReceived,
     },
 };
 
@@ -116,8 +116,8 @@ pub mod relay_runtime {}
 use crate::custom_types::PreDigest;
 
 use relay_runtime::{
-    grandpa::events::NewAuthorities,
-    historical::events::RootStored,
+    // grandpa::events::NewAuthorities,
+    // historical::events::RootStored,
     // historical::events::RootsPruned,
     para_inclusion::events::CandidateIncluded,
     // para_inclusion::storage::types::v1::V1 as CoreInfo,
@@ -147,7 +147,7 @@ use relay_runtime::{
     // session::storage::types::validators::Validators as ValidatorSet,
     // staking_ah_client::events::CouldNotMergeAndDropped,
     // staking_ah_client::events::SetTooSmallAndDropped,
-    staking_ah_client::events::ValidatorSetReceived,
+    // staking_ah_client::events::ValidatorSetReceived,
     system::events::ExtrinsicFailed,
 };
 
@@ -201,6 +201,11 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     // get block hash from the start block
     let rc_block_hash =
         try_fetch_relay_chain_block_hash(&rc_rpc, start_block_number.into()).await?;
+
+    info!(
+        "Start block number: {} {}",
+        start_block_number, rc_block_hash
+    );
 
     let ah_block_hash =
         fetch_asset_hub_block_hash_from_relay_chain(onet, start_block_number.into(), rc_block_hash)
@@ -527,7 +532,16 @@ async fn process_relay_chain_events(
     let events = rc_api.events().at(rc_block_hash).await?;
 
     for event in events.iter() {
-        let event = event?;
+        let event = match event {
+            Ok(e) => e,
+            Err(err) => {
+                warn!(
+                    "Failed to decode event for RC block {} skipping: {:?}",
+                    rc_block_number, err
+                );
+                continue;
+            }
+        };
         if let Some(ev) = event.as_event::<CandidateIncluded>()? {
             if ev.0.descriptor.para_id == Id(config.asset_hub_para_id) {
                 let ah_block_hash = ev.0.descriptor.para_head;
@@ -553,15 +567,16 @@ async fn process_relay_chain_events(
                 // Cache p2p discovery
                 try_run_cache_discovery_records(&records, rc_block_hash).await?;
             }
-        } else if let Some(ev) = event.as_event::<relay_runtime::staking::events::EraPaid>()? {
-            info!("RC Event {:?}", ev);
-        } else if let Some(ev) = event.as_event::<RootStored>()? {
-            info!("RC Event {:?}", ev);
-        } else if let Some(ev) = event.as_event::<ValidatorSetReceived>()? {
-            info!("RC Event {:?}", ev);
-        } else if let Some(ev) = event.as_event::<NewAuthorities>()? {
-            info!("RC Event NewAuthorities: {:?}", ev.authority_set.len());
         }
+        // else if let Some(ev) = event.as_event::<relay_runtime::staking::events::EraPaid>()? {
+        //     info!("RC Event {:?}", ev);
+        // } else if let Some(ev) = event.as_event::<RootStored>()? {
+        //     info!("RC Event {:?}", ev);
+        // } else if let Some(ev) = event.as_event::<ValidatorSetReceived>()? {
+        //     info!("RC Event {:?}", ev);
+        // } else if let Some(ev) = event.as_event::<NewAuthorities>()? {
+        //     info!("RC Event NewAuthorities: {:?}", ev.authority_set.len());
+        // }
     }
 
     Ok(())
@@ -590,7 +605,16 @@ async fn process_asset_hub_events(
     let events = ah_api.events().at(ah_block_hash).await?;
 
     for event in events.iter() {
-        let event = event?;
+        let event = match event {
+            Ok(e) => e,
+            Err(err) => {
+                warn!(
+                    "Failed to decode event for AH block {} skipping: {:?}",
+                    ah_block_number, err
+                );
+                continue;
+            }
+        };
         if let Some(ev) = event.as_event::<SessionRotated>()? {
             info!("AH event {:?}", ev);
             let rc_parent_block_hash =
@@ -638,19 +662,18 @@ async fn process_asset_hub_events(
             // Run matrix reports every new session
             try_run_matrix_reports(records, subscribers, previous_epoch_era_index, is_loading)
                 .await?;
-        } else if let Some(ev) = event.as_event::<PagedElectionProceeded>()? {
-            info!("AH Event {:?}", ev);
         } else if let Some(ev) = event.as_event::<asset_hub_runtime::staking::events::EraPaid>()? {
             info!("AH Event {:?}", ev);
             // Note: Network public report is based on the previous era index and parent hash
             try_run_network_report(ev.era_index, &records, is_loading).await?;
-        } else if let Some(ev) = event.as_event::<SessionReportReceived>()? {
-            info!("AH Event {:?}", ev);
-        } else if let Some(ev) = event.as_event::<OffenceReceived>()? {
-            info!("AH Event {:?}", ev);
-        } else if let Some(ev) = event.as_event::<OffenceReceived>()? {
-            info!("AH Event {:?}", ev);
         }
+        // else if let Some(ev) = event.as_event::<PagedElectionProceeded>()? {
+        //     info!("AH Event {:?}", ev);
+        // } else if let Some(ev) = event.as_event::<SessionReportReceived>()? {
+        //     info!("AH Event {:?}", ev);
+        // } else if let Some(ev) = event.as_event::<OffenceReceived>()? {
+        //     info!("AH Event {:?}", ev);
+        // }
         // TODO: Handle multi_block events
         //  if pallet == "MultiBlock"
         // || pallet == "MultiBlockVerifier"
@@ -659,11 +682,9 @@ async fn process_asset_hub_events(
     }
 
     records.set_asset_hub_block_number(ah_block_number, rc_parent_number);
-
     // Cache pool stats every 10 minutes
     try_run_cache_nomination_pools_stats(records.current_epoch(), ah_block_number, ah_block_hash)
         .await?;
-
     // Cache finalized block
     if config.cache_writer_enabled {
         let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
