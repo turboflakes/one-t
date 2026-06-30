@@ -48,7 +48,7 @@ use onet_cache::{
     cache_best_block, cache_board_limits_at_session, cache_finalized_block,
     cache_network_stats_at_session, cache_nomination_pool, cache_nomination_pool_nominees,
     cache_nomination_pool_stats, cache_records, cache_records_at_new_session,
-    cache_validator_profile, cache_validator_profile_only,
+    cache_validator_profile, cache_validator_profile_only, cache_waiting_validator,
 };
 use onet_cache::{
     error::CacheError,
@@ -2839,9 +2839,6 @@ pub async fn cache_session_stats_records(
             Subset::C100
         };
 
-        // check if is in active set
-        profile.is_active = authorities.contains(&stash);
-
         // calculate session mvr and avg it with previous value
         profile.mvr = try_calculate_avg_mvr_by_session_and_stash_from_cache(
             &onet,
@@ -2872,6 +2869,14 @@ pub async fn cache_session_stats_records(
             profile.nominators_stake = nominators.iter().map(|(_, x, _)| x).sum();
             profile.nominators_raw_stake = nominators.iter().map(|(_, x, y)| x / y).sum();
             profile.nominators_counter = nominators.len().try_into().unwrap();
+        }
+
+        // check if is in active set
+        profile.is_active = authorities.contains(&stash);
+
+        // if not in active set cache as waiting validator
+        if !profile.is_active {
+            cache_waiting_validator(&mut cache, &config, &stash, epoch_index).await?;
         }
 
         cache_validator_profile(&mut cache, &config, &profile, &network, &stash, epoch_index)

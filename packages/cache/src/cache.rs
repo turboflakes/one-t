@@ -731,6 +731,27 @@ pub async fn cache_validator_profile(
     Ok(())
 }
 
+pub async fn cache_waiting_validator(
+    cache: &mut Connection,
+    config: &Config,
+    stash: &AccountId32,
+    current_epoch: EpochIndex,
+) -> Result<(), CacheError> {
+    redis::pipe()
+        .atomic()
+        .cmd("SADD")
+        .arg(CacheKey::WaitingValidatorAccountsBySession(current_epoch))
+        .arg(stash.to_string())
+        .cmd("EXPIRE")
+        .arg(CacheKey::WaitingValidatorAccountsBySession(current_epoch))
+        .arg(config.cache_writer_prunning)
+        .query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
+}
+
 pub async fn cache_validator_profile_only(
     cache: &mut Connection,
     config: &Config,

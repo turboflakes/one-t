@@ -167,6 +167,7 @@ pub enum CacheKey {
     AuthorityKeysBySessionParaOnly(EpochIndex),
     ParachainsBySession(EpochIndex),
     ValidatorAccountsBySession(EpochIndex),
+    WaitingValidatorAccountsBySession(EpochIndex),
     ValidatorProfileByAccount(AccountId32),
     // Events
     Event(ChainKey, Index),
@@ -235,6 +236,9 @@ impl std::fmt::Display for CacheKey {
             }
             Self::ValidatorAccountsBySession(session_index) => {
                 write!(f, "vas:{}", session_index)
+            }
+            Self::WaitingValidatorAccountsBySession(session_index) => {
+                write!(f, "wvas:{}", session_index)
             }
             Self::ValidatorProfileByAccount(account) => {
                 write!(f, "vpa:{}", account)
