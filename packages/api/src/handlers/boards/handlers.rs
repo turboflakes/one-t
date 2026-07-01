@@ -24,6 +24,7 @@ use crate::handlers::boards::{
     params::{Params, Quantity},
     responses::{BoardResult, BoardsResult, LimitsResult},
 };
+use crate::handlers::validators::get_validator_stashes_by_session;
 use crate::helpers::respond_json;
 use actix_web::web::{Data, Json, Query};
 use log::{debug, warn};
@@ -430,19 +431,4 @@ async fn is_session_data_available(
         .map_err(CacheError::RedisCMDError)?;
 
     Ok(exists)
-}
-
-pub async fn get_validator_stashes_by_session(
-    session_index: EpochIndex,
-    cache: Data<RedisPool>,
-) -> Result<Vec<String>, ApiError> {
-    let mut conn = get_conn(&cache).await?;
-    let key = CacheKey::ValidatorAccountsBySession(session_index);
-    let stashes: Vec<String> = redis::cmd("SMEMBERS")
-        .arg(key.clone())
-        .query_async(&mut conn as &mut Connection)
-        .await
-        .map_err(CacheError::RedisCMDError)?;
-
-    Ok(stashes)
 }

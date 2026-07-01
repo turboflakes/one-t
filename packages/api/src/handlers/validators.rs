@@ -21,7 +21,6 @@
 
 use crate::error::ApiError;
 use crate::{
-    handlers::boards::handlers::get_validator_stashes_by_session,
     helpers::respond_json,
     responses::{
         AuthorityKey, AuthorityKeyCache, CacheMap, CohortValidatorsChangedResult,
@@ -642,6 +641,19 @@ pub async fn get_validators(
             .map_err(CacheError::RedisCMDError)?,
     };
 
+    // ******************
+    //
+    // waiting validators by address and requested session
+    //
+    if params.role == Role::Waiting {
+        let res: ValidatorsResult =
+            get_waiting_validators_by_session(requested_session_index, params.show_profile, cache)
+                .await?;
+
+        return respond_json(res.into());
+    }
+
+    // set a uple session range from params or default
     let (start_session, end_session) = if params.from != 0 && params.from < params.to {
         (params.from, params.to)
     } else if params.number_last_sessions != 0 {
@@ -1609,4 +1621,70 @@ pub async fn update_cohort_validators_by_session(
         session: session_index,
         updated_counter: counter,
     })
+}
+
+/// Get waiting validators
+async fn get_waiting_validators_by_session(
+    index: EpochIndex,
+    show_profile: bool,
+    cache: Data<RedisPool>,
+) -> Result<ValidatorsResult, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+
+    let stashes = get_waiting_validator_stashes_by_session(index, cache.clone()).await?;
+
+    let mut data: Vec<ValidatorResult> = Vec::new();
+    for stash in stashes {
+        let mut val = ValidatorResult::with_address(stash.clone());
+
+        if show_profile {
+            let acc = AccountId32::from_str(&stash).map_err(|e| {
+                ApiError::BadRequest(format!("Invalid account: {:?} error: {e:?}", stash))
+            })?;
+            let profile: String = redis::cmd("GET")
+                .arg(CacheKey::ValidatorProfileByAccount(acc))
+                .query_async(&mut conn as &mut Connection)
+                .await
+                .map_err(CacheError::RedisCMDError)?;
+
+            val.profile = ValidatorProfileResult::from(profile);
+        }
+
+        data.push(val);
+    }
+
+    Ok(ValidatorsResult {
+        session: index,
+        data,
+    })
+}
+
+pub async fn get_validator_stashes_by_session(
+    index: EpochIndex,
+    cache: Data<RedisPool>,
+) -> Result<Vec<String>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+    let key = CacheKey::ValidatorAccountsBySession(index);
+    let stashes: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(key.clone())
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(stashes)
+}
+
+async fn get_waiting_validator_stashes_by_session(
+    session_index: EpochIndex,
+    cache: Data<RedisPool>,
+) -> Result<Vec<String>, ApiError> {
+    let mut conn = get_conn(&cache).await?;
+    let key = CacheKey::WaitingValidatorAccountsBySession(session_index);
+    let stashes: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(key.clone())
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(stashes)
 }
