@@ -13,7 +13,7 @@ subxt metadata --url wss://rpc.turboflakes.io:443/kusama -f bytes > packages/cha
 #subxt metadata --url wss://rpc.turboflakes.io:443/kusama --pallets System,Session,Balances,Staking,Utility,NominationPools -f bytes > packages/chains/kusama/artifacts/metadata/kusama_metadata_small.scale
 subxt metadata --url wss://rpc.turboflakes.io:443/polkadot -f bytes > packages/chains/polkadot/artifacts/metadata/polkadot_metadata.scale
 #subxt metadata --url wss://rpc.turboflakes.io:443/polkadot --pallets System,Session,Balances,Staking,Utility,NominationPools -f bytes > packages/chains/polkadot/artifacts/metadata/polkadot_metadata_small.scale
-subxt metadata --url wss://rpc.turboflakes.io:443/paseo -f bytes > packages/chains/paseo/artifacts/metadata/paseo_metadata.scale
+subxt metadata --url wss://paseo-v2.rpc.turboflakes.io:443 -f bytes > packages/chains/paseo/artifacts/metadata/paseo_metadata.scale
 #subxt metadata --url wss://rpc.turboflakes.io:443/paseo --pallets System,Session,Balances,Staking,Utility,NominationPools,Identity -f bytes > packages/chains/paseo/artifacts/metadata/paseo_metadata_small.scale
 # ****** People Chains ******
 subxt metadata --url wss://sys.turboflakes.io:443/people-westend -f bytes > packages/chains/people-westend/artifacts/metadata/people_westend_metadata.scale
@@ -24,7 +24,7 @@ subxt metadata --url wss://people-paseo.turboflakes.io:443 -f bytes > packages/c
 subxt metadata --url wss://sys.turboflakes.io:443/asset-hub-westend -f bytes > packages/chains/asset-hub-westend/artifacts/metadata/asset_hub_westend_metadata.scale
 subxt metadata --url wss://sys.turboflakes.io:443/asset-hub-kusama -f bytes > packages/chains/asset-hub-kusama/artifacts/metadata/asset_hub_kusama_metadata.scale
 subxt metadata --url wss://sys.turboflakes.io:443/asset-hub-polkadot -f bytes > packages/chains/asset-hub-polkadot/artifacts/metadata/asset_hub_polkadot_metadata.scale
-subxt metadata --url wss://sys.turboflakes.io:443/asset-hub-paseo -f bytes > packages/chains/asset-hub-paseo/artifacts/metadata/asset_hub_paseo_metadata.scale
+subxt metadata --url wss://asset-hub-paseo.rpc.turboflakes.io:443/asset-hub-paseo -f bytes > packages/chains/asset-hub-paseo/artifacts/metadata/asset_hub_paseo_metadata.scale
 # Generate runtime API client code from metadata. (Development mode only)
 
 ```bash
