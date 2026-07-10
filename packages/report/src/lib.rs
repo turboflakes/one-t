@@ -31,7 +31,7 @@ use rand::Rng;
 use regex::Regex;
 use serde::Deserialize;
 use std::{
-    convert::{TryFrom, TryInto},
+    convert::{TryFrom},
     result::Result,
 };
 
@@ -174,25 +174,25 @@ impl Network {
         let chain_name = rpc.system_chain().await?;
 
         // Get Token symbol
-        let token_symbol: String = if let Some(token_symbol) = properties.get("tokenSymbol") {
-            token_symbol.as_str().unwrap_or_default().to_string()
-        } else {
-            "ND".to_string()
-        };
+        let token_symbol: String = properties
+            .get("tokenSymbol")
+            .and_then(|v| v.as_str())
+            .unwrap_or("ND")
+            .to_string();
 
         // Get Token decimals
-        let token_decimals: u8 = if let Some(value) = properties.get("tokenDecimals") {
-            value.as_u64().unwrap_or_default().try_into().unwrap()
-        } else {
-            12
-        };
+        let token_decimals: u8 = properties
+            .get("tokenDecimals")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<u8>().ok())
+            .unwrap_or(12);
 
         // Get ss58 format
-        let ss58_format: u8 = if let Some(value) = properties.get("ss58Format") {
-            value.as_u64().unwrap_or_default().try_into().unwrap()
-        } else {
-            42
-        };
+        let ss58_format: u8 = properties
+            .get("ss58Format")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<u8>().ok())
+            .unwrap_or(42);
 
         Ok(Network {
             name: chain_name,

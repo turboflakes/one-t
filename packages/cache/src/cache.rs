@@ -602,7 +602,7 @@ async fn cache_session_by_index(
     // era session index
     let current_epoch = records.current_epoch();
     let era_session_index = if current_epoch < first_session_index {
-        current_epoch
+        0
     } else {
         1 + current_epoch - first_session_index
     };
