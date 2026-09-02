@@ -43,6 +43,11 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
+      - name: Install protobuf
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends protobuf-compiler
+
       - name: Install Rust stable toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
