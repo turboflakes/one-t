@@ -24,17 +24,9 @@ use onet_records::{BlockNumber, EpochIndex};
 use serde::Serialize;
 use subxt::utils::H256;
 
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Default, Serialize, PartialEq)]
 pub struct MetaResult {
     pub limits: String,
-}
-
-impl Default for MetaResult {
-    fn default() -> MetaResult {
-        MetaResult {
-            limits: String::default(),
-        }
-    }
 }
 
 #[derive(Debug, Serialize, PartialEq)]

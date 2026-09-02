@@ -101,11 +101,11 @@ where
         let mut intervals_as_strvec: Vec<&str> = intervals_as_csv.split(",").collect();
         intervals_as_strvec.resize(WEIGHTS_CAPACITY, "0");
         let mut intervals: Intervals = Vec::with_capacity(WEIGHTS_CAPACITY);
-        for i in 0..WEIGHTS_CAPACITY {
-            let interval_as_strvec: Vec<&str> = intervals_as_strvec[i].split(":").collect();
+        for interval_str in intervals_as_strvec.iter().take(WEIGHTS_CAPACITY) {
+            let interval_as_strvec: Vec<&str> = interval_str.split(":").collect();
             let interval = Interval {
                 min: interval_as_strvec
-                    .get(0)
+                    .first()
                     .unwrap_or(&"0")
                     .parse::<u64>()
                     .unwrap(),
@@ -134,7 +134,7 @@ where
         let mut filters: Filters = Vec::with_capacity(FILTERS_CAPACITY);
         for i in 0..FILTERS_CAPACITY {
             let filter: u8 = filters_as_strvec.get(i).unwrap_or(&"0").parse().unwrap();
-            let filter = if filter >= 1 { true } else { false };
+            let filter = filter >= 1;
             filters.push(filter);
         }
         filters

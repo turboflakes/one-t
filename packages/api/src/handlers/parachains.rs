@@ -104,7 +104,7 @@ pub async fn get_parachains(
 
     let session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
-            if String::from("current") == *index {
+            if *index == "current" {
                 redis::cmd("GET")
                     .arg(CacheKey::SessionByIndex(Index::Current))
                     .query_async(&mut conn as &mut Connection)

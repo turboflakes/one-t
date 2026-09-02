@@ -92,10 +92,7 @@ impl SupportedRuntime {
 
     // TODO: DEPRECATE
     pub fn is_dn_supported(&self) -> bool {
-        match &self {
-            // Self::Polkadot | Self::Kusama => true,
-            _ => false,
-        }
+        false
     }
 }
 

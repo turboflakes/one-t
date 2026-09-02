@@ -37,9 +37,9 @@ pub enum OnetError {
     #[error("Matrix error: {0}")]
     MatrixError(#[from] onet_matrix::error::MatrixError),
     #[error("Subxt error: {0}")]
-    SubxtError(#[from] subxt::Error),
+    SubxtError(Box<subxt::Error>),
     #[error("SubxtCore error: {0}")]
-    SubxtCoreError(#[from] subxt::ext::subxt_core::Error),
+    SubxtCoreError(Box<subxt::ext::subxt_core::Error>),
     #[error("RPC error: {0}")]
     RpcError(#[from] subxt::ext::subxt_rpcs::Error),
     #[error("Metadata error: {0}")]
@@ -70,6 +70,20 @@ pub enum OnetError {
 impl From<&str> for OnetError {
     fn from(error: &str) -> Self {
         OnetError::Other(error.into())
+    }
+}
+
+/// Convert subxt::Error to OnetError
+impl From<subxt::Error> for OnetError {
+    fn from(error: subxt::Error) -> Self {
+        OnetError::SubxtError(Box::new(error))
+    }
+}
+
+/// Convert subxt::ext::subxt_core::Error to OnetError
+impl From<subxt::ext::subxt_core::Error> for OnetError {
+    fn from(error: subxt::ext::subxt_core::Error) -> Self {
+        OnetError::SubxtCoreError(Box::new(error))
     }
 }
 

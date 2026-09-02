@@ -84,7 +84,7 @@ async fn get_requested_session(
 ) -> Result<EpochIndex, ApiError> {
     let session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
-            if String::from("current") == *index {
+            if *index == "current" {
                 get_latest_synced_session(cache.clone()).await?
             } else {
                 index.parse::<EpochIndex>().unwrap_or_default()
@@ -126,7 +126,7 @@ async fn get_synced_block_number_by_session(
     // get current era
     let era_index: u64 = redis::cmd("HGET")
         .arg(CacheKey::SessionByIndex(Index::Num(session_index.into())))
-        .arg(String::from("era".to_string()))
+        .arg("era".to_string())
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
@@ -134,7 +134,7 @@ async fn get_synced_block_number_by_session(
     // get latest synced session from current era
     let block_number: u64 = redis::cmd("HGET")
         .arg(CacheKey::EraByIndex(Index::Num(era_index)))
-        .arg(String::from(format!("synced_at_block:{}", session_index)))
+        .arg(format!("synced_at_block:{}", session_index))
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
@@ -230,7 +230,7 @@ async fn generate_board_scores(
     let config = CONFIG.clone();
     let mut conn = get_conn(&cache).await?;
 
-    let board_hash = criterias_hash(&weights, &intervals, &filters);
+    let board_hash = criterias_hash(weights, intervals, filters);
     let board_key = CacheKey::NomiBoardBySessionAndHash(session_index, board_hash);
 
     // Convert user defined weights into criteria_weights
@@ -261,7 +261,7 @@ async fn generate_board_scores(
     let stashes = get_validator_stashes_by_session(session_index, cache.clone()).await?;
 
     for stash in stashes {
-        let stash = AccountId32::from_str(&*stash.to_string()).map_err(|e| {
+        let stash = AccountId32::from_str(&stash.to_string()).map_err(|e| {
             ApiError::BadRequest(format!(
                 "Invalid account: {:?} error: {e:?}",
                 &*stash.to_string()
@@ -350,7 +350,7 @@ async fn generate_board_scores(
                 &criteria_weights,
                 chain_token_decimals,
             )?;
-            let total_score = scores.iter().fold(0_u64, |acc, x| acc + x);
+            let total_score = scores.iter().sum::<u64>();
 
             redis::pipe()
                 .atomic()

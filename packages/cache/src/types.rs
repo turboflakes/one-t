@@ -47,9 +47,10 @@ impl std::fmt::Display for Index {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Default, Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ChainKey {
+    #[default]
     RC,
     AH,
 }
@@ -60,12 +61,6 @@ impl std::fmt::Display for ChainKey {
             Self::RC => write!(f, "rc"),
             Self::AH => write!(f, "ah"),
         }
-    }
-}
-
-impl Default for ChainKey {
-    fn default() -> Self {
-        ChainKey::RC
     }
 }
 
@@ -261,16 +256,16 @@ impl std::fmt::Display for CacheKey {
             Self::QuerySessions(params) => write!(f, "qry:ses:{}", params),
             //
             Self::NomiBoardBySessionAndHash(session_index, hash) => {
-                write!(f, "nb:{}:{:#02x}", session_index, hash)
+                write!(f, "nb:{}:{:#x}", session_index, hash)
             }
             Self::NomiBoardEraBySession(session_index) => {
                 write!(f, "nb:{}:era", session_index)
             }
             Self::NomiBoardScoresBySessionAndHash(session_index, hash) => {
-                write!(f, "nb:{}:{:#02x}:scores", session_index, hash)
+                write!(f, "nb:{}:{:#x}:scores", session_index, hash)
             }
             Self::NomiBoardMetaBySessionAndHash(session_index, hash) => {
-                write!(f, "nb:{}:{:#02x}:meta", session_index, hash)
+                write!(f, "nb:{}:{:#x}:meta", session_index, hash)
             }
             Self::NomiBoardBySessionAndTrait(session_index, attribute) => {
                 write!(f, "nb:{}:{}", session_index, attribute)

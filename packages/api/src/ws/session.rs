@@ -135,7 +135,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                 // check for message with the following format
                 // { method: "subscribe_validator", params: ["stash_address"] }
 
-                let req: WsRequestMessage = serde_json::from_str(&m).unwrap_or_default();
+                let req: WsRequestMessage = serde_json::from_str(m).unwrap_or_default();
                 // TODO handle all methods
                 match req.method {
                     Methods::GetBlock => {
@@ -178,7 +178,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                     }
                     Methods::SubscribeValidator => {
                         for stash in req.params.iter() {
-                            if AccountId32::from_str(&stash).is_ok() {
+                            if AccountId32::from_str(stash).is_ok() {
                                 self.server_addr.do_send(server::Subscribe {
                                     id: self.id,
                                     topic: Topic::Validator(stash.to_string()),
@@ -246,7 +246,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                     }
                     Methods::UnsubscribeValidator => {
                         for stash in req.params.iter() {
-                            if AccountId32::from_str(&stash).is_ok() {
+                            if AccountId32::from_str(stash).is_ok() {
                                 self.server_addr.do_send(server::Unsubscribe {
                                     id: self.id,
                                     topic: Topic::Validator(stash.to_string()),

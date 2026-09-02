@@ -76,8 +76,8 @@ pub async fn fetch_first_session_from_active_era(
 ) -> Result<u32, OnetError> {
     let bonded_eras = fetch_bonded_eras(api, rc_block_hash).await?;
 
-    for (era_index, session_index) in bonded_eras {
-        if era_index == era_index {
+    for (bonded_era_index, session_index) in bonded_eras {
+        if bonded_era_index == era_index {
             return Ok(session_index);
         }
     }
@@ -291,7 +291,7 @@ pub async fn fetch_own_stake_via_stash(
         return Ok(0);
     };
 
-    return Ok(staking_ledger.active);
+    Ok(staking_ledger.active)
 }
 
 /// Fetch the set of authorities (validators) at the specified block hash
@@ -332,11 +332,7 @@ pub async fn fetch_validator_points(
         .staking_ah_client()
         .validator_points(stash);
 
-    api.storage()
-        .at(hash)
-        .fetch(&addr)
-        .await?
-        .map_or(Ok(0), |points| Ok(points))
+    api.storage().at(hash).fetch(&addr).await?.map_or(Ok(0), Ok)
 }
 
 /// Fetch para validator groups at the specified block hash

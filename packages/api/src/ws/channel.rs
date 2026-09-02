@@ -96,14 +96,14 @@ impl Channel {
     fn publish_message(&self, message: &str, skip_id: usize) {
         for (id, addr) in &self.sessions {
             if *id != skip_id {
-                let _ = addr.do_send(Message(message.to_owned()));
+                addr.do_send(Message(message.to_owned()));
             }
         }
     }
 
     fn reply_message(&self, id: usize, message: &str) {
         if let Some(addr) = self.sessions.get(&id) {
-            let _ = addr.do_send(Message(message.to_owned()));
+            addr.do_send(Message(message.to_owned()));
         }
     }
 
@@ -111,7 +111,7 @@ impl Channel {
     fn run(&self, ctx: &mut Context<Self>) {
         ctx.run_interval(BLOCK_INTERVAL, |act, ctx| {
             // stop actor if no registered sessions
-            if act.sessions.len() == 0 {
+            if act.sessions.is_empty() {
                 ctx.stop();
                 return;
             }
@@ -119,7 +119,7 @@ impl Channel {
             let topic = &act.topic;
 
             // Process each client session
-            for (client_id, _) in act.sessions.iter() {
+            for client_id in act.sessions.keys() {
                 let client_id = *client_id;
 
                 let future = async {
@@ -230,7 +230,7 @@ impl Channel {
                         } else {
                             let block_number = pushed_block_number + 1;
                             if let Ok(serialized_data) = redis::cmd("GET")
-                                .arg(CacheKey::BlockByIndexStats(Index::Num(block_number.into())))
+                                .arg(CacheKey::BlockByIndexStats(Index::Num(block_number)))
                                 .query_async::<Connection, String>(conn)
                                 .await
                             {
@@ -253,7 +253,7 @@ impl Channel {
                             - (config.blocks_per_session * (i as u32 + 1)) as u64;
                         if let Ok(serialized_data) = redis::cmd("GET")
                             .arg(CacheKey::BlockByIndexStats(Index::Num(
-                                (previous_session_block_number).into(),
+                                previous_session_block_number,
                             )))
                             .query_async::<Connection, String>(conn)
                             .await
@@ -280,7 +280,7 @@ impl Channel {
                     // cache latest pushed block
                     if let Err(e) = cache_latest_pushed_block_v2(
                         conn,
-                        &config,
+                        config,
                         &client_id,
                         cache_key.clone(),
                         finalized_block_number,
@@ -294,7 +294,7 @@ impl Channel {
                 // first time just push to clients the last finalized block
                 if let Ok(serialized_data) = redis::cmd("GET")
                     .arg(CacheKey::BlockByIndexStats(Index::Num(
-                        finalized_block_number.into(),
+                        finalized_block_number,
                     )))
                     .query_async::<Connection, String>(conn)
                     .await
@@ -317,7 +317,7 @@ impl Channel {
                     // cache latest pushed block
                     if let Err(e) = cache_latest_pushed_block_v2(
                         conn,
-                        &config,
+                        config,
                         &client_id,
                         cache_key.clone(),
                         finalized_block_number,
@@ -370,7 +370,7 @@ impl Channel {
                     // cache latest pushed block
                     if let Err(e) = cache_latest_pushed_block_v2(
                         conn,
-                        &config,
+                        config,
                         &client_id,
                         cache_key.clone(),
                         block_number,
@@ -423,7 +423,7 @@ impl Channel {
                         // cache latest pushed block
                         if let Err(e) = cache_latest_pushed_block_v2(
                             conn,
-                            &config,
+                            config,
                             &client_id,
                             cache_key.clone(),
                             block_number,
@@ -770,36 +770,30 @@ impl Handler<Get> for Channel {
         self.sessions.entry(id).or_insert(addr);
 
         // TODO handle all topics here
-        match &topic {
-            Topic::Block(block_number) => {
-                let future = async {
-                    if let Ok(mut conn) = get_conn(&self.cache).await {
-                        if let Ok(serialized_data) = redis::cmd("GET")
-                            .arg(CacheKey::BlockByIndexStats(Index::Num(
-                                (*block_number).into(),
-                            )))
-                            .query_async::<Connection, String>(&mut conn)
-                            .await
-                        {
-                            let mut block_data = CacheMap::new();
-                            block_data
-                                .insert(String::from("block_number"), block_number.to_string());
-                            block_data.insert(String::from("is_finalized"), (true).to_string());
-                            block_data.insert(String::from("stats"), serialized_data);
+        if let Topic::Block(block_number) = &topic {
+            let future = async {
+                if let Ok(mut conn) = get_conn(&self.cache).await {
+                    if let Ok(serialized_data) = redis::cmd("GET")
+                        .arg(CacheKey::BlockByIndexStats(Index::Num(*block_number)))
+                        .query_async::<Connection, String>(&mut conn)
+                        .await
+                    {
+                        let mut block_data = CacheMap::new();
+                        block_data.insert(String::from("block_number"), block_number.to_string());
+                        block_data.insert(String::from("is_finalized"), (true).to_string());
+                        block_data.insert(String::from("stats"), serialized_data);
 
-                            let resp = WsResponseMessage {
-                                r#type: String::from("block"),
-                                result: BlockResult::from(block_data),
-                            };
-                            if let Ok(serialized) = serde_json::to_string(&resp) {
-                                self.reply_message(id, &serialized);
-                            }
+                        let resp = WsResponseMessage {
+                            r#type: String::from("block"),
+                            result: BlockResult::from(block_data),
+                        };
+                        if let Ok(serialized) = serde_json::to_string(&resp) {
+                            self.reply_message(id, &serialized);
                         }
                     }
-                };
-                block_on(future);
-            }
-            _ => (),
+                }
+            };
+            block_on(future);
         }
 
         // remove address

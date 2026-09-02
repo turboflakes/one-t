@@ -91,7 +91,7 @@ pub async fn get_sessions(
                 .await
                 .map_err(CacheError::RedisCMDError)?;
 
-            if session_data.is_empty() || session_data.get("session").is_none() {
+            if session_data.is_empty() || !session_data.contains_key("session") {
                 session_data.insert(String::from("session"), session_index.to_string());
             }
 
@@ -163,7 +163,7 @@ pub async fn get_session_by_index(
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-    let index: Index = if String::from("current") == index.to_string() {
+    let index: Index = if "current" == index.to_string() {
         Index::Str(current.clone())
     } else {
         Index::Str(index.to_string())
@@ -176,7 +176,7 @@ pub async fn get_session_by_index(
         .map_err(CacheError::RedisCMDError)?;
 
     if data.is_empty() {
-        let msg = format!("Current session details not found");
+        let msg = "Current session details not found".to_string();
         warn!("{}", msg);
         return Err(ApiError::NotFound(msg));
     }

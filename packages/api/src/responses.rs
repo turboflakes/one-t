@@ -364,7 +364,7 @@ impl<'de> Deserialize<'de> for SessionResult {
             }
         }
 
-        const FIELDS: &'static [&'static str] = &[
+        const FIELDS: &[&str] = &[
             "six",
             "eix",
             "sbix",
@@ -380,6 +380,7 @@ impl<'de> Deserialize<'de> for SessionResult {
 }
 
 impl SessionResult {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         six: EpochIndex,
         eix: EraIndex,
@@ -602,7 +603,7 @@ impl<'de> Deserialize<'de> for ValidatorResult {
             }
         }
 
-        const FIELDS: &'static [&'static str] = &[
+        const FIELDS: &[&str] = &[
             "address",
             "profile",
             "session",
@@ -621,6 +622,7 @@ impl<'de> Deserialize<'de> for ValidatorResult {
 }
 
 impl ValidatorResult {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         address: String,
         profile: ValidatorProfileResult,

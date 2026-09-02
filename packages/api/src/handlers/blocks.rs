@@ -60,7 +60,7 @@ pub async fn get_blocks(
 
     let requested_session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
-            if String::from("current") == *index {
+            if *index == "current" {
                 redis::cmd("GET")
                     .arg(CacheKey::SessionByIndex(Index::Current))
                     .query_async(&mut conn as &mut Connection)
@@ -122,7 +122,7 @@ pub async fn get_finalized_block(
 ) -> Result<Json<BlockResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
-    let chain_key: ChainKey = params.chain_key.clone().into();
+    let chain_key: ChainKey = params.chain_key.clone();
 
     if let Ok(block_number) = redis::cmd("GET")
         .arg(CacheKey::FinalizedBlock(chain_key.clone()))
@@ -147,7 +147,7 @@ pub async fn get_finalized_block(
         return respond_json(data.into());
     }
 
-    let msg = format!("Finalized block not found");
+    let msg = "Finalized block not found".to_string();
     warn!("{}", msg);
     Err(ApiError::NotFound(msg))
 }
@@ -159,7 +159,7 @@ pub async fn get_best_block(
 ) -> Result<Json<BlockResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
 
-    let chain_key: ChainKey = params.chain_key.clone().into();
+    let chain_key: ChainKey = params.chain_key.clone();
 
     if let Ok(block_number) = redis::cmd("GET")
         .arg(CacheKey::BestBlock(chain_key.clone()))
@@ -173,7 +173,7 @@ pub async fn get_best_block(
         return respond_json(data.into());
     }
 
-    let msg = format!("Best block not found");
+    let msg = "Best block not found".to_string();
     warn!("{}", msg);
     Err(ApiError::NotFound(msg))
 }

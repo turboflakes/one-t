@@ -34,7 +34,7 @@ use std::collections::HashMap;
 #[rtype(result = "()")]
 pub struct Message(pub String);
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Default, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum Methods {
     GetBlock,
@@ -50,13 +50,8 @@ pub enum Methods {
     UnsubscribeParaAuthoritiesStats,
     UnsubscribeParaAuthoritiesSummary,
     UnsubscribeParachains,
+    #[default]
     NotSupported,
-}
-
-impl Default for Methods {
-    fn default() -> Self {
-        Self::NotSupported
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -82,6 +77,12 @@ pub struct Server {
     sessions: HashMap<usize, Recipient<Message>>,
     channels: HashMap<Topic, Addr<Channel>>,
     rng: ThreadRng,
+}
+
+impl Default for Server {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Server {
@@ -143,7 +144,7 @@ impl Handler<Disconnect> for Server {
         // remove address
         if self.sessions.remove(&msg.id).is_some() {
             // remove session from all channels
-            for (_, addr) in &mut self.channels {
+            for addr in self.channels.values_mut() {
                 addr.do_send(channel::Unsubscribe { id: msg.id });
             }
         }
@@ -253,7 +254,7 @@ impl Handler<Unsubscribe> for Server {
     fn handle(&mut self, msg: Unsubscribe, _: &mut Context<Self>) {
         let Unsubscribe { id, topic } = msg;
 
-        if self.sessions.get(&id).is_some() {
+        if self.sessions.contains_key(&id) {
             // unsubscribe to a channel
             if let Some(channel_addr) = self.channels.get(&topic) {
                 channel_addr.do_send(channel::Unsubscribe { id });
