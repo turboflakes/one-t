@@ -177,6 +177,8 @@ fn default_index() -> Index {
 }
 
 type Sessions = Vec<EpochIndex>;
+// NOTE: the tuple has a subset, 7 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_votes, bitfields_availability, bitfields_unavailability, score)
+type ValidatorScoreAggregator = (Subset, u32, u32, u32, u32, u32, u64, u64, u32);
 
 fn default_sessions() -> Sessions {
     vec![]
@@ -308,7 +310,7 @@ async fn get_session_authorities(
                 .map_err(CacheError::RedisCMDError)?;
 
             let acc = AccountId32::from_str(&address).map_err(|e| {
-                ApiError::BadRequest(format!("Invalid account: {:?} error: {e:?}", &address))
+                ApiError::BadRequest(format!("Invalid account: {:?} error: {e:?}", address))
             })?;
 
             let profile: String = redis::cmd("GET")
@@ -407,7 +409,7 @@ pub async fn get_discovery_data(
                 "Failed to fetch stash for key: {} and break the loop",
                 current_key
             );
-            return Ok(BTreeMap::new());
+            Ok(BTreeMap::new())
         }
     }
 }
@@ -519,23 +521,16 @@ async fn get_validator_by_authority_key(
 
     if show_profile {
         if let Some(stash) = data.get("address") {
-            if let Ok(stash) = AccountId32::from_str(&stash) {
+            if let Ok(stash) = AccountId32::from_str(stash) {
                 // NOTE: Fetching validator profile from Redis cache handling Nil cases
-                if let Ok(value) = redis::cmd("GET")
+                if let Ok(redis::Value::Data(raw_data)) = redis::cmd("GET")
                     .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
                     .query_async::<Connection, redis::Value>(&mut conn as &mut Connection)
                     .await
                 {
-                    match value {
-                        redis::Value::Data(raw_data) => {
-                            let profile: String =
-                                String::from_utf8(raw_data).expect("Data should be valid utf8");
-                            data.insert(String::from("profile"), profile);
-                        }
-                        _ => {
-                            debug!("Failed to fetch profile for: {}", stash);
-                        }
-                    }
+                    let profile: String =
+                        String::from_utf8(raw_data).expect("Data should be valid utf8");
+                    data.insert(String::from("profile"), profile);
                 } else {
                     debug!("Failed to fetch profile for: {}", stash);
                 }
@@ -624,7 +619,7 @@ pub async fn get_validators(
 
     let requested_session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
-            if String::from("current") == *index {
+            if *index == "current" {
                 redis::cmd("GET")
                     .arg(CacheKey::SessionByIndex(Index::Current))
                     .query_async(&mut conn as &mut Connection)
@@ -650,7 +645,7 @@ pub async fn get_validators(
             get_waiting_validators_by_session(requested_session_index, params.show_profile, cache)
                 .await?;
 
-        return respond_json(res.into());
+        return respond_json(res);
     }
 
     // set a uple session range from params or default
@@ -669,11 +664,11 @@ pub async fn get_validators(
     //
     // validators by address and last sessions
     //
-    if &params.address != "" && params.number_last_sessions != 0 {
+    if !params.address.is_empty() && params.number_last_sessions != 0 {
         let stash = AccountId32::from_str(&params.address).map_err(|e| {
             ApiError::BadRequest(format!(
                 "Invalid account: {:?} error: {e:?}",
-                &params.address
+                params.address
             ))
         })?;
         let mut data: Vec<ValidatorResult> = Vec::new();
@@ -694,7 +689,7 @@ pub async fn get_validators(
                 )
                 .await?;
 
-                data.push(validator_data.clone().into());
+                data.push(validator_data.clone());
 
                 if params.fetch_peers && validator_data.is_para {
                     if let Some(peers_array) = validator_data.para.get("peers") {
@@ -716,14 +711,14 @@ pub async fn get_validators(
                                         )
                                         .await?;
 
-                                        data.push(peer_data.into());
+                                        data.push(peer_data);
                                     }
                                 }
                             }
                             _ => {
                                 warn!(
                                     "Invalid peers Type for stash {} in session {}",
-                                    stash.to_string(),
+                                    stash,
                                     session_index
                                 );
                             }
@@ -769,7 +764,7 @@ pub async fn get_validators(
                         cache.clone(),
                     )
                     .await?;
-                    data.push(val.into());
+                    data.push(val);
                 }
                 i = Some(session_index + 1);
             }
@@ -806,8 +801,7 @@ pub async fn get_validators(
             // NOTE: the score is based on 7 key values, which will be aggregated in the following map tupple.
             // NOTE: the tuple has a subset, 7 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_votes, bitfields_availability, bitfields_unavailability, score)
             //
-            let mut aggregator: BTreeMap<String, (Subset, u32, u32, u32, u32, u32, u64, u64, u32)> =
-                BTreeMap::new();
+            let mut aggregator: BTreeMap<String, ValidatorScoreAggregator> = BTreeMap::new();
             let mut validators: BTreeMap<String, ValidatorResult> = BTreeMap::new();
             let mut total_epochs: u32 = 0;
             let mut i = Some(start_session);
@@ -846,12 +840,12 @@ pub async fn get_validators(
 
                                     if let Some(value) = val.para.get("bitfields") {
                                         if let Some(obj) = value.as_object() {
-                                            obj["ba"]
-                                                .as_number()
-                                                .map(|v| *ba += v.as_u64().unwrap_or(0));
-                                            obj["bu"]
-                                                .as_number()
-                                                .map(|v| *bu += v.as_u64().unwrap_or(0));
+                                            if let Some(v) = obj["ba"].as_number() {
+                                                *ba += v.as_u64().unwrap_or(0);
+                                            }
+                                            if let Some(v) = obj["bu"].as_number() {
+                                                *bu += v.as_u64().unwrap_or(0);
+                                            }
                                         }
                                     }
                                 },
@@ -877,8 +871,8 @@ pub async fn get_validators(
                     para_points / para_epochs
                 })
                 .collect();
-            let max = avg_para_points.iter().max().unwrap_or_else(|| &0);
-            let min = avg_para_points.iter().min().unwrap_or_else(|| &0);
+            let max = avg_para_points.iter().max().unwrap_or(&0);
+            let min = avg_para_points.iter().min().unwrap_or(&0);
 
             // Calculate scores & mutate validator result
             // NOTE: the tupple has a subset, 5 counters plus the final score like: (subset, para_epochs, para_points, explicit_votes, implicit_votes, missed_vote, score)
@@ -934,7 +928,7 @@ pub async fn get_validators(
 
             // Sort ranking validators by score
             aggregator_vec.sort_by(
-                |(_, (_, _, _, _, _, _, _, _, a)), (_, (_, _, _, _, _, _, _, _, b))| b.cmp(&a),
+                |(_, (_, _, _, _, _, _, _, _, a)), (_, (_, _, _, _, _, _, _, _, b))| b.cmp(a),
             );
 
             // Truncate aggregator
@@ -946,7 +940,7 @@ pub async fn get_validators(
             let mut data: Vec<ValidatorResult> = Vec::new();
             for (stash, _) in aggregator_vec {
                 if let Some(val) = validators.get(&stash) {
-                    data.push(val.clone().into());
+                    data.push(val.clone());
                 }
             }
 
@@ -1009,7 +1003,7 @@ pub async fn get_validators(
             let mut nominees_vec = Vec::from_iter(nominees);
             // Pool ranking is just based on how many times a validator is picked by pool operators has nominee
             if params.ranking == Ranking::Pools {
-                nominees_vec.sort_by(|(_, a), (_, b)| b.cmp(&a));
+                nominees_vec.sort_by(|(_, a), (_, b)| b.cmp(a));
             }
             // Truncate nominees
             if params.size > 0 {
@@ -1083,7 +1077,7 @@ pub async fn get_validators(
     )
     .await?;
 
-    respond_json(res.into())
+    respond_json(res)
 }
 
 /// Get a validator by stash
@@ -1093,7 +1087,7 @@ pub async fn get_validator_by_stash(
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
-    let stash = AccountId32::from_str(&*stash.to_string()).map_err(|e| {
+    let stash = AccountId32::from_str(&stash.to_string()).map_err(|e| {
         ApiError::BadRequest(format!(
             "Invalid account: {:?} error: {e:?}",
             &*stash.to_string()
@@ -1102,7 +1096,7 @@ pub async fn get_validator_by_stash(
 
     let session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
-            if String::from("current") == *index {
+            if *index == "current" {
                 redis::cmd("GET")
                     .arg(CacheKey::SessionByIndex(Index::Current))
                     .query_async(&mut conn as &mut Connection)
@@ -1130,7 +1124,7 @@ pub async fn get_validator_by_stash(
     )
     .await?;
 
-    respond_json(data.into())
+    respond_json(data)
 }
 
 pub async fn get_peer_by_authority(
@@ -1141,7 +1135,7 @@ pub async fn get_peer_by_authority(
     let mut conn = get_conn(&cache).await?;
     let (stash, peer_authority_index) = path.into_inner();
 
-    let stash = AccountId32::from_str(&*stash.to_string()).map_err(|e| {
+    let stash = AccountId32::from_str(&stash.to_string()).map_err(|e| {
         ApiError::BadRequest(format!(
             "Invalid account: {:?} error: {e:?}",
             &*stash.to_string()
@@ -1150,7 +1144,7 @@ pub async fn get_peer_by_authority(
 
     let session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
-            if String::from("current") == *index {
+            if *index == "current" {
                 redis::cmd("GET")
                     .arg(CacheKey::SessionByIndex(Index::Current))
                     .query_async(&mut conn as &mut Connection)
@@ -1201,7 +1195,7 @@ pub async fn get_peer_by_authority(
     )
     .await?;
 
-    respond_json(data.into())
+    respond_json(data)
 }
 
 /// Get a validator profile by stash
@@ -1210,7 +1204,7 @@ pub async fn get_validator_profile_by_stash(
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorProfileResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
-    let stash = AccountId32::from_str(&*stash.to_string()).map_err(|e| {
+    let stash = AccountId32::from_str(&stash.to_string()).map_err(|e| {
         ApiError::BadRequest(format!(
             "Invalid account: {:?} error: {e:?}",
             &*stash.to_string()
@@ -1233,7 +1227,7 @@ async fn calculate_validator_grade_by_stash(
 ) -> Result<ValidatorGradeResult, ApiError> {
     let config = CONFIG.clone();
     let mut conn = get_conn(&cache).await?;
-    let stash = AccountId32::from_str(&*stash.to_string()).map_err(|e| {
+    let stash = AccountId32::from_str(&stash.to_string()).map_err(|e| {
         ApiError::BadRequest(format!(
             "Invalid account: {:?} error: {e:?}",
             &*stash.to_string()
@@ -1243,7 +1237,7 @@ async fn calculate_validator_grade_by_stash(
     // get current session
     let requested_session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
-            if String::from("current") == *index {
+            if *index == "current" {
                 redis::cmd("GET")
                     .arg(CacheKey::SessionByIndex(Index::Current))
                     .query_async(&mut conn as &mut Connection)
@@ -1253,7 +1247,7 @@ async fn calculate_validator_grade_by_stash(
                 index.parse::<EpochIndex>().unwrap_or_default()
             }
         }
-        Index::Num(index) => (*index as u32).min(u32::MAX),
+        Index::Num(index) => *index as u32,
         _ => redis::cmd("GET")
             .arg(CacheKey::SessionByIndex(Index::Current))
             .query_async(&mut conn as &mut Connection)
@@ -1283,7 +1277,7 @@ async fn calculate_validator_grade_by_stash(
                 )
                 .await?;
 
-                data.push(validator_data.clone().into());
+                data.push(validator_data.clone());
 
                 last = Some(session_index + 1);
             }
@@ -1308,7 +1302,7 @@ async fn calculate_validator_grade_by_stash(
                 grade: Grade::NA.to_string(),
                 authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
                 para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
-                sessions_data: data.into(),
+                sessions_data: data,
                 ..Default::default()
             });
         }
@@ -1393,12 +1387,12 @@ async fn calculate_validator_grade_by_stash(
                 .filter_map(|value| serde_json::from_value::<BitfieldsRecord>(value.clone()).ok())
                 .map(|bitfields| bitfields.unavailability())
                 .sum(),
-            sessions_data: data.into(),
+            sessions_data: data,
             ..Default::default()
         });
     }
 
-    return Ok(ValidatorGradeResult {
+    Ok(ValidatorGradeResult {
         address: stash.to_string(),
         grade: grade(mvr, bur).to_string(),
         authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
@@ -1434,7 +1428,7 @@ async fn calculate_validator_grade_by_stash(
             .sum(),
         sessions: data.iter().map(|v| v.session).collect(),
         ..Default::default()
-    });
+    })
 }
 
 /// Get a validator grade by stash
@@ -1445,7 +1439,7 @@ pub async fn get_validator_grade_by_stash(
 ) -> Result<Json<ValidatorGradeResult>, ApiError> {
     let data = calculate_validator_grade_by_stash(stash.to_string(), params, cache).await?;
 
-    return respond_json(data);
+    respond_json(data)
 }
 
 /// Get list o cohorts
@@ -1481,7 +1475,7 @@ pub async fn get_cohort_validators_grades(
         data.push(tmp);
     }
 
-    return respond_json(CohortValidatorsGradesResult { cohort, data });
+    respond_json(CohortValidatorsGradesResult { cohort, data })
 }
 
 /// Get list of available eras
@@ -1530,7 +1524,7 @@ pub async fn get_era_validators_grades(
             .query_async(&mut conn as &mut Connection)
             .await
             .map_err(CacheError::RedisCMDError)?;
-        stashes.push(stash.into());
+        stashes.push(stash);
     }
 
     // Update session params used to calculate validator grades with `fn calculate_validator_grade_by_stash`
@@ -1558,11 +1552,11 @@ pub async fn get_era_validators_grades(
         data.push(tmp);
     }
 
-    return respond_json(EraValidatorsGradesResult {
+    respond_json(EraValidatorsGradesResult {
         era: era_index,
-        sessions: sessions,
+        sessions,
         data,
-    });
+    })
 }
 
 pub async fn update_cohort_validators_by_session(
@@ -1580,7 +1574,7 @@ pub async fn update_cohort_validators_by_session(
 
     let mut counter = 0;
     for stash in stashes {
-        let stash = AccountId32::from_str(&*stash.to_string()).map_err(|e| {
+        let stash = AccountId32::from_str(&stash.to_string()).map_err(|e| {
             ApiError::BadRequest(format!(
                 "Invalid account: {:?} error: {e:?}",
                 &*stash.to_string()

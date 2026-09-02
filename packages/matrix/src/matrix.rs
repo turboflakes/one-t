@@ -44,14 +44,14 @@ const MATRIX_MEDIA_URL: &str = "https://matrix.org/_matrix/media/r0";
 const MATRIX_BOT_NAME: &str = "ONE-T";
 const MATRIX_NEXT_TOKEN_FILENAME: &str = ".next_token";
 pub const MATRIX_SUBSCRIBERS_FILENAME: &str = ".subscribers";
-const PRIVATE_ROOM_PREFIX: &'static str = "onet";
+const PRIVATE_ROOM_PREFIX: &str = "onet";
 
 type AccessToken = String;
 type SyncToken = String;
 type RoomID = String;
 type EventID = String;
 type Stash = String;
-type URI = String;
+type Uri = String;
 pub type UserID = String;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
@@ -85,13 +85,13 @@ impl Room {
         let room_alias_name = define_private_room_alias_name(
             PRIVATE_ROOM_PREFIX,
             &chain.to_string(),
-            &user_id,
+            user_id,
             &config.matrix_bot_user,
         );
         let v: Vec<&str> = config.matrix_bot_user.split(":").collect();
         Room {
             room_alias_name: room_alias_name.to_string(),
-            room_alias: format!("#{}:{}", room_alias_name.to_string(), v.last().unwrap()),
+            room_alias: format!("#{}:{}", room_alias_name, v.last().unwrap()),
             ..Default::default()
         }
     }
@@ -328,7 +328,7 @@ impl Matrix {
             return Ok(());
         }
         let config = CONFIG.clone();
-        if let None = config.matrix_bot_user.find(":") {
+        if config.matrix_bot_user.find(":").is_none() {
             return Err(MatrixError::Other(format!("matrix bot user '{}' does not specify the matrix server e.g. '@your-own-bot-account:matrix.org'", config.matrix_bot_user)));
         }
         let client = self.client.clone();
@@ -461,8 +461,8 @@ impl Matrix {
                 // Join room if not already a member
                 let joined_rooms = self.get_joined_rooms().await?;
                 debug!("joined_rooms {:?}", joined_rooms);
-                if !joined_rooms.contains(&public_room_id) {
-                    self.join_room(&public_room_id).await?;
+                if !joined_rooms.contains(public_room_id) {
+                    self.join_room(public_room_id).await?;
                 }
                 self.callout_public_room_ids
                     .push(public_room_id.to_string());
@@ -517,8 +517,8 @@ impl Matrix {
 
             // Read commands from private rooms
             for private_room_id in private_rooms.iter() {
-                if let Some(commands) = self.get_commands_from_room(&private_room_id, None).await? {
-                    self.process_commands_into_room(commands, &private_room_id)
+                if let Some(commands) = self.get_commands_from_room(private_room_id, None).await? {
+                    self.process_commands_into_room(commands, private_room_id)
                         .await?;
                 }
             }
@@ -546,14 +546,14 @@ impl Matrix {
         let epoch_filename = format!("{}{}", config.data_path, EPOCH_FILENAME);
         for cmd in commands.iter() {
             match cmd {
-                Commands::Help => self.reply_help(&room_id).await?,
-                Commands::Legends => self.reply_legends(&room_id).await?,
+                Commands::Help => self.reply_help(room_id).await?,
+                Commands::Legends => self.reply_legends(room_id).await?,
                 Commands::Subscribe(report, who, stash) => {
                     match report {
                         ReportType::Validator(param) => {
                             if let Some(stash) = stash {
                                 // Verify stash
-                                if let Ok(_) = AccountId32::from_str(&stash) {
+                                if AccountId32::from_str(stash).is_ok() {
                                     let subscriber = if let Some(param) = param {
                                         // Write stash,user, param in subscribers file if doesn't already exist
                                         format!("{stash},{who},{param}\n")
@@ -570,7 +570,7 @@ impl Matrix {
                                         }
                                         if x == config.maximum_subscribers {
                                             let message = format!("⛔ The maximum number of subscribers have been reached → {}", config.maximum_subscribers);
-                                            self.send_room_message(&room_id, &message, None)
+                                            self.send_room_message(room_id, &message, None)
                                                 .await?;
 
                                             continue;
@@ -609,7 +609,7 @@ impl Matrix {
                                 } else {
                                     let message =
                                         format!("{who} try again! {stash} is an invalid address.");
-                                    self.send_room_message(&room_id, &message, None).await?;
+                                    self.send_room_message(room_id, &message, None).await?;
                                 }
                             }
                         }
@@ -629,7 +629,7 @@ impl Matrix {
                                 }
                                 if x == config.maximum_subscribers {
                                     let message = format!("⛔ The maximum number of subscribers have been reached → {}", config.maximum_subscribers);
-                                    self.send_room_message(&room_id, &message, None).await?;
+                                    self.send_room_message(room_id, &message, None).await?;
                                     continue;
                                 }
 
@@ -680,7 +680,7 @@ impl Matrix {
                                     }
                                     if x == config.maximum_subscribers {
                                         let message = format!("⛔ The maximum number of subscribers have been reached → {}", config.maximum_subscribers);
-                                        self.send_room_message(&room_id, &message, None).await?;
+                                        self.send_room_message(room_id, &message, None).await?;
                                         break;
                                     }
                                     if !subscribers.contains(&subscriber) {
@@ -896,7 +896,7 @@ impl Matrix {
 
     // Upload file
     // https://matrix.org/docs/spec/client_server/r0.6.0#m-file
-    pub fn upload_file(&self, filename: &str) -> Result<Option<URI>, MatrixError> {
+    pub fn upload_file(&self, filename: &str) -> Result<Option<Uri>, MatrixError> {
         match &self.access_token {
             Some(access_token) => {
                 let file = File::open(filename)?;
@@ -1113,7 +1113,7 @@ impl Matrix {
                                 }
                             }
                             // Cache next token
-                            let next_token = if events.end == "" {
+                            let next_token = if events.end.is_empty() {
                                 events.start
                             } else {
                                 events.end
@@ -1135,7 +1135,7 @@ impl Matrix {
                         warn!("Error fetching commands for room {}", room_id);
                         warn!("next_token_filename: {}", next_token_filename);
                         warn!("filter: {:?}", filter);
-                        warn!("matrix_url: {}", url.to_string());
+                        warn!("matrix_url: {}", url);
                         warn!("error: {:?}", e);
                         Ok(None)
                     }
@@ -1194,7 +1194,7 @@ impl Matrix {
                                 }
                             }
                             // Cache next token
-                            let next_token = if events.end == "" {
+                            let next_token = if events.end.is_empty() {
                                 events.start
                             } else {
                                 events.end
@@ -1213,7 +1213,7 @@ impl Matrix {
                     Err(e) => {
                         warn!("next_token_filename: {}", next_token_filename);
                         warn!("filter: {:?}", filter);
-                        warn!("Matrix url: {}", url.to_string());
+                        warn!("Matrix url: {}", url);
                         Err(MatrixError::ReqwestError(e))
                     }
                 }
@@ -1326,7 +1326,7 @@ impl Matrix {
         ));
 
         return self
-            .send_room_message(&room_id, &message, Some(&message))
+            .send_room_message(room_id, &message, Some(&message))
             .await;
     }
 
@@ -1423,7 +1423,7 @@ impl Matrix {
         message.push_str("<br>");
 
         return self
-            .send_room_message(&room_id, &message, Some(&message))
+            .send_room_message(room_id, &message, Some(&message))
             .await;
     }
 
@@ -1436,8 +1436,8 @@ impl Matrix {
         if self.disabled {
             return Ok(());
         }
-        let req = SendRoomMessageRequest::with_message(&message, formatted_message);
-        self.dispatch_message(&room_id, &req).await?;
+        let req = SendRoomMessageRequest::with_message(message, formatted_message);
+        self.dispatch_message(room_id, &req).await?;
         Ok(())
     }
 
@@ -1453,7 +1453,7 @@ impl Matrix {
         // Get or create user private room
         if let Some(private_room) = self.get_or_create_private_room(to_user_id).await? {
             // Send message to the private room (bot <=> user)
-            let req = SendRoomMessageRequest::with_message(&message, formatted_message);
+            let req = SendRoomMessageRequest::with_message(message, formatted_message);
             self.dispatch_message(&private_room.room_id, &req).await?;
         }
 
@@ -1471,7 +1471,7 @@ impl Matrix {
         let config = CONFIG.clone();
         // Send message to public room (public room available for the connected chain)
         if !config.matrix_public_room_disabled {
-            let req = SendRoomMessageRequest::with_message(&message, formatted_message);
+            let req = SendRoomMessageRequest::with_message(message, formatted_message);
             self.dispatch_message(&self.public_room_id, &req).await?;
         }
 
@@ -1490,8 +1490,8 @@ impl Matrix {
         // Send message to callout public rooms
         if !config.matrix_public_room_disabled {
             for room_id in self.callout_public_room_ids.iter() {
-                let req = SendRoomMessageRequest::with_message(&message, formatted_message);
-                self.dispatch_message(&room_id, &req).await?;
+                let req = SendRoomMessageRequest::with_message(message, formatted_message);
+                self.dispatch_message(room_id, &req).await?;
             }
         }
 
@@ -1511,7 +1511,7 @@ impl Matrix {
         // Get or create user private room
         if let Some(private_room) = self.get_or_create_private_room(to_user_id).await? {
             // Send message to the private room (bot <=> user)
-            let req = SendRoomMessageRequest::with_attachment(&filename, &url, file_info);
+            let req = SendRoomMessageRequest::with_attachment(filename, url, file_info);
             self.dispatch_message(&private_room.room_id, &req).await?;
         }
 

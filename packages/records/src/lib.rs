@@ -65,6 +65,28 @@ pub type FlaggedEpochs = Vec<EpochIndex>;
 pub type SS58 = String;
 pub type DisputeKind = String;
 pub type AuthorityDiscoveryKey = [u8; 32];
+pub type PreviousEpochsData = (
+    bool,
+    Option<(
+        TotalParaEpochs,
+        TotalExceptionalEpochs,
+        TotalFlaggedEpochs,
+        Ratio,
+    )>,
+);
+pub type FullEpochsData = (
+    (TotalActiveEpochs, AuthoredBlocks, Pattern),
+    Option<(
+        TotalParaEpochs,
+        Points,
+        ExplicitVotes,
+        ImplicitVotes,
+        MissedVotes,
+        CoreAssignments,
+        BitfieldsAvailability,
+        BitfieldsUnavailability,
+    )>,
+);
 pub type BlockNumberTuple = (BlockNumber, BlockNumber);
 
 // Keys to be easily used in BTreeMap
@@ -224,9 +246,10 @@ pub fn grade(mvr: f64, bur: f64) -> Grade {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Default, Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Subset {
     TVP,
+    #[default]
     NONTVP,
     C100,
     NotDefined,
@@ -240,12 +263,6 @@ impl std::fmt::Display for Subset {
             Self::C100 => write!(f, "100C"),
             Self::NotDefined => write!(f, "NotDefined"),
         }
-    }
-}
-
-impl Default for Subset {
-    fn default() -> Subset {
-        Subset::NONTVP
     }
 }
 
@@ -335,19 +352,19 @@ impl Records {
 
     pub fn start_block(&self, epoch_key: Option<EpochKey>) -> Option<&BlockNumber> {
         if let Some(epoch_key) = epoch_key {
-            return self.blocks.get(&BlockKey(epoch_key, BlockKind::Start));
+            self.blocks.get(&BlockKey(epoch_key, BlockKind::Start))
         } else {
             let epoch_key = EpochKey(self.current_epoch);
-            return self.blocks.get(&BlockKey(epoch_key, BlockKind::Start));
+            self.blocks.get(&BlockKey(epoch_key, BlockKind::Start))
         }
     }
 
     pub fn end_block(&self, epoch_key: Option<EpochKey>) -> Option<&BlockNumber> {
         if let Some(epoch_key) = epoch_key {
-            return self.blocks.get(&BlockKey(epoch_key, BlockKind::End));
+            self.blocks.get(&BlockKey(epoch_key, BlockKind::End))
         } else {
             let epoch_key = EpochKey(self.current_epoch);
-            return self.blocks.get(&BlockKey(epoch_key, BlockKind::End));
+            self.blocks.get(&BlockKey(epoch_key, BlockKind::End))
         }
     }
 
@@ -370,7 +387,7 @@ impl Records {
 
     pub fn best_block(&self) -> Option<&BlockNumber> {
         let epoch_key = EpochKey(self.current_epoch);
-        return self.blocks.get(&BlockKey(epoch_key, BlockKind::Best));
+        self.blocks.get(&BlockKey(epoch_key, BlockKind::Best))
     }
 
     pub fn set_new_epoch(&mut self, epoch: EpochIndex) {
@@ -440,15 +457,7 @@ impl Records {
         &self,
         address: &AccountId32,
         number_of_epochs: u32,
-    ) -> Option<(
-        bool,
-        Option<(
-            TotalParaEpochs,
-            TotalExceptionalEpochs,
-            TotalFlaggedEpochs,
-            Ratio,
-        )>,
-    )> {
+    ) -> Option<PreviousEpochsData> {
         if self.total_full_epochs() == 0 {
             return None;
         }
@@ -467,9 +476,7 @@ impl Records {
                 .get(&AddressKey(key.clone(), address.to_string()))
             {
                 is_active = true;
-                if let Some(para_record) = self
-                    .para_records
-                    .get(&RecordKey(key.clone(), auth_idx.clone()))
+                if let Some(para_record) = self.para_records.get(&RecordKey(key.clone(), *auth_idx))
                 {
                     para_epochs += 1;
                     let tv = para_record.total_votes();
@@ -502,22 +509,7 @@ impl Records {
         }
     }
 
-    pub fn get_data_from_all_full_epochs(
-        &self,
-        address: &AccountId32,
-    ) -> Option<(
-        (TotalActiveEpochs, AuthoredBlocks, Pattern),
-        Option<(
-            TotalParaEpochs,
-            Points,
-            ExplicitVotes,
-            ImplicitVotes,
-            MissedVotes,
-            CoreAssignments,
-            BitfieldsAvailability,
-            BitfieldsUnavailability,
-        )>,
-    )> {
+    pub fn get_data_from_all_full_epochs(&self, address: &AccountId32) -> Option<FullEpochsData> {
         if self.total_full_epochs() == 0 {
             return None;
         }
@@ -543,14 +535,13 @@ impl Records {
                 active_epochs += 1;
                 if let Some(authority_record) = self
                     .authority_records
-                    .get(&RecordKey(key.clone(), auth_idx.clone()))
+                    .get(&RecordKey(key.clone(), *auth_idx))
                 {
                     authored_blocks += authority_record.total_authored_blocks();
                     para_points += authority_record.para_points();
                     // Get para data
-                    if let Some(para_record) = self
-                        .para_records
-                        .get(&RecordKey(key.clone(), auth_idx.clone()))
+                    if let Some(para_record) =
+                        self.para_records.get(&RecordKey(key.clone(), *auth_idx))
                     {
                         para_epochs += 1;
                         explicit_votes += para_record.total_explicit_votes();
@@ -597,8 +588,7 @@ impl Records {
     pub fn is_active_at(&self, address: &AccountId32, epoch_index: EpochIndex) -> bool {
         let key = EpochKey(epoch_index);
         self.addresses
-            .get(&AddressKey(key.clone(), address.to_string()))
-            .is_some()
+            .contains_key(&AddressKey(key.clone(), address.to_string()))
     }
 
     pub fn insert_group(&mut self, group_idx: GroupIndex, authorities: Vec<AuthorityIndex>) {
@@ -606,11 +596,9 @@ impl Records {
     }
 
     pub fn get_authorities_from_group(&self, index: GroupIndex) -> Option<Vec<AuthorityIndex>> {
-        if let Some(authorities) = self.groups.get(&index) {
-            Some(authorities.iter().map(|a| *a).collect())
-        } else {
-            None
-        }
+        self.groups
+            .get(&index)
+            .map(|authorities| authorities.to_vec())
     }
 
     pub fn update_para_group(
@@ -636,9 +624,7 @@ impl Records {
         // update scheduled core and para_id to the authorities assigned to the group_idx
         if let Some(authorities) = self.get_authorities_from_group(group_idx) {
             for authority_idx in authorities.iter() {
-                if let Some(para_record) =
-                    self.get_mut_para_record(authority_idx.clone(), epoch_idx)
-                {
+                if let Some(para_record) = self.get_mut_para_record(*authority_idx, epoch_idx) {
                     para_record.update_scheduled_core(para_id, core);
                 }
             }
@@ -658,9 +644,7 @@ impl Records {
         if let Some(group_idx) = self.para_group.get(&para_id) {
             if let Some(authorities) = self.get_authorities_from_group(*group_idx) {
                 for authority_idx in authorities.iter() {
-                    if let Some(para_record) =
-                        self.get_mut_para_record(authority_idx.clone(), epoch_idx)
-                    {
+                    if let Some(para_record) = self.get_mut_para_record(*authority_idx, epoch_idx) {
                         para_record.set_core_assignment(para_id, core);
                     }
                 }
@@ -670,16 +654,14 @@ impl Records {
 
     pub fn update_core_free(&mut self, core: CoreIndex, epoch_idx: Option<EpochIndex>) {
         // update core_para map
-        if let Some(previous_para_id) = self.core_para.insert(core, None) {
-            if let Some(para_id) = previous_para_id {
-                if let Some(group_idx) = self.para_group.get(&para_id) {
-                    if let Some(authorities) = self.get_authorities_from_group(*group_idx) {
-                        for authority_idx in authorities.iter() {
-                            if let Some(para_record) =
-                                self.get_mut_para_record(authority_idx.clone(), epoch_idx)
-                            {
-                                para_record.set_core_free();
-                            }
+        if let Some(Some(para_id)) = self.core_para.insert(core, None) {
+            if let Some(group_idx) = self.para_group.get(&para_id) {
+                if let Some(authorities) = self.get_authorities_from_group(*group_idx) {
+                    for authority_idx in authorities.iter() {
+                        if let Some(para_record) =
+                            self.get_mut_para_record(*authority_idx, epoch_idx)
+                        {
+                            para_record.set_core_free();
                         }
                     }
                 }
@@ -709,9 +691,7 @@ impl Records {
         // update scheduled core and para_id to the authorities assigned to the group_idx
         if let Some(authorities) = self.get_authorities_from_group(group_idx) {
             for authority_idx in authorities.iter() {
-                if let Some(para_record) =
-                    self.get_mut_para_record(authority_idx.clone(), epoch_idx)
-                {
+                if let Some(para_record) = self.get_mut_para_record(*authority_idx, epoch_idx) {
                     para_record.set_para_id(para_id);
                 }
             }
@@ -732,9 +712,7 @@ impl Records {
             let missing: Vec<&AuthorityIndex> = b.difference(&a).collect();
 
             for authority_idx in missing {
-                if let Some(para_record) =
-                    self.get_mut_para_record(authority_idx.clone(), epoch_idx)
-                {
+                if let Some(para_record) = self.get_mut_para_record(*authority_idx, epoch_idx) {
                     para_record.inc_missed_votes(para_id);
                 }
             }
@@ -812,11 +790,9 @@ impl Records {
         } else {
             EpochKey(self.current_epoch)
         };
-        if let Some(authorities) = self.authorities.get(&key) {
-            Some(authorities.iter().map(|a| *a).collect())
-        } else {
-            None
-        }
+        self.authorities
+            .get(&key)
+            .map(|authorities| authorities.iter().copied().collect())
     }
 
     pub fn get_para_authorities(&self, key: Option<EpochKey>) -> Option<Vec<AuthorityIndex>> {
@@ -825,11 +801,9 @@ impl Records {
         } else {
             EpochKey(self.current_epoch)
         };
-        if let Some(para_authorities) = self.para_authorities.get(&key) {
-            Some(para_authorities.iter().map(|a| *a).collect())
-        } else {
-            None
-        }
+        self.para_authorities
+            .get(&key)
+            .map(|para_authorities| para_authorities.iter().copied().collect())
     }
 
     pub fn get_mut_authorities(
@@ -1189,11 +1163,7 @@ impl AuthorityRecord {
 
     pub fn points(&self) -> Points {
         if let Some(end_points) = self.end_points {
-            if end_points >= self.start_points {
-                end_points - self.start_points
-            } else {
-                0
-            }
+            end_points.saturating_sub(self.start_points)
         } else {
             self.start_points
         }
@@ -1243,22 +1213,18 @@ impl AuthorityRecord {
     // and the ones collected in the current block (current_points).
     pub fn update_current_points(&mut self, current_points: Points) -> Points {
         fn diff(current: Points, last: Points) -> Points {
-            if current > last {
-                current - last
-            } else {
-                0
-            }
+            current.saturating_sub(last)
         }
         if let Some(end_points) = self.end_points {
             let aditional_points = diff(current_points, self.old_points);
             self.old_points = current_points;
             self.end_points = Some(aditional_points + end_points);
-            return aditional_points;
+            aditional_points
         } else {
             self.old_points = current_points;
             self.end_points = Some(current_points);
-            return diff(current_points, 0);
-        };
+            diff(current_points, 0)
+        }
     }
 
     // pub fn DEPRECATED_update_current_points(&mut self, current_points: Points) -> Points {
@@ -1553,10 +1519,7 @@ impl ParaRecord {
         self.core = Some(core);
         // if different core increment assignments
         if is_different_core {
-            let stats = self
-                .para_stats
-                .entry(para_id)
-                .or_insert(ParaStats::default());
+            let stats = self.para_stats.entry(para_id).or_default();
             stats.core_assignments += 1;
         }
     }
@@ -1573,10 +1536,7 @@ impl ParaRecord {
     pub fn set_core_assignment(&mut self, para_id: ParaId, core: CoreIndex) {
         self.core = Some(core);
 
-        let stats = self
-            .para_stats
-            .entry(para_id)
-            .or_insert(ParaStats::default());
+        let stats = self.para_stats.entry(para_id).or_default();
         stats.core_assignments += 1;
     }
 
@@ -1599,10 +1559,7 @@ impl ParaRecord {
     pub fn update_points(&mut self, points: Points, is_block_author: bool) {
         if let Some(para_id) = self.para_id {
             // increment current points and authored blocks if the author of the current finalized block
-            let stats = self
-                .para_stats
-                .entry(para_id)
-                .or_insert(ParaStats::default());
+            let stats = self.para_stats.entry(para_id).or_default();
             stats.points += points;
             stats.authored_blocks += is_block_author as u32;
         }
@@ -1610,60 +1567,51 @@ impl ParaRecord {
 
     pub fn inc_explicit_votes(&mut self, para_id: ParaId) {
         // increment current explicit_votes
-        let stats = self
-            .para_stats
-            .entry(para_id)
-            .or_insert(ParaStats::default());
+        let stats = self.para_stats.entry(para_id).or_default();
         stats.explicit_votes += 1;
     }
 
     pub fn inc_implicit_votes(&mut self, para_id: ParaId) {
         // increment current explicit_votes
-        let stats = self
-            .para_stats
-            .entry(para_id)
-            .or_insert(ParaStats::default());
+        let stats = self.para_stats.entry(para_id).or_default();
         stats.implicit_votes += 1;
     }
 
     pub fn inc_missed_votes(&mut self, para_id: ParaId) {
         // increment current missed_votes
-        let stats = self
-            .para_stats
-            .entry(para_id)
-            .or_insert(ParaStats::default());
+        let stats = self.para_stats.entry(para_id).or_default();
         stats.missed_votes += 1;
     }
 
     pub fn total_points(&self) -> Points {
-        self.para_stats.iter().map(|(_, stats)| stats.points).sum()
+        self.para_stats.values().map(|stats| stats.points).sum()
     }
 
     pub fn total_authored_blocks(&self) -> AuthoredBlocks {
         self.para_stats
-            .iter()
-            .map(|(_, stats)| stats.authored_blocks)
+            .values()
+            .map(|stats| stats.authored_blocks)
             .sum()
     }
 
     pub fn total_missed_votes(&self) -> Votes {
         self.para_stats
-            .iter()
-            .map(|(_, stats)| stats.missed_votes)
+            .values()
+            .map(|stats| stats.missed_votes)
             .sum()
     }
 
     pub fn total_implicit_votes(&self) -> Votes {
         self.para_stats
-            .iter()
-            .map(|(_, stats)| stats.implicit_votes)
+            .values()
+            .map(|stats| stats.implicit_votes)
             .sum()
     }
 
     pub fn total_explicit_votes(&self) -> Votes {
         self.para_stats
-            .iter()
-            .map(|(_, stats)| stats.explicit_votes)
+            .values()
+            .map(|stats| stats.explicit_votes)
             .sum()
     }
 
@@ -1676,21 +1624,21 @@ impl ParaRecord {
         let total_votes =
             total_missed_votes + self.total_implicit_votes() + self.total_explicit_votes();
         if total_votes == 0 {
-            return None;
+            None
         } else {
             // calculate ratio
             let ratio = total_missed_votes as f64
                 / (total_missed_votes + self.total_implicit_votes() + self.total_explicit_votes())
                     as f64;
 
-            return Some(ratio);
+            Some(ratio)
         }
     }
 
     pub fn total_core_assignments(&self) -> CoreAssignments {
         self.para_stats
-            .iter()
-            .map(|(_, stats)| stats.core_assignments)
+            .values()
+            .map(|stats| stats.core_assignments)
             .sum()
     }
 
@@ -1717,20 +1665,20 @@ impl ParaRecord {
     pub fn bitfields_unavailability_ratio(&self) -> Option<Ratio> {
         let total_votes = self.total_availability() + self.total_unavailability();
         if total_votes == 0 {
-            return None;
+            None
         } else {
             let ratio = self.total_unavailability() as f64 / total_votes as f64;
-            return Some(ratio);
+            Some(ratio)
         }
     }
 
     pub fn bitfields_availability_ratio(&self) -> Option<Ratio> {
         let total_votes = self.total_availability() + self.total_unavailability();
         if total_votes == 0 {
-            return None;
+            None
         } else {
             let ratio = self.total_availability() as f64 / total_votes as f64;
-            return Some(ratio);
+            Some(ratio)
         }
     }
 
@@ -1744,10 +1692,10 @@ impl ParaRecord {
 
     pub fn clone_without_stats(&self) -> ParaRecord {
         ParaRecord {
-            index: self.index.clone(),
-            group: self.group.clone(),
-            core: self.core.clone(),
-            para_id: self.para_id.clone(),
+            index: self.index,
+            group: self.group,
+            core: self.core,
+            para_id: self.para_id,
             peers: self.peers.clone(),
             disputes: self.disputes.clone(),
             para_stats: BTreeMap::new(),
@@ -1861,8 +1809,8 @@ impl Subscribers {
         }
         info!(
             "{} subscribed ({}) report for epoch {} era {}",
-            user_id.to_string(),
-            account.to_string(),
+            user_id,
+            account,
             self.current_epoch(),
             self.current_era(),
         );
@@ -1906,7 +1854,7 @@ pub struct ParachainRecord {
 
 impl From<&std::string::String> for ParachainRecord {
     fn from(serialized: &std::string::String) -> Self {
-        serde_json::from_str(&serialized).unwrap()
+        serde_json::from_str(serialized).unwrap()
     }
 }
 
@@ -2083,8 +2031,9 @@ impl Validity for SessionStats {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Eq, Hash, PartialEq, Debug)]
+#[derive(Default, Serialize, Deserialize, Clone, Eq, Hash, PartialEq, Debug)]
 pub enum SyncStatus {
+    #[default]
     Syncing,
     Finished,
 }
@@ -2095,12 +2044,6 @@ impl std::fmt::Display for SyncStatus {
             Self::Syncing => write!(f, "syncing"),
             Self::Finished => write!(f, "finished"),
         }
-    }
-}
-
-impl Default for SyncStatus {
-    fn default() -> SyncStatus {
-        SyncStatus::Syncing
     }
 }
 
@@ -2203,9 +2146,9 @@ mod tests {
         let account =
             AccountId32::from_str("DSov56qpKEc32ZjhCN1qTPmTYW3tM65wmsXVkrrtXV3ywpV").unwrap();
         subscribers.subscribe(account, "@subscriber:matrix.org".to_string(), None);
-        assert_eq!(subscribers.get(None).is_some(), true);
-        assert_eq!(subscribers.get(Some(EpochKey(epoch))).is_some(), true);
-        assert_eq!(subscribers.get(Some(EpochKey(30))).is_none(), true);
+        assert!(subscribers.get(None).is_some());
+        assert!(subscribers.get(Some(EpochKey(epoch))).is_some());
+        assert!(subscribers.get(Some(EpochKey(30))).is_none());
         assert_eq!(
             subscribers.get(Some(EpochKey(epoch))),
             Some(&vec![(
@@ -2253,12 +2196,9 @@ mod tests {
 
         records.insert(&account, authority_idx, ar, Some(pr));
 
-        assert_eq!(records.get_authorities(None).is_some(), true);
-        assert_eq!(
-            records.get_authorities(Some(EpochKey(epoch))).is_some(),
-            true
-        );
-        assert_eq!(records.get_authorities(Some(EpochKey(0))).is_none(), true);
+        assert!(records.get_authorities(None).is_some());
+        assert!(records.get_authorities(Some(EpochKey(epoch))).is_some());
+        assert!(records.get_authorities(Some(EpochKey(0))).is_none());
 
         if let Some(authorities) = records.get_authorities(None) {
             assert_eq!(*authorities, vec![authority_idx]);
@@ -2269,7 +2209,7 @@ mod tests {
             let diff = ar.update_current_points(1900);
             assert_eq!(diff, 1600);
             assert_eq!(ar.start_points(), 300);
-            assert_eq!(ar.end_points().is_some(), true);
+            assert!(ar.end_points().is_some());
             assert_eq!(ar.end_points().unwrap(), 1900);
             assert_eq!(ar.points(), 1600);
             assert_eq!(ar.era_points(), 1900);
@@ -2279,8 +2219,8 @@ mod tests {
         if let Some(pr) = records.get_mut_para_record(authority_idx, None) {
             pr.update_scheduled_core(1001, 3);
             pr.update_points(1600, true);
-            assert_eq!(pr.get_para_id_stats(1001).is_some(), true);
-            assert_eq!(pr.get_para_id_stats(1002).is_none(), true);
+            assert!(pr.get_para_id_stats(1001).is_some());
+            assert!(pr.get_para_id_stats(1002).is_none());
             if let Some(stats) = pr.get_para_id_stats(1001) {
                 assert_eq!(stats.points(), 1600);
                 assert_eq!(stats.authored_blocks(), 1);
@@ -2299,9 +2239,6 @@ mod tests {
         );
 
         records.set_discovery_record(authority_idx, dr);
-        assert_eq!(
-            records.get_authority_record(authority_idx, None).is_some(),
-            true
-        );
+        assert!(records.get_authority_record(authority_idx, None).is_some());
     }
 }

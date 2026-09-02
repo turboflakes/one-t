@@ -88,28 +88,21 @@ impl Roles {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Default, Serialize, Deserialize, Clone, Debug)]
 pub enum PoolState {
     Open,
     Blocked,
     Destroying,
+    #[default]
     NotDefined,
 }
 
 impl PoolState {
     pub fn is_not_defined(&self) -> bool {
-        match self {
-            Self::NotDefined => true,
-            _ => false,
-        }
+        matches!(self, Self::NotDefined)
     }
 }
 
-impl Default for PoolState {
-    fn default() -> PoolState {
-        PoolState::NotDefined
-    }
-}
 
 impl std::fmt::Display for PoolState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -296,7 +289,7 @@ pub fn nomination_pool_account(account_type: AccountType, pool_id: u32) -> Accou
     buffer.extend(vec![0u8; 15]);
 
     let v: [u8; 32] = buffer.try_into().expect("slice with incorrect length");
-    return AccountId32::from(v);
+    AccountId32::from(v)
 }
 
 #[test]

@@ -41,6 +41,6 @@ pub async fn get_info() -> Result<Json<InfoResponse>, ApiError> {
         pkg_name: env!("CARGO_PKG_NAME").into(),
         pkg_version: env!("CARGO_PKG_VERSION").into(),
         api_path: "/api/v1".into(),
-        chain_name: config.chain_name.into(),
+        chain_name: config.chain_name,
     })
 }

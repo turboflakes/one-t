@@ -35,8 +35,8 @@ mod people_runtime {}
 use people_runtime::runtime_types::pallet_identity::types::Data;
 
 pub async fn get_display_name(onet: &Onet, stash: &AccountId32) -> Result<String, OnetError> {
-    if let Some(identity) = get_identity(&onet, &stash, None).await? {
-        return Ok(identity.to_string());
+    if let Some(identity) = get_identity(onet, stash, None).await? {
+        Ok(identity.to_string())
     } else {
         let s = &stash.to_string();
         Ok(format!("{}...{}", &s[..6], &s[s.len() - 6..]))
@@ -84,7 +84,7 @@ pub async fn get_identity(
                 .await?
             {
                 let sub_account_name = parse_identity_data(data);
-                return get_identity(&onet, &parent_account, Some(sub_account_name.to_string()))
+                return get_identity(onet, &parent_account, Some(sub_account_name.to_string()))
                     .await;
             } else {
                 Ok(None)
@@ -129,7 +129,7 @@ fn parse_identity_data(data: Data) -> String {
         Data::Raw30(bytes) => bytes_to_str(bytes.to_vec()),
         Data::Raw31(bytes) => bytes_to_str(bytes.to_vec()),
         Data::Raw32(bytes) => bytes_to_str(bytes.to_vec()),
-        _ => format!("???"),
+        _ => "???".to_string(),
     }
 }
 

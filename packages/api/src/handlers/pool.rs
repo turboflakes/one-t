@@ -44,7 +44,7 @@ pub async fn get_pools(
     // get current session
     let requested_session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
-            if String::from("current") == *index {
+            if *index == "current" {
                 redis::cmd("GET")
                     .arg(CacheKey::SessionByIndex(Index::Current))
                     .query_async(&mut conn as &mut Connection)
@@ -82,17 +82,13 @@ pub async fn get_pools(
             let session_pool_ids: Vec<PoolId> = if params.pool != 0 {
                 vec![params.pool]
             } else {
-                if let Ok(pool_ids) = redis::cmd("ZRANGE")
+                redis::cmd("ZRANGE")
                     .arg(CacheKey::NominationPoolIdsBySession(session_index))
                     .arg(0) // min
                     .arg(-1) // max
                     .query_async::<Connection, Vec<PoolId>>(&mut conn)
                     .await
-                {
-                    pool_ids
-                } else {
-                    vec![]
-                }
+                    .unwrap_or_default()
             };
 
             if !session_pool_ids.is_empty() {
@@ -171,7 +167,7 @@ pub async fn get_pools(
                         }
                     }
 
-                    data.push(pool_response.into());
+                    data.push(pool_response);
                 }
             }
 
@@ -192,7 +188,7 @@ pub async fn get_pool(
     // get current session
     let requested_session_index: EpochIndex = match &params.session {
         Index::Str(index) => {
-            if String::from("current") == *index {
+            if *index == "current" {
                 redis::cmd("GET")
                     .arg(CacheKey::SessionByIndex(Index::Current))
                     .query_async(&mut conn as &mut Connection)
@@ -243,11 +239,11 @@ pub async fn get_pool(
             }
         }
 
-        return respond_json(pool_response);
+        respond_json(pool_response)
     } else {
-        return Err(ApiError::InternalServerError(format!(
+        Err(ApiError::InternalServerError(format!(
             "Cache for Pool ID {} at session {} is not available.",
             *id, requested_session_index
-        )));
+        )))
     }
 }

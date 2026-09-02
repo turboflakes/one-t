@@ -48,7 +48,7 @@ async fn calculate_min_limit(
         .query_async(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
-    if v.len() == 0 {
+    if v.is_empty() {
         return Ok(0);
     }
     Ok(v[0].1)
@@ -75,7 +75,7 @@ async fn calculate_max_limit(
         .query_async(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
-    if v.len() == 0 {
+    if v.is_empty() {
         return Ok(0);
     }
     Ok(v[0].1)

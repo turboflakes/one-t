@@ -241,13 +241,15 @@ pub struct RawDataPara {
     pub group_rank: Option<(usize, usize)>,          // Option<(rank, total)>
 }
 
+type GroupRecords = Vec<(u32, Vec<(AuthorityRecord, ParaRecord, String)>)>;
+
 #[derive(Debug)]
 pub struct RawDataGroup {
     pub network: Network,
     pub meta: Metadata,
     pub report_type: ReportType,
     pub is_first_record: bool,
-    pub groups: Vec<(u32, Vec<(AuthorityRecord, ParaRecord, String)>)>,
+    pub groups: GroupRecords,
 }
 
 #[derive(Debug)]
@@ -272,6 +274,12 @@ type Body = Vec<String>;
 
 pub struct Report {
     body: Body,
+}
+
+impl Default for Report {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Report {
@@ -303,9 +311,9 @@ impl Report {
 
     pub fn save(&self, filename: &str) -> Result<(), ReportError> {
         let config = CONFIG.clone();
-        let filename = format!("{}{}", config.data_path, filename.to_string());
+        let filename = format!("{}{}", config.data_path, filename);
         let path = Path::new(&filename);
-        let file = File::create(&path)?;
+        let file = File::create(path)?;
         if path.extension() == Some(OsStr::new("gz")) {
             let mut buf = BufWriter::with_capacity(
                 128 * 1024,
@@ -404,7 +412,7 @@ impl From<RawDataRank> for Report {
                         i + 1,
                         replace_crln(&validator.name, ""),
                         validator.stash,
-                        validator.subset.to_string(),
+                        validator.subset,
                         validator.active_epochs,
                         validator.para_epochs,
                         validator.authored_blocks,
@@ -537,7 +545,7 @@ impl From<RawDataGroup> for Report {
                     if let Some(bar) = para_record.bitfields_availability_ratio() {
                         clode_block.push_str(&format!(
                             "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>6}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
-                            slice(&replace_emoji(&val_name, "_"), 24),
+                            slice(&replace_emoji(val_name, "_"), 24),
                             authority_record.total_authored_blocks(),
                             para_record.total_core_assignments(),
                             para_record.total_implicit_votes(),
@@ -555,7 +563,7 @@ impl From<RawDataGroup> for Report {
                 }
                 clode_block.push_str(&format!(
                     "{:<24}{:>4}{:>5}{:>5}{:>5}{:>5}{:>6}{:>5}{:>8}{:>8}{:>6}{:>6}\n",
-                    slice(&replace_emoji(&val_name, "_"), 24),
+                    slice(&replace_emoji(val_name, "_"), 24),
                     "-",
                     "-",
                     "-",
@@ -569,7 +577,7 @@ impl From<RawDataGroup> for Report {
                     "-"
                 ));
             }
-            clode_block.push_str("\n");
+            clode_block.push('\n');
         }
 
         clode_block.push_str("\n</code></pre>");
@@ -744,7 +752,7 @@ impl From<RawDataPara> for Report {
                     }
                     report.add_break();
                     // Print Rankings
-                    report.add_raw_text(format!("<i>Rankings</i>"));
+                    report.add_raw_text("<i>Rankings</i>".to_string());
                     if let Some((para_validator_rank, total)) = data.para_validator_rank {
                         report.add_raw_text(format!(
                             "✨ All Stars: {} // {} {}",
@@ -773,7 +781,7 @@ impl From<RawDataPara> for Report {
                     report.add_raw_text(format!(
                         "⛹️ Sole: {} // {} {}",
                         para_validator_group_rank.unwrap_or_default() + 1,
-                        v.iter().count(),
+                        v.len(),
                         emoji
                     ));
 
@@ -843,7 +851,7 @@ impl From<RawDataPara> for Report {
                     }
 
                     // Print out peers names
-                    let peers_letters = vec!["A", "B", "C", "D", "E", "F", "G", "H"];
+                    let peers_letters = ["A", "B", "C", "D", "E", "F", "G", "H"];
                     for (i, peer) in data.peers.iter().enumerate() {
                         if let Some(mvr) = peer.2.missed_votes_ratio() {
                             if let Some(bar) = peer.2.bitfields_availability_ratio() {
@@ -986,9 +994,7 @@ impl From<RawData> for Report {
             "📒 Network Report → <b>{} // {}</b>",
             data.network.name, data.meta.active_era_index,
         ));
-        report.add_raw_text(format!(
-            "<i>Valid <a href=\"https://nodes.web3.foundation/\">Decentralized Nodes</a> are shown in bold (100% Commission • Others • <b>DN</b>).</i>",
-        ));
+        report.add_raw_text("<i>Valid <a href=\"https://nodes.web3.foundation/\">Decentralized Nodes</a> are shown in bold (100% Commission • Others • <b>DN</b>).</i>".to_string());
 
         // report.add_raw_text(format!(
         //     "<i>e.g. The first position is always related to the sub set of 100% commission validators, followed by the stat of the sub set of validators not included in the Thousand Validator Programme (non-tvp) and next in bold is the stat of the sub set of validators that participate in the TVP.</i>",
@@ -1042,11 +1048,11 @@ impl From<RawDataPools> for Report {
         report.add_break();
 
         // Calculate onet pools average APR
-        let total = data.onet_pools.iter().count();
+        let total = data.onet_pools.len();
         let aprs: Vec<f64> = data
             .onet_pools
             .iter()
-            .map(|(_, _, apr)| apr.clone())
+            .map(|(_, _, apr)| *apr)
             .collect();
         let onet_pools_avg_apr = aprs.iter().sum::<f64>() / total as f64;
 
@@ -1069,14 +1075,10 @@ impl From<RawDataPools> for Report {
         //     "<i>¹ Nomination pool APR is based on the average APR of all the pool nominees from the last {} eras, minus the respective validators commission.</i>",
         //     config.maximum_history_eras,
         // ));
-        report.add_raw_text(format!(
-            "<i>¹ Nomination pool APR is based on the average APR of all the pool nominees from the last 84 eras, minus the respective validators commission.</i>",
-        ));
+        report.add_raw_text("<i>¹ Nomination pool APR is based on the average APR of all the pool nominees from the last 84 eras, minus the respective validators commission.</i>".to_string());
 
         report.add_break();
-        report.add_raw_text(format!(
-            "➕ Join ONE-T Nomination Pools here → <a href=\"https://one-t.turboflakes.io\">one-t.turboflakes.io</a>",
-        ));
+        report.add_raw_text("➕ Join ONE-T Nomination Pools here → <a href=\"https://one-t.turboflakes.io\">one-t.turboflakes.io</a>".to_string());
 
         // --- Specific report sections here [END] ---|
         report.add_break();
@@ -1236,10 +1238,10 @@ fn own_stake_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
         .collect();
 
     fn desc(v: Vec<u128>, decimals: u128) -> String {
-        if v.len() > 0 {
+        if !v.is_empty() {
             let avg = v.iter().sum::<u128>() / v.len() as u128;
-            let min = *v.iter().min().unwrap_or_else(|| &0);
-            let max = *v.iter().max().unwrap_or_else(|| &0);
+            let min = *v.iter().min().unwrap_or(&0);
+            let max = *v.iter().max().unwrap_or(&0);
 
             format!(
                 "{} ({:.2}, {:.0})",
@@ -1267,9 +1269,7 @@ fn own_stake_validators_report<'a>(report: &'a mut Report, data: &'a RawData) ->
     ));
     report.add_break();
 
-    report.add_raw_text(format!(
-        "Validator self stake contributions for network security:"
-    ));
+    report.add_raw_text("Validator self stake contributions for network security:".to_string());
     if total > 0 {
         report.add_raw_text(format!(
             "‣ {:.2}% • {:.2}% • <b>{:.2}%</b>",
@@ -1584,7 +1584,7 @@ fn flagged_and_exceptional_validators_report<'a>(
     //     .map(|v| v.bitfields_unavailability_ratio.unwrap())
     //     .collect();
 
-    if para_validators.len() > 0 {
+    if !para_validators.is_empty() {
         // set a warning flag
         let warning = if (total_flagged as f64 / para_validators.len() as f64) > 0.20 {
             "⚠️ "
@@ -1697,7 +1697,7 @@ fn top_validators_report<'a>(
 
     tvp_sorted.sort_by(|a, b| {
         (b.maximum_history_total_points / b.maximum_history_total_eras)
-            .cmp(&(&a.maximum_history_total_points / &a.maximum_history_total_eras))
+            .cmp(&(a.maximum_history_total_points / a.maximum_history_total_eras))
     });
 
     let max: usize = if tvp_sorted.len() as u32 > config.maximum_top_ranking_callout && is_short {
@@ -1716,13 +1716,13 @@ fn top_validators_report<'a>(
                 config.maximum_history_eras / 2));
         } else {
             report.add_raw_text(format!("🏆 <b>Top {} TVP Validators</b> with most average points earned in the last {} eras (minimum inclusion {} eras)", max, config.maximum_history_eras, config.maximum_history_eras / 2));
-            report.add_raw_text(format!("<i>Legend: validator (avg. points)</i>"));
+            report.add_raw_text("<i>Legend: validator (avg. points)</i>".to_string());
         }
         report.add_break();
         for v in &tvp_sorted[..max] {
             report.add_raw_text(format!(
-                "* {} ({})",
-                format!("<a href=\"https://apps.turboflakes.io/?chain={}&app=onet#/validator/{}?mode=history\">{}</a>", data.network.name.to_lowercase(), v.stash, v.name),
+                "* <a href=\"https://apps.turboflakes.io/?chain={}&app=onet#/validator/{}?mode=history\">{}</a> ({})",
+                data.network.name.to_lowercase(), v.stash, v.name,
                 v.maximum_history_total_points / v.maximum_history_total_eras
             ));
         }
@@ -1738,7 +1738,7 @@ fn top_performers_report<'a>(
 ) -> &'a Report {
     // If no full sessions than just show rank based on avg. points
     if data.records_total_full_epochs == 0 {
-        return top_validators_report(report, &data, is_short);
+        return top_validators_report(report, data, is_short);
     }
 
     let config = CONFIG.clone();
@@ -1760,7 +1760,7 @@ fn top_performers_report<'a>(
         })
         .collect::<Vec<&Validator>>();
 
-    if validators.len() > 0 {
+    if !validators.is_empty() {
         // Sort by Score in descending
         validators.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
 
@@ -1790,8 +1790,8 @@ fn top_performers_report<'a>(
 
             for v in &validators[..max] {
                 report.add_raw_text(format!(
-                    "* {} ({:.2}%, {}, {}, {}, {}x)",
-                    format!("<a href=\"https://apps.turboflakes.io/?chain={}&app=onet#/validator/{}?mode=history\">{}</a>", data.network.name.to_lowercase(), v.stash, v.name),
+                    "* <a href=\"https://apps.turboflakes.io/?chain={}&app=onet#/validator/{}?mode=history\">{}</a> ({:.2}%, {}, {}, {}, {}x)",
+                    data.network.name.to_lowercase(), v.stash, v.name,
                     v.score * 100.0,
                     (v.missed_ratio.unwrap() * 10000.0).round() / 10000.0,
                     (v.bitfields_availability_ratio.unwrap() * 10000.0).round() / 10000.0,
@@ -1802,18 +1802,16 @@ fn top_performers_report<'a>(
 
             if !is_short {
                 report.add_break();
-                report.add_raw_text(format!("<i>Legend: Val. identity (Score, Missed votes ratio, Bitfields Availability Ratio, Average p/v points, Number of sessions as p/v)</i>"));
-                report.add_raw_text(format!("<i>Score: Backing Votes Ratio (1-MVR) make up 50% of the score,  Bitfields Availability Ratio make up 25%, average p/v points make up 18% and number of sessions as p/v the remaining 7%</i>"));
-                report.add_raw_text(format!(
-                    "<i>Sorting: Validators are sorted by Score in descending order</i>"
-                ));
+                report.add_raw_text("<i>Legend: Val. identity (Score, Missed votes ratio, Bitfields Availability Ratio, Average p/v points, Number of sessions as p/v)</i>".to_string());
+                report.add_raw_text("<i>Score: Backing Votes Ratio (1-MVR) make up 50% of the score,  Bitfields Availability Ratio make up 25%, average p/v points make up 18% and number of sessions as p/v the remaining 7%</i>".to_string());
+                report.add_raw_text("<i>Sorting: Validators are sorted by Score in descending order</i>".to_string());
                 report.add_raw_text(format!("<i>Inclusion: To be considered for the ranking, validators must have been p/v for at least {} times in the last {} sessions.</i>", min_para_epochs, data.records_total_full_epochs));
             }
         }
 
         report.add_break();
     } else {
-        top_validators_report(report, &data, is_short);
+        top_validators_report(report, data, is_short);
     }
     report
 }
@@ -1965,11 +1963,11 @@ impl std::fmt::Display for Random {
                 write!(f, "🥇 {} 🚀", v[random_index(v.len())])
             }
             Self::Second => {
-                let v = vec!["😃", "😅", "😉", "😀", "😉"];
+                let v = ["😃", "😅", "😉", "😀", "😉"];
                 write!(f, "🥈 {}", v[random_index(v.len())])
             }
             Self::Third => {
-                let v = vec!["😊", "🙂", "🤔", "🙄", "🤨", "😐", "😑"];
+                let v = ["😊", "🙂", "🤔", "🙄", "🤨", "😐", "😑"];
                 write!(f, "🥉 {}", v[random_index(v.len())])
             }
             Self::Other => {
@@ -1977,7 +1975,7 @@ impl std::fmt::Display for Random {
                 write!(f, "{}", v[random_index(v.len())])
             }
             Self::HealthCheck => {
-                let v = vec!["😫", "😩", "😭", "😤", "😡", "🤬", "😱", "😰"];
+                let v = ["😫", "😩", "😭", "😤", "😡", "🤬", "😱", "😰"];
                 write!(f, "{} 🩺 🚑", v[random_index(v.len())])
             }
         }
@@ -2041,7 +2039,7 @@ mod tests {
         let val_name = r"1️⃣ 1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣1️⃣1️⃣6️⃣";
         assert_eq!(
             r"1_1_6_1_1_6_1_1_6_",
-            slice(&replace_emoji(&val_name, "_"), 18)
+            slice(&replace_emoji(val_name, "_"), 18)
         );
     }
 }

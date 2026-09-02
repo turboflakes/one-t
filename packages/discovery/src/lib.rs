@@ -82,7 +82,7 @@ pub async fn try_fetch_discovery_data(
                     continue;
                 }
                 authority_ips_map
-                    .entry(hex::encode(authority.clone()))
+                    .entry(hex::encode(*authority))
                     .and_modify(|ips| {
                         (*ips).insert(ip);
                     })
@@ -100,7 +100,7 @@ pub async fn try_fetch_discovery_data(
         // Get authority key from peer_id
         if let Some(peer_details) = authorithy_discovery.peer_details().get(&peer_id) {
             authority_agent_version_map
-                .entry(hex::encode(peer_details.authority_id().clone()))
+                .entry(hex::encode(*peer_details.authority_id()))
                 .or_insert(info.agent_version.clone());
         }
     }

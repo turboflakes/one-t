@@ -46,7 +46,6 @@ pub const WEIGHTS_CAPACITY: usize = 5;
 /// Weight can be any value in a 10-point scale. Higher the weight more important
 /// is the criteria to the user
 type Weight = u8;
-///
 pub type Weights = Vec<Weight>;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -61,7 +60,7 @@ pub struct CriteriaWeights {
 impl From<&Weights> for CriteriaWeights {
     fn from(data: &Weights) -> Self {
         CriteriaWeights {
-            commission: *data.get(0).unwrap_or(&0),
+            commission: *data.first().unwrap_or(&0),
             own_stake: *data.get(1).unwrap_or(&0),
             nominators_stake: *data.get(2).unwrap_or(&0),
             nominators_counter: *data.get(3).unwrap_or(&0),
@@ -98,7 +97,7 @@ pub struct CriteriaFilters {
 impl From<&Filters> for CriteriaFilters {
     fn from(data: &Filters) -> Self {
         CriteriaFilters {
-            active: *data.get(0).unwrap_or(&(false)),
+            active: *data.first().unwrap_or(&(false)),
             identity: *data.get(1).unwrap_or(&(false)),
             not_oversubscribed: *data.get(2).unwrap_or(&(false)),
             tvp: *data.get(3).unwrap_or(&(false)),
@@ -109,16 +108,10 @@ impl From<&Filters> for CriteriaFilters {
 // NOTE: Intervals are considered unsigned integers bringing a 7 decimals representation
 // ex1: 20% = 200000000
 // ex2: 121.34 DOTs = 1213400000
-#[derive(Debug, Serialize, Deserialize, PartialEq, Copy, Clone)]
+#[derive(Default, Debug, Serialize, Deserialize, PartialEq, Copy, Clone)]
 pub struct Interval {
     pub min: u64,
     pub max: u64,
-}
-
-impl Default for Interval {
-    fn default() -> Interval {
-        Interval { min: 0, max: 0 }
-    }
 }
 
 impl std::fmt::Display for Interval {
@@ -162,11 +155,11 @@ impl std::fmt::Display for CriteriaLimits {
         write!(
             f,
             "{},{},{},{},{}",
-            self.commission.to_string(),
-            self.own_stake.to_string(),
-            self.nominators_stake.to_string(),
-            self.nominators_counter.to_string(),
-            self.mvr.to_string(),
+            self.commission,
+            self.own_stake,
+            self.nominators_stake,
+            self.nominators_counter,
+            self.mvr,
         )
     }
 }
@@ -174,7 +167,7 @@ impl std::fmt::Display for CriteriaLimits {
 impl From<&Intervals> for CriteriaLimits {
     fn from(data: &Intervals) -> Self {
         CriteriaLimits {
-            commission: *data.get(0).unwrap_or(&Interval::default()),
+            commission: *data.first().unwrap_or(&Interval::default()),
             own_stake: *data.get(1).unwrap_or(&Interval::default()),
             nominators_stake: *data.get(2).unwrap_or(&Interval::default()),
             nominators_counter: *data.get(3).unwrap_or(&Interval::default()),

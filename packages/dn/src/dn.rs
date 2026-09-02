@@ -89,9 +89,7 @@ pub async fn try_fetch_stashes_from_remote_url(
         config
             .dn_url
             .to_lowercase()
-            .split('/')
-            .filter(|s| !s.is_empty())
-            .last()
+            .split('/').rfind(|s| !s.is_empty())
             .expect("Failed to parse cohort from config.dn_url")
             .to_string()
     });

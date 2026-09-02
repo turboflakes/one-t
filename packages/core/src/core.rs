@@ -60,7 +60,7 @@ const MAX_RETRY_DELAY_SECS: u64 = 10;
 const RECONNECTION_DELAY_SECS: u64 = 6;
 
 async fn create_substrate_rpc_client_from_config(config: Config) -> Result<RpcClient, OnetError> {
-    if let Err(_) = validate_url_is_secure(config.substrate_ws_url.as_ref()) {
+    if validate_url_is_secure(config.substrate_ws_url.as_ref()).is_err() {
         warn!("Insecure URL provided: {}", config.substrate_ws_url);
     };
 
@@ -104,7 +104,7 @@ async fn create_para_client_from_supported_runtime(
 
     // Create and return client
     let rpc_client = build_rpc_reconnecting_client(&rpc_url).await?;
-    let client = create_substrate_client_from_rpc_client(rpc_client.into()).await?;
+    let client = create_substrate_client_from_rpc_client(rpc_client).await?;
     Ok(Some(client))
 }
 
@@ -162,7 +162,7 @@ async fn create_substrate_client_from_rpc_client(
 ) -> Result<OnlineClient<PolkadotConfig>, OnetError> {
     OnlineClient::<PolkadotConfig>::from_rpc_client(rpc_client)
         .await
-        .map_err(|err| OnetError::SubxtError(err.into()))
+        .map_err(OnetError::from)
 }
 
 /// Represents the connection details for a substrate node
@@ -210,7 +210,7 @@ async fn attempt_connection(config: &Config) -> Result<SubstrateClients, OnetErr
     let node_connection = fetch_node_connection_details(&relay_rpc).await?;
     configure_chain_settings(&node_connection);
 
-    let relay_client = create_substrate_client_from_rpc_client(rpc_client.into()).await?;
+    let relay_client = create_substrate_client_from_rpc_client(rpc_client).await?;
     let runtime = SupportedRuntime::from(get_chain_token_symbol(&node_connection.properties));
     let people_client = create_people_client_from_supported_runtime(runtime).await?;
     let asset_hub_client = create_asset_hub_client_from_supported_runtime(runtime).await?;
@@ -434,7 +434,7 @@ impl Onet {
     }
 
     pub fn people_client(&self) -> &OnlineClient<PolkadotConfig> {
-        &self.people_client_option.as_ref().unwrap_or(&self.client)
+        self.people_client_option.as_ref().unwrap_or(&self.client)
     }
 
     pub fn asset_hub_client(&self) -> &Option<OnlineClient<PolkadotConfig>> {
@@ -506,17 +506,15 @@ pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID, Option<String>)>, O
     let file = File::open(&subscribers_filename)?;
 
     // Read each subscriber (stash,user_id) and parse stash to AccountId
-    for line in BufReader::new(file).lines() {
-        if let Ok(s) = line {
-            let v: Vec<&str> = s.split(',').collect();
-            let acc = AccountId32::from_str(&v[0]).map_err(|e| {
-                OnetError::Other(format!("Invalid account: {:?} error: {e:?}", &v[0]))
-            })?;
-            if let Some(param) = v.get(2) {
-                out.push((acc, v[1].to_string(), Some(param.to_string())));
-            } else {
-                out.push((acc, v[1].to_string(), None));
-            }
+    for s in BufReader::new(file).lines().map_while(Result::ok) {
+        let v: Vec<&str> = s.split(',').collect();
+        let acc = AccountId32::from_str(v[0]).map_err(|e| {
+            OnetError::Other(format!("Invalid account: {:?} error: {e:?}", v[0]))
+        })?;
+        if let Some(param) = v.get(2) {
+            out.push((acc, v[1].to_string(), Some(param.to_string())));
+        } else {
+            out.push((acc, v[1].to_string(), None));
         }
     }
 
@@ -548,10 +546,8 @@ pub fn get_subscribers_by_epoch(
     let mut out: Vec<UserID> = Vec::new();
     let file = File::open(&subscribers_filename)?;
 
-    for line in BufReader::new(file).lines() {
-        if let Ok(s) = line {
-            out.push(s);
-        }
+    for s in BufReader::new(file).lines().map_while(Result::ok) {
+        out.push(s);
     }
 
     Ok(out)

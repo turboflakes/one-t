@@ -106,7 +106,7 @@ async fn process_authority(
         return Ok(());
     };
 
-    let _ = update_session_stats_with_authority_record_data(session_stats, &authority_record);
+    update_session_stats_with_authority_record_data(session_stats, authority_record);
 
     // TODO: deprecate records.current_era() from CacheKey::AuthorityRecord
     let authority_key = CacheKey::AuthorityRecord(
@@ -122,10 +122,10 @@ async fn process_authority(
     );
 
     if let Some(para_record) = records.get_para_record(authority_idx, None) {
-        let _ = update_session_stats_with_para_record_data(session_stats, para_record);
-        cache_para_stats_data(cache, config, &authority_key, &para_record).await?;
-        cache_para_summary_data(cache, config, &authority_key, &para_record).await?;
-        let _ = update_parachains_with_para_record_data(parachains, &para_record, authority_idx);
+        update_session_stats_with_para_record_data(session_stats, para_record);
+        cache_para_stats_data(cache, config, &authority_key, para_record).await?;
+        cache_para_summary_data(cache, config, &authority_key, para_record).await?;
+        let _ = update_parachains_with_para_record_data(parachains, para_record, authority_idx);
 
         data.insert("para".to_string(), serde_json::to_string(&para_record)?);
     }
@@ -166,7 +166,7 @@ fn update_parachains_with_para_record_data(
     for (para_id, stats) in para_record.para_stats().iter() {
         let pm = parachains
             .entry(*para_id)
-            .or_insert(ParachainRecord::default());
+            .or_default();
         pm.stats.implicit_votes += stats.implicit_votes();
         pm.stats.explicit_votes += stats.explicit_votes();
         pm.stats.missed_votes += stats.missed_votes();
@@ -184,7 +184,7 @@ fn update_parachains_with_para_record_data(
     if let Some(para_id) = para_record.para_id() {
         let pm = parachains
             .entry(para_id)
-            .or_insert(ParachainRecord::default());
+            .or_default();
         pm.current_group = para_record.group();
         let mut authorities: Vec<AuthorityIndex> = vec![authority_idx];
         authorities.append(&mut para_record.peers());
@@ -815,7 +815,7 @@ pub async fn cache_board_limits_at_session(
     let mut era_data: BTreeMap<String, String> = BTreeMap::new();
     era_data.insert(String::from("synced_session"), current_epoch.to_string());
     era_data.insert(
-        String::from(format!("synced_at_block:{}", current_epoch)),
+        format!("synced_at_block:{}", current_epoch),
         rc_block_number.to_string(),
     );
 

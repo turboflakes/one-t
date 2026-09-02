@@ -290,7 +290,7 @@ pub async fn fetch_own_stake_via_stash(
         return Ok(0);
     };
 
-    return Ok(staking_ledger.active);
+    Ok(staking_ledger.active)
 }
 
 /// Fetch account info given a stash at the specified block hash
@@ -347,10 +347,10 @@ pub async fn fetch_relay_parent_block_number(
     hash: H256,
 ) -> Result<u64, OnetError> {
     let extrinsics = api.blocks().at(hash).await?.extrinsics().await?;
-    for res in extrinsics.find::<SetValidationData>() {
+    if let Some(res) = extrinsics.find::<SetValidationData>().next() {
         let extrinsic = res?;
         return Ok(extrinsic.value.data.validation_data.relay_parent_number as u64);
     }
 
-    return Err(OnetError::RelayParentNumber(hash));
+    Err(OnetError::RelayParentNumber(hash))
 }
