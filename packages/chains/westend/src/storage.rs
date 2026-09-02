@@ -332,11 +332,7 @@ pub async fn fetch_validator_points(
         .staking_ah_client()
         .validator_points(stash);
 
-    api.storage()
-        .at(hash)
-        .fetch(&addr)
-        .await?
-        .map_or(Ok(0), Ok)
+    api.storage().at(hash).fetch(&addr).await?.map_or(Ok(0), Ok)
 }
 
 /// Fetch para validator groups at the specified block hash

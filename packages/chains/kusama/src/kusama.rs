@@ -199,8 +199,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     let start_block_number = init_start_block_number(onet).await?;
 
     // get block hash from the start block
-    let rc_block_hash =
-        try_fetch_relay_chain_block_hash(&rc_rpc, start_block_number).await?;
+    let rc_block_hash = try_fetch_relay_chain_block_hash(&rc_rpc, start_block_number).await?;
 
     let ah_block_hash =
         fetch_asset_hub_block_hash_from_relay_chain(onet, start_block_number, rc_block_hash)
@@ -279,13 +278,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     while let Some(Ok(best_block)) = blocks_sub.next().await {
         info!("RC Block #{:?} best received", best_block.number());
         // update records best_block number
-        process_best_block(
-            onet,
-            &mut records,
-            ChainKey::RC,
-            best_block.number().into(),
-        )
-        .await?;
+        process_best_block(onet, &mut records, ChainKey::RC, best_block.number().into()).await?;
 
         // fetch latest finalized block
         let finalized_block_hash = onet.rpc().chain_get_finalized_head().await?;
@@ -1509,8 +1502,7 @@ pub async fn run_groups_report(
                             let name = get_display_name(&onet, stash).await?;
 
                             //
-                            let auths =
-                                group_authorities_map.entry(group_idx).or_default();
+                            let auths = group_authorities_map.entry(group_idx).or_default();
                             auths.push((authority_record.clone(), para_record.clone(), name));
                             auths.sort_by_key(|(a, _, _)| std::cmp::Reverse(a.points()));
                             // auths.sort_by(|(a, _, _), (b, _, _)| {
@@ -1589,9 +1581,7 @@ pub async fn run_parachains_report(
                 records.get_para_record(*authority_idx, Some(EpochKey(epoch_index)))
             {
                 for (para_id, stats) in para_record.para_stats().iter() {
-                    let s = parachains_map
-                        .entry(*para_id)
-                        .or_default();
+                    let s = parachains_map.entry(*para_id).or_default();
                     s.implicit_votes += stats.implicit_votes();
                     s.explicit_votes += stats.explicit_votes();
                     s.missed_votes += stats.missed_votes();
@@ -1944,24 +1934,24 @@ pub async fn run_network_report(
         if config.pools_enabled
             && (current_session_index as f64 % config.pools_nominate_rate as f64)
                 == config.epoch_rate_threshold as f64
-            {
-                if records.total_full_epochs() >= config.pools_minimum_sessions {
-                    match try_run_nomination(&onet, records, validators).await {
-                        Ok(message) => {
-                            onet.matrix()
-                                .send_public_message(&message, Some(&message))
-                                .await?;
-                        }
-                        Err(e) => error!("{}", e),
+        {
+            if records.total_full_epochs() >= config.pools_minimum_sessions {
+                match try_run_nomination(&onet, records, validators).await {
+                    Ok(message) => {
+                        onet.matrix()
+                            .send_public_message(&message, Some(&message))
+                            .await?;
                     }
-                } else {
-                    warn!(
+                    Err(e) => error!("{}", e),
+                }
+            } else {
+                warn!(
                         "Only {} full sessions recorded, at least {} are needed to trigger a nomination.",
                         records.total_full_epochs(),
                         config.pools_minimum_sessions
                     );
-                }
             }
+        }
     } else {
         let message = format!(
             "💤 Skipping Network Report for {} // {} due to the status of the TVP validators not being successfully obtained.",
@@ -2409,8 +2399,7 @@ pub async fn cache_nomination_pools_stats(
                     let stash_account = nomination_pool_account(AccountType::Bonded, pool_id);
 
                     let staking_ledger =
-                        fetch_ledger_from_controller(ah_api, ah_block_hash, &stash_account)
-                            .await?;
+                        fetch_ledger_from_controller(ah_api, ah_block_hash, &stash_account).await?;
                     pool_stats.staked = staking_ledger.active;
                     pool_stats.unbonding = staking_ledger.total - staking_ledger.active;
 

@@ -570,8 +570,7 @@ impl Matrix {
                                         }
                                         if x == config.maximum_subscribers {
                                             let message = format!("⛔ The maximum number of subscribers have been reached → {}", config.maximum_subscribers);
-                                            self.send_room_message(room_id, &message, None)
-                                                .await?;
+                                            self.send_room_message(room_id, &message, None).await?;
 
                                             continue;
                                         }

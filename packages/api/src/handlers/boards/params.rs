@@ -104,7 +104,8 @@ where
         for interval_str in intervals_as_strvec.iter().take(WEIGHTS_CAPACITY) {
             let interval_as_strvec: Vec<&str> = interval_str.split(":").collect();
             let interval = Interval {
-                min: interval_as_strvec.first()
+                min: interval_as_strvec
+                    .first()
                     .unwrap_or(&"0")
                     .parse::<u64>()
                     .unwrap(),

@@ -54,7 +54,6 @@ pub enum Methods {
     NotSupported,
 }
 
-
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct WsRequestMessage {
     #[serde(default)]

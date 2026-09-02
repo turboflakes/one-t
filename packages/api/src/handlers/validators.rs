@@ -718,8 +718,7 @@ pub async fn get_validators(
                             _ => {
                                 warn!(
                                     "Invalid peers Type for stash {} in session {}",
-                                    stash,
-                                    session_index
+                                    stash, session_index
                                 );
                             }
                         };

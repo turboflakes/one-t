@@ -1049,11 +1049,7 @@ impl From<RawDataPools> for Report {
 
         // Calculate onet pools average APR
         let total = data.onet_pools.len();
-        let aprs: Vec<f64> = data
-            .onet_pools
-            .iter()
-            .map(|(_, _, apr)| *apr)
-            .collect();
+        let aprs: Vec<f64> = data.onet_pools.iter().map(|(_, _, apr)| *apr).collect();
         let onet_pools_avg_apr = aprs.iter().sum::<f64>() / total as f64;
 
         report.add_raw_text(format!(
@@ -1804,7 +1800,10 @@ fn top_performers_report<'a>(
                 report.add_break();
                 report.add_raw_text("<i>Legend: Val. identity (Score, Missed votes ratio, Bitfields Availability Ratio, Average p/v points, Number of sessions as p/v)</i>".to_string());
                 report.add_raw_text("<i>Score: Backing Votes Ratio (1-MVR) make up 50% of the score,  Bitfields Availability Ratio make up 25%, average p/v points make up 18% and number of sessions as p/v the remaining 7%</i>".to_string());
-                report.add_raw_text("<i>Sorting: Validators are sorted by Score in descending order</i>".to_string());
+                report.add_raw_text(
+                    "<i>Sorting: Validators are sorted by Score in descending order</i>"
+                        .to_string(),
+                );
                 report.add_raw_text(format!("<i>Inclusion: To be considered for the ranking, validators must have been p/v for at least {} times in the last {} sessions.</i>", min_para_epochs, data.records_total_full_epochs));
             }
         }

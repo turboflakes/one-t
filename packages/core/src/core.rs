@@ -508,9 +508,8 @@ pub fn get_subscribers() -> Result<Vec<(AccountId32, UserID, Option<String>)>, O
     // Read each subscriber (stash,user_id) and parse stash to AccountId
     for s in BufReader::new(file).lines().map_while(Result::ok) {
         let v: Vec<&str> = s.split(',').collect();
-        let acc = AccountId32::from_str(v[0]).map_err(|e| {
-            OnetError::Other(format!("Invalid account: {:?} error: {e:?}", v[0]))
-        })?;
+        let acc = AccountId32::from_str(v[0])
+            .map_err(|e| OnetError::Other(format!("Invalid account: {:?} error: {e:?}", v[0])))?;
         if let Some(param) = v.get(2) {
             out.push((acc, v[1].to_string(), Some(param.to_string())));
         } else {

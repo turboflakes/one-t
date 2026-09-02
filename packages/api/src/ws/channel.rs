@@ -774,15 +774,12 @@ impl Handler<Get> for Channel {
             let future = async {
                 if let Ok(mut conn) = get_conn(&self.cache).await {
                     if let Ok(serialized_data) = redis::cmd("GET")
-                        .arg(CacheKey::BlockByIndexStats(Index::Num(
-                            *block_number,
-                        )))
+                        .arg(CacheKey::BlockByIndexStats(Index::Num(*block_number)))
                         .query_async::<Connection, String>(&mut conn)
                         .await
                     {
                         let mut block_data = CacheMap::new();
-                        block_data
-                            .insert(String::from("block_number"), block_number.to_string());
+                        block_data.insert(String::from("block_number"), block_number.to_string());
                         block_data.insert(String::from("is_finalized"), (true).to_string());
                         block_data.insert(String::from("stats"), serialized_data);
 

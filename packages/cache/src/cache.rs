@@ -164,9 +164,7 @@ fn update_parachains_with_para_record_data(
 ) -> Result<(), CacheError> {
     // aggregate parachains counters
     for (para_id, stats) in para_record.para_stats().iter() {
-        let pm = parachains
-            .entry(*para_id)
-            .or_default();
+        let pm = parachains.entry(*para_id).or_default();
         pm.stats.implicit_votes += stats.implicit_votes();
         pm.stats.explicit_votes += stats.explicit_votes();
         pm.stats.missed_votes += stats.missed_votes();
@@ -182,9 +180,7 @@ fn update_parachains_with_para_record_data(
     }
 
     if let Some(para_id) = para_record.para_id() {
-        let pm = parachains
-            .entry(para_id)
-            .or_default();
+        let pm = parachains.entry(para_id).or_default();
         pm.current_group = para_record.group();
         let mut authorities: Vec<AuthorityIndex> = vec![authority_idx];
         authorities.append(&mut para_record.peers());
