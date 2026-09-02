@@ -30,10 +30,7 @@ use onet_records::{
 use rand::Rng;
 use regex::Regex;
 use serde::Deserialize;
-use std::{
-    convert::{TryFrom},
-    result::Result,
-};
+use std::{convert::TryFrom, result::Result};
 
 use subxt::utils::AccountId32;
 use subxt::{backend::legacy::LegacyRpcMethods, PolkadotConfig};
