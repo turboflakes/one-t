@@ -36,9 +36,6 @@ jobs:
       - name: Run update-metadata script
         run: bash scripts/update-metadata.sh
 
-      - name: Run update-chain-specs script
-        run: bash scripts/update-chain-specs.sh
-
       - name: Check for changes
         id: changes
         run: |
@@ -58,5 +55,5 @@ jobs:
           title: 'chore: update artifacts'
           body: |
             Automated chain specs and metadata update.
-          labels: automated, chain-specs, metadata
+          labels: automated, metadata
           delete-branch: true
