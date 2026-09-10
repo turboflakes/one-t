@@ -4571,8 +4571,8 @@ dependencies = [
  "onet-config",
  "onet-core",
  "onet-dn",
- "onet-kusama",
  "onet-matrix",
+ "onet-paseo",
  "sp-core",
  "subxt",
 ]
@@ -4603,7 +4603,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "onet-asset-hub-kusama"
+name = "onet-asset-hub-paseo"
 version = "1.19.1"
 dependencies = [
  "log",
@@ -4712,35 +4712,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "onet-kusama"
-version = "1.19.1"
-dependencies = [
- "async-recursion",
- "async-std",
- "hex",
- "log",
- "onet-api",
- "onet-asset-hub-kusama",
- "onet-cache",
- "onet-config",
- "onet-core",
- "onet-discovery",
- "onet-dn",
- "onet-matrix",
- "onet-mcda",
- "onet-people-kusama",
- "onet-pools",
- "onet-records",
- "onet-report",
- "parity-scale-codec",
- "redis",
- "serde",
- "serde_json",
- "subxt",
- "subxt-signer",
-]
-
-[[package]]
 name = "onet-matrix"
 version = "1.19.1"
 dependencies = [
@@ -4771,7 +4742,36 @@ dependencies = [
 ]
 
 [[package]]
-name = "onet-people-kusama"
+name = "onet-paseo"
+version = "1.19.1"
+dependencies = [
+ "async-recursion",
+ "async-std",
+ "hex",
+ "log",
+ "onet-api",
+ "onet-asset-hub-paseo",
+ "onet-cache",
+ "onet-config",
+ "onet-core",
+ "onet-discovery",
+ "onet-dn",
+ "onet-matrix",
+ "onet-mcda",
+ "onet-people-paseo",
+ "onet-pools",
+ "onet-records",
+ "onet-report",
+ "parity-scale-codec",
+ "redis",
+ "serde",
+ "serde_json",
+ "subxt",
+ "subxt-signer",
+]
+
+[[package]]
+name = "onet-people-paseo"
 version = "1.19.1"
 dependencies = [
  "async-recursion",

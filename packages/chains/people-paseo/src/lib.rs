@@ -55,15 +55,14 @@ pub async fn get_identity(
 
     let api = onet.people_client();
 
-    let identity_of_addr = people_runtime::storage()
-        .identity()
-        .identity_of(stash.clone());
-    match api
+    let identity_of_addr = people_runtime::storage().identity().identity_of();
+    let at = api.at_current_block().await?;
+    match at
         .storage()
-        .at_latest()
+        .try_fetch(identity_of_addr, (*stash,))
         .await?
-        .fetch(&identity_of_addr)
-        .await?
+        .map(|v| v.decode())
+        .transpose()?
     {
         Some(identity) => {
             debug!("identity {:?}", identity);
@@ -75,13 +74,13 @@ pub async fn get_identity(
             Ok(Some(identity))
         }
         None => {
-            let super_of_addr = people_runtime::storage().identity().super_of(stash.clone());
-            if let Some((parent_account, data)) = api
+            let super_of_addr = people_runtime::storage().identity().super_of();
+            if let Some((parent_account, data)) = at
                 .storage()
-                .at_latest()
+                .try_fetch(super_of_addr, (*stash,))
                 .await?
-                .fetch(&super_of_addr)
-                .await?
+                .map(|v| v.decode())
+                .transpose()?
             {
                 let sub_account_name = parse_identity_data(data);
                 return get_identity(onet, &parent_account, Some(sub_account_name.to_string()))
