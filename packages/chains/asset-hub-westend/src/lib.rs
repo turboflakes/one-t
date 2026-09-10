@@ -25,17 +25,17 @@
 )]
 pub mod asset_hub_runtime {}
 pub use asset_hub_runtime::{
-    balances::storage::types::total_issuance::TotalIssuance,
-    nomination_pools::storage::types::bonded_pools::BondedPools,
-    nomination_pools::storage::types::metadata::Metadata as PoolMetadata,
-    parachain_system::calls::types::SetValidationData,
+    balances::storage::total_issuance::Output as TotalIssuance,
+    nomination_pools::storage::bonded_pools::Output as BondedPools,
+    nomination_pools::storage::metadata::Output as PoolMetadata,
+    parachain_system::calls::SetValidationData,
     runtime_types::bounded_collections::bounded_vec::BoundedVec,
     runtime_types::frame_system::AccountInfo,
     runtime_types::pallet_balances::types::AccountData,
     runtime_types::pallet_staking_async::{ledger::StakingLedger, ActiveEraInfo, EraRewardPoints},
-    staking::storage::types::bonded_eras::BondedEras,
-    staking::storage::types::eras_total_stake::ErasTotalStake,
-    staking::storage::types::nominators::Nominators,
+    staking::storage::bonded_eras::Output as BondedEras,
+    staking::storage::eras_total_stake::Output as ErasTotalStake,
+    staking::storage::nominators::Output as Nominators,
 };
 use log::warn;
 use onet_core::error::OnetError;
@@ -56,10 +56,13 @@ pub async fn fetch_active_era_info(
 ) -> Result<ActiveEraInfo, OnetError> {
     let addr = asset_hub_runtime::storage().staking().active_era();
 
-    api.storage()
-        .at(ah_block_hash)
-        .fetch(&addr)
+    api.at_block(ah_block_hash)
         .await?
+        .storage()
+        .try_fetch(addr, ())
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
         .ok_or_else(|| {
             OnetError::from(format!(
                 "Active era not defined at block hash {ah_block_hash:?}"
@@ -92,10 +95,13 @@ pub async fn fetch_bonded_eras(
 ) -> Result<BondedEras, OnetError> {
     let addr = asset_hub_runtime::storage().staking().bonded_eras();
 
-    api.storage()
-        .at(ah_block_hash)
-        .fetch(&addr)
+    api.at_block(ah_block_hash)
         .await?
+        .storage()
+        .try_fetch(addr, ())
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
         .ok_or_else(|| {
             OnetError::from(format!(
                 "Bonded eras not defined at block hash {ah_block_hash:?}"
@@ -109,12 +115,15 @@ pub async fn fetch_eras_total_stake(
     ah_block_hash: H256,
     era: EraIndex,
 ) -> Result<ErasTotalStake, OnetError> {
-    let addr = asset_hub_runtime::storage().staking().eras_total_stake(era);
+    let addr = asset_hub_runtime::storage().staking().eras_total_stake();
 
-    api.storage()
-        .at(ah_block_hash)
-        .fetch(&addr)
+    api.at_block(ah_block_hash)
         .await?
+        .storage()
+        .try_fetch(addr, (era,))
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
         .ok_or_else(|| {
             OnetError::from(format!(
                 "Eras total stake not defined at block hash {ah_block_hash:?}"
@@ -130,12 +139,15 @@ pub async fn fetch_eras_validator_reward(
 ) -> Result<ErasTotalStake, OnetError> {
     let addr = asset_hub_runtime::storage()
         .staking()
-        .eras_validator_reward(era);
+        .eras_validator_reward();
 
-    api.storage()
-        .at(ah_block_hash)
-        .fetch(&addr)
+    api.at_block(ah_block_hash)
         .await?
+        .storage()
+        .try_fetch(addr, (era,))
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
         .ok_or_else(|| {
             OnetError::from(format!(
                 "Eras validator reward not defined at block hash {ah_block_hash:?} for era {era}"
@@ -149,12 +161,15 @@ pub async fn fetch_nominators(
     ah_block_hash: H256,
     stash: AccountId32,
 ) -> Result<Nominators, OnetError> {
-    let addr = asset_hub_runtime::storage().staking().nominators(stash);
+    let addr = asset_hub_runtime::storage().staking().nominators();
 
-    api.storage()
-        .at(ah_block_hash)
-        .fetch(&addr)
+    api.at_block(ah_block_hash)
         .await?
+        .storage()
+        .try_fetch(addr, (stash,))
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
         .ok_or_else(|| {
             OnetError::from(format!(
                 "Nominators not defined at block hash {ah_block_hash:?}"
@@ -171,10 +186,13 @@ pub async fn fetch_last_pool_id(
         .nomination_pools()
         .last_pool_id();
 
-    api.storage()
-        .at(ah_block_hash)
-        .fetch(&addr)
+    api.at_block(ah_block_hash)
         .await?
+        .storage()
+        .try_fetch(addr, ())
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
         .ok_or_else(|| {
             OnetError::PoolError(format!(
                 "Last pool ID not defined at block hash {ah_block_hash:?}"
@@ -190,12 +208,15 @@ pub async fn fetch_bonded_pools(
 ) -> Result<BondedPools, OnetError> {
     let addr = asset_hub_runtime::storage()
         .nomination_pools()
-        .bonded_pools(pool_id);
+        .bonded_pools();
 
-    api.storage()
-        .at(ah_block_hash)
-        .fetch(&addr)
+    api.at_block(ah_block_hash)
         .await?
+        .storage()
+        .try_fetch(addr, (pool_id,))
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
         .ok_or_else(|| {
             OnetError::PoolError(format!(
                 "Bonded Pool ID {pool_id} not defined at block hash {ah_block_hash:?}",
@@ -209,14 +230,15 @@ pub async fn fetch_pool_metadata(
     ah_block_hash: H256,
     pool_id: u32,
 ) -> Result<PoolMetadata, OnetError> {
-    let addr = asset_hub_runtime::storage()
-        .nomination_pools()
-        .metadata(pool_id);
+    let addr = asset_hub_runtime::storage().nomination_pools().metadata();
 
-    api.storage()
-        .at(ah_block_hash)
-        .fetch(&addr)
+    api.at_block(ah_block_hash)
         .await?
+        .storage()
+        .try_fetch(addr, (pool_id,))
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
         .ok_or_else(|| {
             OnetError::PoolError(format!(
                 "PoolMetadata ID {pool_id} not defined at block hash {ah_block_hash:?}",
@@ -230,14 +252,15 @@ pub async fn fetch_era_reward_points(
     ah_block_hash: H256,
     era: EraIndex,
 ) -> Result<Option<EraRewardPoints>, OnetError> {
-    let addr = asset_hub_runtime::storage()
-        .staking()
-        .eras_reward_points(era);
+    let addr = asset_hub_runtime::storage().staking().eras_reward_points();
 
-    api.storage()
-        .at(ah_block_hash)
-        .fetch(&addr)
-        .await
+    api.at_block(ah_block_hash)
+        .await?
+        .storage()
+        .try_fetch(addr, (era,))
+        .await?
+        .map(|v| v.decode())
+        .transpose()
         .map_err(|e| e.into())
 }
 
@@ -247,12 +270,15 @@ pub async fn fetch_bonded_controller_account(
     ah_block_hash: H256,
     stash: &AccountId32,
 ) -> Result<AccountId32, OnetError> {
-    let addr = asset_hub_runtime::storage().staking().bonded(stash.clone());
+    let addr = asset_hub_runtime::storage().staking().bonded();
 
-    api.storage()
-        .at(ah_block_hash)
-        .fetch(&addr)
+    api.at_block(ah_block_hash)
         .await?
+        .storage()
+        .try_fetch(addr, (*stash,))
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
         .ok_or_else(|| {
             OnetError::from(format!(
                 "Bonded controller not found at block hash {ah_block_hash:?} and era {stash}"
@@ -266,12 +292,15 @@ pub async fn fetch_ledger_from_controller(
     ah_block_hash: H256,
     stash: &AccountId32,
 ) -> Result<StakingLedger, OnetError> {
-    let addr = asset_hub_runtime::storage().staking().ledger(stash.clone());
+    let addr = asset_hub_runtime::storage().staking().ledger();
 
-    api.storage()
-        .at(ah_block_hash)
-        .fetch(&addr)
+    api.at_block(ah_block_hash)
         .await?
+        .storage()
+        .try_fetch(addr, (*stash,))
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
         .ok_or_else(|| {
             OnetError::from(format!(
                 "Bonded controller not found at block hash {ah_block_hash:?}"
@@ -299,12 +328,15 @@ pub async fn fetch_account_info(
     hash: H256,
     stash: AccountId32,
 ) -> Result<AccountInfo<u32, AccountData<u128>>, OnetError> {
-    let addr = asset_hub_runtime::storage().system().account(stash);
+    let addr = asset_hub_runtime::storage().system().account();
 
-    api.storage()
-        .at(hash)
-        .fetch(&addr)
+    api.at_block(hash)
         .await?
+        .storage()
+        .try_fetch(addr, (stash,))
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
         .ok_or_else(|| OnetError::from(format!("Account info not found at block hash {hash}")))
 }
 
@@ -334,10 +366,13 @@ pub async fn fetch_total_issuance(
 ) -> Result<TotalIssuance, OnetError> {
     let addr = asset_hub_runtime::storage().balances().total_issuance();
 
-    api.storage()
-        .at(hash)
-        .fetch(&addr)
+    api.at_block(hash)
         .await?
+        .storage()
+        .try_fetch(addr, ())
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
         .ok_or_else(|| OnetError::from(format!("Total issuance not found at block hash {hash}")))
 }
 
@@ -346,10 +381,11 @@ pub async fn fetch_relay_parent_block_number(
     api: &OnlineClient<PolkadotConfig>,
     hash: H256,
 ) -> Result<u64, OnetError> {
-    let extrinsics = api.blocks().at(hash).await?.extrinsics().await?;
+    let at = api.at_block(hash).await?;
+    let extrinsics = at.extrinsics().fetch().await?;
     if let Some(res) = extrinsics.find::<SetValidationData>().next() {
         let extrinsic = res?;
-        return Ok(extrinsic.value.data.validation_data.relay_parent_number as u64);
+        return Ok(extrinsic.data.validation_data.relay_parent_number as u64);
     }
 
     Err(OnetError::RelayParentNumber(hash))

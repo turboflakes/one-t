@@ -98,7 +98,7 @@ use std::{
 
 use frame_metadata::RuntimeMetadataPrefixed;
 use subxt::{
-    backend::legacy::LegacyRpcMethods,
+    rpcs::LegacyRpcMethods,
     config::substrate::{Digest, DigestItem},
     ext::{frame_metadata, subxt_core::Metadata},
     tx::TxStatus,
