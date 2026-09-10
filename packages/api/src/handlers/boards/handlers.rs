@@ -268,7 +268,7 @@ async fn generate_board_scores(
             ))
         })?;
         if let Ok(serialized_data) = redis::cmd("GET")
-            .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+            .arg(CacheKey::ValidatorProfileByAccount(stash))
             .query_async::<Connection, String>(&mut conn as &mut Connection)
             .await
         {

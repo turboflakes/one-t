@@ -13,18 +13,18 @@ members = [
     "packages/report",
     "packages/chains",
     "packages/matrix",
-    "packages/chains/asset-hub-kusama",
-    "packages/chains/kusama",
-    "packages/chains/people-kusama",
+    # "packages/chains/asset-hub-kusama",
+    # "packages/chains/kusama",
+    # "packages/chains/people-kusama",
     "packages/chains/asset-hub-polkadot",
     "packages/chains/people-polkadot",
     "packages/chains/polkadot",
-    "packages/chains/asset-hub-westend",
-    "packages/chains/people-westend",
-    "packages/chains/westend",
-    "packages/chains/asset-hub-paseo",
-    "packages/chains/paseo",
-    "packages/chains/people-paseo",
+    # "packages/chains/asset-hub-westend",
+    # "packages/chains/people-westend",
+    # "packages/chains/westend",
+    # "packages/chains/asset-hub-paseo",
+    # "packages/chains/paseo",
+    # "packages/chains/people-paseo",
 ]
 
 resolver = "2"
@@ -75,9 +75,9 @@ codec = { package = "parity-scale-codec", version = "3.7.4", default-features = 
 scale-encode = { version = "0.10.0", default-features = false }
 scale-decode = { version = "0.16.0", default-features = false }
 # Subxt crates:
-subxt = { version = "0.43.0", features = ["native", "reconnecting-rpc-client"] }
-subxt-signer = { version = "0.43.0", features = ["subxt"] }
-subxt-metadata = { version = "0.43.0", features = ["std"] }
+subxt = { version = "0.50.3", features = ["native", "reconnecting-rpc-client"] }
+subxt-signer = { version = "0.50.3", features = ["subxt"] }
+subxt-metadata = { version = "0.50.3", features = ["std"] }
 sp-core = "36.1.0"
 sp-core-hashing = "16.0.0"
 #

@@ -45,11 +45,13 @@ use std::{
     time::Duration,
 };
 use subxt::{
-    backend::{
-        legacy::{rpc_methods::StorageKey, LegacyRpcMethods},
-        rpc::reconnecting_rpc_client::{ExponentialBackoff, RpcClient},
+    config::RpcConfigFor,
+    rpcs::{
+        client::reconnecting_rpc_client::{ExponentialBackoff, RpcClient},
+        methods::legacy::StorageKey,
+        utils::validate_url_is_secure,
+        LegacyRpcMethods,
     },
-    ext::subxt_rpcs::utils::validate_url_is_secure,
     utils::AccountId32,
     OnlineClient, PolkadotConfig,
 };
@@ -111,7 +113,7 @@ async fn create_para_client_from_supported_runtime(
 async fn create_para_legacy_rpc_from_supported_runtime(
     runtime: SupportedRuntime,
     para_type: SupportedParasRuntimeType,
-) -> Result<Option<LegacyRpcMethods<PolkadotConfig>>, OnetError> {
+) -> Result<Option<LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>>, OnetError> {
     // Check runtime availability and get RPC URL based on client type
     let (is_available, rpc_url) = match para_type {
         SupportedParasRuntimeType::People => (
@@ -131,7 +133,8 @@ async fn create_para_legacy_rpc_from_supported_runtime(
 
     // Create and return client
     let rpc_client = build_rpc_reconnecting_client(&rpc_url).await?;
-    let legacy_rpc = LegacyRpcMethods::<PolkadotConfig>::new(rpc_client.clone().into());
+    let legacy_rpc =
+        LegacyRpcMethods::<RpcConfigFor<PolkadotConfig>>::new(rpc_client.clone().into());
     Ok(Some(legacy_rpc))
 }
 
@@ -152,7 +155,7 @@ async fn create_asset_hub_client_from_supported_runtime(
 /// Convenience wrapper for creating an Asset Hub legacy rpc client
 async fn create_asset_hub_legacy_rpc_from_supported_runtime(
     runtime: SupportedRuntime,
-) -> Result<Option<LegacyRpcMethods<PolkadotConfig>>, OnetError> {
+) -> Result<Option<LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>>, OnetError> {
     create_para_legacy_rpc_from_supported_runtime(runtime, SupportedParasRuntimeType::AssetHub)
         .await
 }
@@ -178,10 +181,10 @@ struct NodeConnection {
 #[derive(Debug)]
 pub struct SubstrateClients {
     pub relay_client: OnlineClient<PolkadotConfig>,
-    pub relay_rpc: LegacyRpcMethods<PolkadotConfig>,
+    pub relay_rpc: LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>,
     pub people_client: Option<OnlineClient<PolkadotConfig>>,
     pub asset_hub_client: Option<OnlineClient<PolkadotConfig>>,
-    pub asset_hub_rpc: Option<LegacyRpcMethods<PolkadotConfig>>,
+    pub asset_hub_rpc: Option<LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>>,
     pub runtime: SupportedRuntime,
 }
 
@@ -205,7 +208,8 @@ pub async fn create_or_await_substrate_node_clients(config: Config) -> Substrate
 
 async fn attempt_connection(config: &Config) -> Result<SubstrateClients, OnetError> {
     let rpc_client = create_substrate_rpc_client_from_config(config.clone()).await?;
-    let relay_rpc = LegacyRpcMethods::<PolkadotConfig>::new(rpc_client.clone().into());
+    let relay_rpc =
+        LegacyRpcMethods::<RpcConfigFor<PolkadotConfig>>::new(rpc_client.clone().into());
 
     let node_connection = fetch_node_connection_details(&relay_rpc).await?;
     configure_chain_settings(&node_connection);
@@ -235,7 +239,7 @@ async fn attempt_connection(config: &Config) -> Result<SubstrateClients, OnetErr
 }
 
 async fn fetch_node_connection_details(
-    legacy_rpc: &LegacyRpcMethods<PolkadotConfig>,
+    legacy_rpc: &LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>,
 ) -> Result<NodeConnection, OnetError> {
     Ok(NodeConnection {
         chain: legacy_rpc.system_chain().await.unwrap_or_default(),
@@ -279,14 +283,14 @@ async fn handle_connection_error(error: &OnetError, ws_url: &str) {
 //     config: Config,
 // ) -> (
 //     OnlineClient<PolkadotConfig>,
-//     LegacyRpcMethods<PolkadotConfig>,
+//     LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>,
 //     Option<OnlineClient<PolkadotConfig>>,
 //     SupportedRuntime,
 // ) {
 //     loop {
 //         match create_substrate_rpc_client_from_config(config.clone()).await {
 //             Ok(rpc_client) => {
-//                 let legacy_rpc = LegacyRpcMethods::<PolkadotConfig>::new(rpc_client.clone().into());
+//                 let legacy_rpc = LegacyRpcMethods::<RpcConfigFor<PolkadotConfig>>::new(rpc_client.clone().into());
 //                 let chain = legacy_rpc.system_chain().await.unwrap_or_default();
 //                 let name = legacy_rpc.system_name().await.unwrap_or_default();
 //                 let version = legacy_rpc.system_version().await.unwrap_or_default();
@@ -354,14 +358,14 @@ pub struct Onet {
     config: Config,
     runtime: SupportedRuntime,
     client: OnlineClient<PolkadotConfig>,
-    rpc: LegacyRpcMethods<PolkadotConfig>,
+    rpc: LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>,
     // Note: people_client is optional to easily enable/disable identity logic from people's chain
     // or relay chain
     people_client_option: Option<OnlineClient<PolkadotConfig>>,
     // Note: asset_hub_client is optional to easily enable/disable staking logic from asset hub chain
     // or relay chain
     asset_hub_client_option: Option<OnlineClient<PolkadotConfig>>,
-    asset_hub_rpc_option: Option<LegacyRpcMethods<PolkadotConfig>>,
+    asset_hub_rpc_option: Option<LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>>,
     matrix: Matrix,
     pub cache: RedisPool,
 }
@@ -421,11 +425,11 @@ impl Onet {
     }
 
     // DEPRECATE, use relay_rpc
-    pub fn rpc(&self) -> &LegacyRpcMethods<PolkadotConfig> {
+    pub fn rpc(&self) -> &LegacyRpcMethods<RpcConfigFor<PolkadotConfig>> {
         &self.rpc
     }
 
-    pub fn relay_rpc(&self) -> &LegacyRpcMethods<PolkadotConfig> {
+    pub fn relay_rpc(&self) -> &LegacyRpcMethods<RpcConfigFor<PolkadotConfig>> {
         &self.rpc
     }
 
@@ -441,7 +445,7 @@ impl Onet {
         &self.asset_hub_client_option
     }
 
-    pub fn asset_hub_rpc(&self) -> &Option<LegacyRpcMethods<PolkadotConfig>> {
+    pub fn asset_hub_rpc(&self) -> &Option<LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>> {
         &self.asset_hub_rpc_option
     }
 

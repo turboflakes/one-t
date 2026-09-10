@@ -1800,12 +1800,10 @@ impl Subscribers {
     pub fn subscribe(&mut self, account: AccountId32, user_id: UserID, param: Option<Param>) {
         let key = EpochKey(self.current_epoch);
         if let Some(s) = self.subscribers.get_mut(&key) {
-            s.push((account.clone(), user_id.to_string(), param.clone()));
+            s.push((account, user_id.to_string(), param.clone()));
         } else {
-            self.subscribers.insert(
-                key,
-                vec![(account.clone(), user_id.to_string(), param.clone())],
-            );
+            self.subscribers
+                .insert(key, vec![(account, user_id.to_string(), param.clone())]);
         }
         info!(
             "{} subscribed ({}) report for epoch {} era {}",
@@ -2182,8 +2180,7 @@ mod tests {
         // assert_eq!(records.end_block(), None);
 
         //
-        let ar =
-            AuthorityRecord::with_index_address_and_points(authority_idx, account.clone(), 300);
+        let ar = AuthorityRecord::with_index_address_and_points(authority_idx, account, 300);
         assert_eq!(ar.authority_index(), Some(authority_idx));
         assert_eq!(ar.address(), Some(&account));
         assert_eq!(ar.start_points(), 300);

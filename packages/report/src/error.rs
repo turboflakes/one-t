@@ -28,7 +28,7 @@ pub enum ReportError {
     #[error("IOError error: {0}")]
     IOError(#[from] std::io::Error),
     #[error("RPC error: {0}")]
-    RpcError(#[from] subxt::ext::subxt_rpcs::Error),
+    RpcError(#[from] subxt::rpcs::Error),
     #[error("Other error: {0}")]
     Other(String),
 }

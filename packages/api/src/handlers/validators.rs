@@ -450,7 +450,7 @@ async fn get_authority_key_from_stash_and_epoch(
     epoch_index: EpochIndex,
     conn: &mut Connection,
 ) -> Result<AuthorityKey, CacheError> {
-    let key = CacheKey::AuthorityKeyByAccountAndSession(account_id.clone(), epoch_index);
+    let key = CacheKey::AuthorityKeyByAccountAndSession(*account_id, epoch_index);
 
     let data: AuthorityKeyCache = redis::cmd("HGETALL")
         .arg(key.clone())
@@ -524,7 +524,7 @@ async fn get_validator_by_authority_key(
             if let Ok(stash) = AccountId32::from_str(stash) {
                 // NOTE: Fetching validator profile from Redis cache handling Nil cases
                 if let Ok(redis::Value::Data(raw_data)) = redis::cmd("GET")
-                    .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+                    .arg(CacheKey::ValidatorProfileByAccount(stash))
                     .query_async::<Connection, redis::Value>(&mut conn as &mut Connection)
                     .await
                 {
@@ -562,7 +562,7 @@ async fn get_validator_by_stash_and_index(
 
     let authority_key_data: AuthorityKeyCache = redis::cmd("HGETALL")
         .arg(CacheKey::AuthorityKeyByAccountAndSession(
-            stash.clone(),
+            stash,
             session_index,
         ))
         .query_async(&mut conn as &mut Connection)
@@ -679,7 +679,7 @@ pub async fn get_validators(
                 i = None;
             } else {
                 let (validator_data, mut authority_key) = get_validator_by_stash_and_index(
-                    stash.clone(),
+                    stash,
                     session_index,
                     params.show_stats,
                     params.show_summary,
@@ -1014,7 +1014,7 @@ pub async fn get_validators(
             for (stash, counter) in nominees_vec {
                 if let Ok(authority_key_data) = redis::cmd("HGETALL")
                     .arg(CacheKey::AuthorityKeyByAccountAndSession(
-                        stash.clone(),
+                        stash,
                         requested_session_index,
                     ))
                     .query_async::<Connection, AuthorityKeyCache>(&mut conn as &mut Connection)
@@ -1023,7 +1023,7 @@ pub async fn get_validators(
                     if authority_key_data.is_empty() {
                         // pull only profile
                         if let Ok(serialized_data) = redis::cmd("GET")
-                            .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+                            .arg(CacheKey::ValidatorProfileByAccount(stash))
                             .query_async::<Connection, String>(&mut conn as &mut Connection)
                             .await
                         {
@@ -1113,7 +1113,7 @@ pub async fn get_validator_by_stash(
     };
 
     let (data, _) = get_validator_by_stash_and_index(
-        stash.clone(),
+        stash,
         session_index,
         params.show_stats,
         params.show_summary,
@@ -1162,7 +1162,7 @@ pub async fn get_peer_by_authority(
 
     let authority_key_data: AuthorityKeyCache = redis::cmd("HGETALL")
         .arg(CacheKey::AuthorityKeyByAccountAndSession(
-            stash.clone(),
+            stash,
             session_index,
         ))
         .query_async(&mut conn as &mut Connection)
@@ -1211,7 +1211,7 @@ pub async fn get_validator_profile_by_stash(
     })?;
 
     let serialized_data: String = redis::cmd("GET")
-        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+        .arg(CacheKey::ValidatorProfileByAccount(stash))
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
@@ -1266,7 +1266,7 @@ async fn calculate_validator_grade_by_stash(
                 last = None;
             } else {
                 let (validator_data, _) = get_validator_by_stash_and_index(
-                    stash.clone(),
+                    stash,
                     session_index,
                     false,
                     true,
@@ -1580,7 +1580,7 @@ pub async fn update_cohort_validators_by_session(
             ))
         })?;
         if let Ok(serialized) = redis::cmd("GET")
-            .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+            .arg(CacheKey::ValidatorProfileByAccount(stash))
             .query_async::<Connection, String>(&mut conn as &mut Connection)
             .await
         {
@@ -1596,10 +1596,10 @@ pub async fn update_cohort_validators_by_session(
             redis::pipe()
                 .atomic()
                 .cmd("SET")
-                .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+                .arg(CacheKey::ValidatorProfileByAccount(stash))
                 .arg(serialized)
                 .cmd("EXPIRE")
-                .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+                .arg(CacheKey::ValidatorProfileByAccount(stash))
                 .arg(config.cache_writer_prunning)
                 .query_async::<_, ()>(&mut conn as &mut Connection)
                 .await

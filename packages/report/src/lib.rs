@@ -33,7 +33,7 @@ use serde::Deserialize;
 use std::{convert::TryFrom, result::Result};
 
 use subxt::utils::AccountId32;
-use subxt::{backend::legacy::LegacyRpcMethods, PolkadotConfig};
+use subxt::{config::RpcConfigFor, rpcs::LegacyRpcMethods, PolkadotConfig};
 
 use flate2::write;
 use flate2::Compression;
@@ -164,7 +164,9 @@ pub struct Network {
 }
 
 impl Network {
-    pub async fn load(rpc: &LegacyRpcMethods<PolkadotConfig>) -> Result<Network, ReportError> {
+    pub async fn load(
+        rpc: &LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>,
+    ) -> Result<Network, ReportError> {
         let properties = rpc.system_properties().await?;
 
         // Get Network name

@@ -38,12 +38,8 @@ pub enum OnetError {
     MatrixError(#[from] onet_matrix::error::MatrixError),
     #[error("Subxt error: {0}")]
     SubxtError(Box<subxt::Error>),
-    #[error("SubxtCore error: {0}")]
-    SubxtCoreError(Box<subxt::ext::subxt_core::Error>),
     #[error("RPC error: {0}")]
-    RpcError(#[from] subxt::ext::subxt_rpcs::Error),
-    #[error("Metadata error: {0}")]
-    MetadataError(#[from] subxt::error::MetadataError),
+    RpcError(#[from] subxt::rpcs::Error),
     #[error("Metadata Decoding error: {0}")]
     MetadataDecoding(#[from] MetadataTryFromError),
     #[error("Codec error: {0}")]
@@ -80,12 +76,32 @@ impl From<subxt::Error> for OnetError {
     }
 }
 
-/// Convert subxt::ext::subxt_core::Error to OnetError
-impl From<subxt::ext::subxt_core::Error> for OnetError {
-    fn from(error: subxt::ext::subxt_core::Error) -> Self {
-        OnetError::SubxtCoreError(Box::new(error))
-    }
+/// Convert the various subxt error types (each specific to one client operation
+/// since subxt 0.50) into OnetError, by first funneling them through subxt::Error.
+macro_rules! impl_from_subxt_error {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl From<$ty> for OnetError {
+                fn from(error: $ty) -> Self {
+                    OnetError::from(subxt::Error::from(error))
+                }
+            }
+        )*
+    };
 }
+
+impl_from_subxt_error!(
+    subxt::error::OnlineClientError,
+    subxt::error::OnlineClientAtBlockError,
+    subxt::error::BlocksError,
+    subxt::error::EventsError,
+    subxt::error::StorageError,
+    subxt::error::ExtrinsicError,
+    subxt::error::TransactionProgressError,
+    subxt::error::StorageValueError,
+    subxt::error::StorageKeyError,
+    subxt::error::TransactionEventsError,
+);
 
 /// Convert String to OnetError
 impl From<String> for OnetError {

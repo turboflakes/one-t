@@ -520,13 +520,13 @@ async fn cache_authority_key(
         .atomic()
         .cmd("HSET")
         .arg(CacheKey::AuthorityKeyByAccountAndSession(
-            stash.clone(),
+            *stash,
             current_epoch,
         ))
         .arg(data)
         .cmd("EXPIRE")
         .arg(CacheKey::AuthorityKeyByAccountAndSession(
-            stash.clone(),
+            *stash,
             current_epoch,
         ))
         .arg(config.cache_writer_prunning)
@@ -663,10 +663,10 @@ pub async fn cache_validator_profile(
     redis::pipe()
         .atomic()
         .cmd("SET")
-        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+        .arg(CacheKey::ValidatorProfileByAccount(*stash))
         .arg(serialized)
         .cmd("EXPIRE")
-        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+        .arg(CacheKey::ValidatorProfileByAccount(*stash))
         .arg(config.cache_writer_prunning)
         .cmd("SADD")
         .arg(CacheKey::ValidatorAccountsBySession(current_epoch))
@@ -762,10 +762,10 @@ pub async fn cache_validator_profile_only(
     redis::pipe()
         .atomic()
         .cmd("SET")
-        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+        .arg(CacheKey::ValidatorProfileByAccount(*stash))
         .arg(serialized)
         .cmd("EXPIRE")
-        .arg(CacheKey::ValidatorProfileByAccount(stash.clone()))
+        .arg(CacheKey::ValidatorProfileByAccount(*stash))
         .arg(config.cache_writer_prunning)
         .query_async::<_, ()>(cache)
         .await
