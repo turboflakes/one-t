@@ -7,6 +7,10 @@
 # cargo install subxt-cli --force
 BASE="packages/chains"
 
+# Where to write the spec versions fetched in this run.
+# Override with the METADATA_VERSIONS_FILE env var (e.g. to keep it out of the repo).
+VERSIONS_FILE="${METADATA_VERSIONS_FILE:-metadata_versions.md}"
+
 fetch_metadata() {
   local chain="$1"      # e.g. "westend", "asset-hub-westend", "people-westend"
   local host="$2"       # e.g. "westend.rpc.turboflakes.io"
@@ -49,6 +53,13 @@ fetch_metadata "people-westend"  "people-westend.rpc.turboflakes.io"
 fetch_metadata "people-paseo"    "people-paseo.rpc.turboflakes.io"
 fetch_metadata "people-kusama"   "people-kusama.rpc.turboflakes.io"
 fetch_metadata "people-polkadot" "people-polkadot.rpc.turboflakes.io"
+
+# Report all spec versions, flagging the chains whose metadata actually changed.
+changed_chains=$(git status --porcelain -- "$BASE" \
+  | awk '{print $2}' \
+  | sed -E "s#$BASE/([^/]+)/.*#\1#" \
+  | sort -u)
+bash "$(dirname "$0")/print-metadata-versions.sh" $changed_chains > "$VERSIONS_FILE"
 
 # Generate runtime API client code from metadata.
 

@@ -34,6 +34,8 @@ jobs:
         run: cargo install subxt-cli --locked --features chain-spec-pruning
 
       - name: Run update-metadata script
+        env:
+          METADATA_VERSIONS_FILE: ${{ runner.temp }}/metadata_versions.md
         run: bash scripts/update-metadata.sh
 
       - name: Check for changes
@@ -45,6 +47,17 @@ jobs:
             echo "has_changes=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Build PR body
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          {
+            echo "Automated chain specs and metadata update."
+            echo
+            echo '```'
+            cat "${{ runner.temp }}/metadata_versions.md"
+            echo '```'
+          } > "${{ runner.temp }}/pr_body.md"
+
       - name: Create Pull Request
         if: steps.changes.outputs.has_changes == 'true'
         uses: peter-evans/create-pull-request@v7
@@ -53,7 +66,6 @@ jobs:
           branch: chore/update-artifacts
           commit-message: 'chore: update artifacts'
           title: 'chore: update artifacts'
-          body: |
-            Automated chain specs and metadata update.
+          body-path: ${{ runner.temp }}/pr_body.md
           labels: automated, metadata
           delete-branch: true
