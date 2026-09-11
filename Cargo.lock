@@ -4571,9 +4571,7 @@ dependencies = [
  "onet-config",
  "onet-core",
  "onet-dn",
- "onet-kusama",
  "onet-matrix",
- "onet-paseo",
  "onet-polkadot",
  "sp-core",
  "subxt",
@@ -4602,32 +4600,6 @@ dependencies = [
  "serde_json",
  "subxt",
  "thiserror 1.0.69",
-]
-
-[[package]]
-name = "onet-asset-hub-kusama"
-version = "1.20.0"
-dependencies = [
- "log",
- "onet-core",
- "onet-records",
- "parity-scale-codec",
- "scale-decode",
- "scale-encode",
- "subxt",
-]
-
-[[package]]
-name = "onet-asset-hub-paseo"
-version = "1.20.0"
-dependencies = [
- "log",
- "onet-core",
- "onet-records",
- "parity-scale-codec",
- "scale-decode",
- "scale-encode",
- "subxt",
 ]
 
 [[package]]
@@ -4740,35 +4712,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "onet-kusama"
-version = "1.20.0"
-dependencies = [
- "async-recursion",
- "async-std",
- "hex",
- "log",
- "onet-api",
- "onet-asset-hub-kusama",
- "onet-cache",
- "onet-config",
- "onet-core",
- "onet-discovery",
- "onet-dn",
- "onet-matrix",
- "onet-mcda",
- "onet-people-kusama",
- "onet-pools",
- "onet-records",
- "onet-report",
- "parity-scale-codec",
- "redis",
- "serde",
- "serde_json",
- "subxt",
- "subxt-signer",
-]
-
-[[package]]
 name = "onet-matrix"
 version = "1.20.0"
 dependencies = [
@@ -4796,57 +4739,6 @@ dependencies = [
  "sp-core-hashing",
  "subxt",
  "thiserror 1.0.69",
-]
-
-[[package]]
-name = "onet-paseo"
-version = "1.20.0"
-dependencies = [
- "async-recursion",
- "async-std",
- "hex",
- "log",
- "onet-api",
- "onet-asset-hub-paseo",
- "onet-cache",
- "onet-config",
- "onet-core",
- "onet-discovery",
- "onet-dn",
- "onet-matrix",
- "onet-mcda",
- "onet-people-paseo",
- "onet-pools",
- "onet-records",
- "onet-report",
- "parity-scale-codec",
- "redis",
- "serde",
- "serde_json",
- "subxt",
- "subxt-signer",
-]
-
-[[package]]
-name = "onet-people-kusama"
-version = "1.20.0"
-dependencies = [
- "async-recursion",
- "log",
- "onet-core",
- "onet-records",
- "subxt",
-]
-
-[[package]]
-name = "onet-people-paseo"
-version = "1.20.0"
-dependencies = [
- "async-recursion",
- "log",
- "onet-core",
- "onet-records",
- "subxt",
 ]
 
 [[package]]
