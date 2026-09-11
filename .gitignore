@@ -9,3 +9,4 @@
 .nominator*
 bump-version*
 /tmp
+.claude/settings.local.json
