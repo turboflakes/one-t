@@ -2242,8 +2242,11 @@ pub async fn try_run_cache_nomination_pools_stats(
         return Ok(());
     }
 
-    // collect nomination stats every minute
-    if (ah_block_number as f64 % 10.0_f64) == 0.0_f64 {
+    // Collect nomination stats every `pools_stats_cache_block_interval` AH blocks.
+    // Note: cache_nomination_pools_stats can take over a minute to run against a large
+    // pool set, so too short an interval here causes overlapping in-flight runs, each
+    // opening fresh RPC connections via Onet::new().
+    if ah_block_number.is_multiple_of(config.pools_stats_cache_block_interval) {
         async_std::task::spawn(async move {
             if let Err(e) =
                 cache_nomination_pools_stats(epoch_index, ah_block_number, ah_block_hash).await

@@ -176,6 +176,13 @@ fn default_pools_maximum_nominations() -> u32 {
     16
 }
 
+/// provides default value for pools_stats_cache_block_interval if
+/// ONET_POOLS_STATS_CACHE_BLOCK_INTERVAL env var is not set
+/// example: 220 AH blocks ~= 10 minutes at ~2.72s per block
+fn default_pools_stats_cache_block_interval() -> u64 {
+    220
+}
+
 /// provides default value for nomination_pools_nominate_rate if ONET_MAXIMUM_TOP_RANKING env var is not set
 fn default_maximum_top_ranking() -> u32 {
     16
@@ -350,6 +357,8 @@ pub struct Config {
     pub pools_minimum_sessions: u32,
     #[serde(default = "default_pools_maximum_nominations")]
     pub pools_maximum_nominations: u32,
+    #[serde(default = "default_pools_stats_cache_block_interval")]
+    pub pools_stats_cache_block_interval: u64,
     #[serde(default)]
     pub pools_featured_nominees: Vec<String>,
     // matrix configuration
