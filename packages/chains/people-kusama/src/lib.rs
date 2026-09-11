@@ -21,10 +21,11 @@
 //
 use async_recursion::async_recursion;
 use log::debug;
-use onet_core::{error::OnetError, Onet};
+use onet_core::error::OnetError;
 use onet_records::Identity;
 use std::result::Result;
 use subxt::utils::AccountId32;
+use subxt::{OnlineClientAtBlock, PolkadotConfig};
 
 #[subxt::subxt(
     runtime_metadata_path = "artifacts/metadata/people_kusama_metadata.scale",
@@ -32,10 +33,16 @@ use subxt::utils::AccountId32;
 )]
 mod people_runtime {}
 
+use people_runtime::identity::storage::{
+    identity_of::Output as IdentityOf, super_of::Output as SuperOf,
+};
 use people_runtime::runtime_types::pallet_identity::types::Data;
 
-pub async fn get_display_name(onet: &Onet, stash: &AccountId32) -> Result<String, OnetError> {
-    if let Some(identity) = get_identity(onet, stash, None).await? {
+pub async fn get_display_name(
+    at: &OnlineClientAtBlock<PolkadotConfig>,
+    stash: &AccountId32,
+) -> Result<String, OnetError> {
+    if let Some(identity) = get_identity(at, stash, None).await? {
         Ok(identity.to_string())
     } else {
         let s = &stash.to_string();
@@ -43,53 +50,62 @@ pub async fn get_display_name(onet: &Onet, stash: &AccountId32) -> Result<String
     }
 }
 
+/// Fetch the identity for a stash, following `super_of` links up to the parent
+/// account when the stash itself has no identity set.
 #[async_recursion]
 pub async fn get_identity(
-    onet: &Onet,
+    at: &OnlineClientAtBlock<PolkadotConfig>,
     stash: &AccountId32,
     sub_account_name: Option<String>,
 ) -> Result<Option<Identity>, OnetError> {
-    if !onet.runtime().is_people_runtime_available() {
-        return Ok(None);
+    // First, fetch the main identity data
+    if let Some(registration) = fetch_identity_of(at, stash).await? {
+        debug!("identity {:?}", registration);
+        let parent = parse_identity_data(registration.info.display);
+        let identity = match sub_account_name {
+            Some(child) => Identity::with_name_and_sub(parent, child),
+            None => Identity::with_name(parent),
+        };
+        return Ok(Some(identity));
     }
 
-    let api = onet.people_client();
+    // If no main identity, check if this is a sub-account
+    if let Some((parent_account, sub_data)) = fetch_super_of(at, stash).await? {
+        let sub_account_name = parse_identity_data(sub_data);
+        return get_identity(at, &parent_account, Some(sub_account_name.to_string())).await;
+    }
 
-    let identity_of_addr = people_runtime::storage().identity().identity_of();
-    let at = api.at_current_block().await?;
-    match at
-        .storage()
-        .try_fetch(identity_of_addr, (*stash,))
+    Ok(None)
+}
+
+/// Fetch the `identity_of` registration for a stash, at an already resolved block.
+async fn fetch_identity_of(
+    at: &OnlineClientAtBlock<PolkadotConfig>,
+    stash: &AccountId32,
+) -> Result<Option<IdentityOf>, OnetError> {
+    let addr = people_runtime::storage().identity().identity_of();
+
+    at.storage()
+        .try_fetch(addr, (*stash,))
         .await?
         .map(|v| v.decode())
-        .transpose()?
-    {
-        Some(identity) => {
-            debug!("identity {:?}", identity);
-            let parent = parse_identity_data(identity.info.display);
-            let identity = match sub_account_name {
-                Some(child) => Identity::with_name_and_sub(parent, child),
-                None => Identity::with_name(parent),
-            };
-            Ok(Some(identity))
-        }
-        None => {
-            let super_of_addr = people_runtime::storage().identity().super_of();
-            if let Some((parent_account, data)) = at
-                .storage()
-                .try_fetch(super_of_addr, (*stash,))
-                .await?
-                .map(|v| v.decode())
-                .transpose()?
-            {
-                let sub_account_name = parse_identity_data(data);
-                return get_identity(onet, &parent_account, Some(sub_account_name.to_string()))
-                    .await;
-            } else {
-                Ok(None)
-            }
-        }
-    }
+        .transpose()
+        .map_err(OnetError::from)
+}
+
+/// Fetch the `super_of` entry for a stash, at an already resolved block.
+async fn fetch_super_of(
+    at: &OnlineClientAtBlock<PolkadotConfig>,
+    stash: &AccountId32,
+) -> Result<Option<SuperOf>, OnetError> {
+    let addr = people_runtime::storage().identity().super_of();
+
+    at.storage()
+        .try_fetch(addr, (*stash,))
+        .await?
+        .map(|v| v.decode())
+        .transpose()
+        .map_err(OnetError::from)
 }
 
 //
