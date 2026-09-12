@@ -326,6 +326,8 @@ pub struct Config {
     #[serde(default)]
     pub is_debug: bool,
     #[serde(default)]
+    pub backfill_sessions: String,
+    #[serde(default)]
     pub initial_block_number: u64,
     #[serde(default)]
     pub start_from_cached_block_enabled: bool,
@@ -569,6 +571,15 @@ fn get_config() -> Config {
         ),
     )
     .arg(
+      Arg::with_name("backfill-sessions")
+        .long("backfill-sessions")
+        .takes_value(true)
+        .value_name("SESSIONS")
+        .help(
+          "Recomputes and caches session stats for a comma-separated list of already-elapsed session indices (ranges allowed, e.g. 13795,13796,13800-13802), then exits without starting the event-subscription pipeline, Matrix, or API server.",
+        ),
+    )
+    .arg(
       Arg::with_name("data-path")
         .long("data-path")
         .takes_value(true)
@@ -621,6 +632,10 @@ fn get_config() -> Config {
 
     if let Some(data_path) = matches.value_of("data-path") {
         env::set_var("ONET_DATA_PATH", data_path);
+    }
+
+    if let Some(backfill_sessions) = matches.value_of("backfill-sessions") {
+        env::set_var("ONET_BACKFILL_SESSIONS", backfill_sessions);
     }
 
     if let Some(substrate_ws_url) = matches.value_of("substrate-ws-url") {

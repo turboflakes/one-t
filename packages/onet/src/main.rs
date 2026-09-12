@@ -20,6 +20,8 @@
 // SOFTWARE.
 //
 
+mod offline;
+
 use actix::Actor;
 use actix_cors::Cors;
 use actix_web::{dev::ServerHandle, http, middleware, rt, web, App, HttpServer};
@@ -59,6 +61,13 @@ fn main() {
         env!("CARGO_PKG_VERSION"),
         env!("CARGO_PKG_DESCRIPTION")
     );
+
+    // if backfill sessions are configured, this will run and exit before starting the APP
+    if !config.backfill_sessions.is_empty() {
+        let session_indices = offline::parse_backfill_sessions(&config.backfill_sessions);
+        rt::System::new().block_on(offline::backfill_sessions(session_indices));
+        return;
+    }
 
     start();
 }

@@ -2763,9 +2763,9 @@ pub async fn cache_session_stats_records(
 
     // Fetch all validators
     let validators_addr = asset_hub_runtime::storage().staking().validators();
-    let at = ah_api.at_block(ah_block_hash).await?;
+    let at_ah = ah_api.at_block(ah_block_hash).await?;
     let at_people = onet.people_client().at_current_block().await?;
-    let mut iter = at.storage().iter(validators_addr, ()).await?;
+    let mut iter = at_ah.storage().iter(validators_addr, ()).await?;
     while let Some(Ok(storage_resp)) = iter.next().await {
         // validator stash address
         let stash = get_account_id_from_storage_key(storage_resp.key_bytes().to_vec());
@@ -2773,13 +2773,13 @@ pub async fn cache_session_stats_records(
         // create a new validator instance
         let mut profile = ValidatorProfileRecord::new(stash);
         // validator controller address
-        let Ok(controller) = fetch_bonded_controller_account(&at, &stash).await else {
+        let Ok(controller) = fetch_bonded_controller_account(&at_ah, &stash).await else {
             warn!("Failed to fetch bonded_controller for stash {:?}", stash);
             continue;
         };
         profile.controller = Some(controller);
         // get own stake
-        profile.own_stake = fetch_own_stake_via_stash(&at, &controller).await?;
+        profile.own_stake = fetch_own_stake_via_stash(&at_ah, &controller).await?;
 
         // deconstruct commisssion
         let Perbill(commission) = prefs.commission;
@@ -2879,15 +2879,15 @@ pub async fn cache_session_stats_records(
     // Note: era_reward_points are asynchronously sent RC->AH at the beginning of each session
     // We want to know which points were collected up to the last block of the session, so we need to gather the active era
     // from the parent AH block
-    let active_era_info =
-        fetch_active_era_info(&ah_api.at_block(ah_parent_block_hash).await?).await?;
+    let at_ah_parent = ah_api.at_block(ah_parent_block_hash).await?;
+    let active_era_info = fetch_active_era_info(&at_ah_parent).await?;
     let era_index = active_era_info.index;
 
     let storage_addr = relay_runtime::storage()
         .staking_ah_client()
         .validator_points();
-    let at = rc_api.at_block(rc_parent_block_hash).await?;
-    let mut iter = at.storage().iter(storage_addr, ()).await?;
+    let at_rc_parent = rc_api.at_block(rc_parent_block_hash).await?;
+    let mut iter = at_rc_parent.storage().iter(storage_addr, ()).await?;
     while let Some(Ok(storage_resp)) = iter.next().await {
         let stash = get_account_id_from_storage_key(storage_resp.key_bytes().to_vec());
         let points = storage_resp.value().decode()?;
@@ -2924,15 +2924,15 @@ pub async fn cache_session_stats_records(
     // general session stats
     //
     // total issuance
-    let total_issuance = fetch_total_issuance(&at).await?;
+    let total_issuance = fetch_total_issuance(&at_ah).await?;
     nss.total_issuance = total_issuance;
 
     // total staked
-    let total_staked = fetch_eras_total_stake(&at, era_index).await?;
+    let total_staked = fetch_eras_total_stake(&at_ah, era_index).await?;
     nss.total_staked = total_staked;
 
     // total rewarded from previous era
-    let last_rewarded = fetch_eras_validator_reward(&at, era_index - 1).await?;
+    let last_rewarded = fetch_eras_validator_reward(&at_ah, era_index - 1).await?;
     nss.last_rewarded = last_rewarded;
 
     let subsets = vec![Subset::C100, Subset::NONTVP, Subset::TVP];
@@ -3229,7 +3229,7 @@ async fn try_fetch_asset_hub_block_hash(
 }
 
 /// Fetch asset hub block header info at the specified block hash
-async fn fetch_asset_hub_block_info(
+pub(crate) async fn fetch_asset_hub_block_info(
     rpc: &LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>,
     hash: H256,
 ) -> Result<(BlockNumber, H256), OnetError> {
@@ -3294,7 +3294,7 @@ async fn fetch_relay_chain_block_hash(
 
 /// Try to fetch relay chain block hash from a specified block number, wait if not available
 /// Note: Cap retries up to 100 times ~= 10minutes
-async fn try_fetch_relay_chain_block_hash(
+pub(crate) async fn try_fetch_relay_chain_block_hash(
     rpc: &LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>,
     block_number: BlockNumber,
 ) -> Result<H256, OnetError> {
@@ -3329,7 +3329,7 @@ async fn try_fetch_relay_chain_block_hash(
 
 /// Fetch the included asset hub block hash from a specified relay chain block number
 #[async_recursion]
-async fn fetch_asset_hub_block_hash_from_relay_chain(
+pub(crate) async fn fetch_asset_hub_block_hash_from_relay_chain(
     onet: &Onet,
     rc_block_number: BlockNumber,
     rc_block_hash: H256,
