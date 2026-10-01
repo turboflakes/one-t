@@ -90,6 +90,8 @@ frame-metadata = { version = "23.0.0", default-features = false, features = [
 ] }
 # p2p-explorer
 multiaddr = "0.18.1"
-libp2p = "0.52.0"
-subp2p-explorer-cli = { git = "https://github.com/turboflakes/subp2p-explorer", branch = "main" }
-resolver = "2"
+subp2p-explorer-cli = { git = "https://github.com/turboflakes/subp2p-explorer", rev = "8a02789" }
+
+# required by subp2p-explorer-cli
+[patch.crates-io]
+core2 = { git = "https://github.com/technocreatives/core2", rev = "545e84bcb0f235b12e21351e0c69767958efe2a7" }

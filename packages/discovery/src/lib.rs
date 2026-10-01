@@ -62,6 +62,7 @@ pub async fn try_fetch_discovery_data(
             Duration::from_secs(config.discovery_timeout),
             onet.runtime().address_format(),
             Default::default(),
+            Duration::from_secs(config.discovery_timeout),
         )
         .await
         .map_err(|e| OnetError::Other(format!("Cannot fetch p2p data: {:?}", e)))?;
