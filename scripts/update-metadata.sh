@@ -42,15 +42,21 @@ fetch_metadata() {
   # Retry fetching metadata up to $max_attempts times
   local max_attempts=3
   local attempt=1
-  until subxt metadata --url "wss://$host:443" -f bytes > "$out_dir/$filename"; do
+  # Fetch into a temp file and only replace the committed artifact when the download
+  # succeeded and is non-empty, so a failed fetch can't truncate it to 0 bytes.
+  local tmp_file
+  tmp_file=$(mktemp)
+  until subxt metadata --url "wss://$host:443" -f bytes > "$tmp_file" && [ -s "$tmp_file" ]; do
     if [ "$attempt" -ge "$max_attempts" ]; then
       echo "ERROR: failed to fetch metadata for $chain after $max_attempts attempts"
+      rm -f "$tmp_file"
       return 1
     fi
     echo "Attempt $attempt failed for $chain, retrying in 10s..."
     attempt=$((attempt + 1))
     sleep 10
   done
+  mv "$tmp_file" "$out_dir/$filename"
 }
 
 # Relay Chains
