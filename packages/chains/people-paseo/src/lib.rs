@@ -52,6 +52,7 @@ pub async fn get_display_name(
 
 /// Fetch the identity for a stash, following `super_of` links up to the parent
 /// account when the stash itself has no identity set.
+#[allow(clippy::double_must_use)]
 #[async_recursion]
 pub async fn get_identity(
     at: &OnlineClientAtBlock<PolkadotConfig>,

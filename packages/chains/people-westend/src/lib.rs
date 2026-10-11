@@ -43,6 +43,7 @@ pub async fn get_display_name(onet: &Onet, stash: &AccountId32) -> Result<String
     }
 }
 
+#[allow(clippy::double_must_use)]
 #[async_recursion]
 pub async fn get_identity(
     onet: &Onet,

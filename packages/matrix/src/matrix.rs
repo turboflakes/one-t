@@ -1261,6 +1261,7 @@ impl Matrix {
         }
     }
 
+    #[allow(clippy::double_must_use)]
     #[async_recursion]
     async fn join_room(&self, room_id: &str) -> Result<Option<RoomID>, MatrixError> {
         match &self.access_token {
@@ -1517,6 +1518,7 @@ impl Matrix {
         Ok(())
     }
 
+    #[allow(clippy::double_must_use)]
     #[async_recursion]
     async fn dispatch_message(
         &self,

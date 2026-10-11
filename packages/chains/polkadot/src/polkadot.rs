@@ -3328,6 +3328,7 @@ pub(crate) async fn try_fetch_relay_chain_block_hash(
 }
 
 /// Fetch the included asset hub block hash from a specified relay chain block number
+#[allow(clippy::double_must_use)]
 #[async_recursion]
 pub(crate) async fn fetch_asset_hub_block_hash_from_relay_chain(
     onet: &Onet,
