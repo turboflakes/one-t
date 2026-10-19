@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 use crate::error::OnetError;
+use async_std::sync::Mutex;
 use log::{error, info, warn};
 use onet_cache::{
     error::CacheError,
@@ -41,6 +42,7 @@ use std::{
     io::{BufRead, BufReader},
     result::Result,
     str::FromStr,
+    sync::Arc,
     thread, time,
     time::Duration,
 };
@@ -370,7 +372,25 @@ pub struct Onet {
     pub cache: RedisPool,
 }
 
+/// Process-wide `Onet`, lazily created by `Onet::shared`.
+static SHARED_ONET: Mutex<Option<Arc<Onet>>> = Mutex::new(None);
+
 impl Onet {
+    /// Returns a process-wide `Onet`, creating it on first use.
+    ///
+    /// Prefer this over `Onet::new` in tasks that run repeatedly: every `Onet::new` opens new
+    /// websocket connections (and chainHead follow subscriptions) that are not released
+    /// when the `Onet` is dropped.
+    pub async fn shared() -> Arc<Onet> {
+        let mut shared = SHARED_ONET.lock().await;
+        if let Some(onet) = shared.as_ref() {
+            return onet.clone();
+        }
+        let onet = Arc::new(Onet::new().await);
+        *shared = Some(onet.clone());
+        onet
+    }
+
     pub async fn new() -> Onet {
         let config = CONFIG.clone();
         let clients = create_or_await_substrate_node_clients(CONFIG.clone()).await;
@@ -398,9 +418,11 @@ impl Onet {
         }
     }
 
-    pub async fn init() -> Onet {
+    /// Like `shared`, but also logs the node details and refreshes the network cache.
+    /// Safe to call on every restart of a subscription: it reuses the existing connections.
+    pub async fn init() -> Arc<Onet> {
         let config = CONFIG.clone();
-        let onet: Onet = Onet::new().await;
+        let onet = Onet::shared().await;
 
         let chain = onet.rpc().system_chain().await.unwrap_or_default();
         let name = onet.rpc().system_name().await.unwrap_or_default();

@@ -5353,6 +5353,7 @@ dependencies = [
 name = "onet-core"
 version = "1.20.4"
 dependencies = [
+ "async-std",
  "log",
  "onet-cache",
  "onet-chains",

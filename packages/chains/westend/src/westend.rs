@@ -86,6 +86,7 @@ use redis::aio::Connection;
 
 use codec::Decode;
 use std::{
+    sync::atomic::{AtomicBool, Ordering},
     collections::BTreeMap,
     convert::{TryFrom, TryInto},
     fs,
@@ -424,15 +425,26 @@ pub async fn process_finalized_block(
     Ok(())
 }
 
+/// Set while the AH best block task is running, so restarts of the main subscription
+/// don't spawn duplicates of it.
+static AH_BEST_BLOCK_TASK_RUNNING: AtomicBool = AtomicBool::new(false);
+
 pub async fn try_run_subscribe_best_asset_hub() -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if !config.cache_writer_enabled {
         return Ok(());
     }
 
+    if AH_BEST_BLOCK_TASK_RUNNING.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+
     async_std::task::spawn(async move {
-        if let Err(e) = subscribe_best_asset_hub().await {
-            error!("subscribe_best_asset_hub error: {:?}", e);
+        loop {
+            if let Err(e) = subscribe_best_asset_hub().await {
+                error!("subscribe_best_asset_hub error: {:?}", e);
+            }
+            async_std::task::sleep(std::time::Duration::from_secs(config.error_interval)).await;
         }
     });
 
@@ -440,7 +452,7 @@ pub async fn try_run_subscribe_best_asset_hub() -> Result<(), OnetError> {
 }
 
 pub async fn subscribe_best_asset_hub() -> Result<(), OnetError> {
-    let onet: Onet = Onet::new().await;
+    let onet = Onet::shared().await;
     let ah_api = onet
         .asset_hub_client()
         .as_ref()
@@ -1290,7 +1302,7 @@ pub async fn run_val_perf_report(
     records: &Records,
     subscribers: &Subscribers,
 ) -> Result<(), OnetError> {
-    let onet: Onet = Onet::new().await;
+    let onet = Onet::shared().await;
     let api = onet.client().clone();
 
     let network = Network::load(onet.rpc()).await?;
@@ -1451,7 +1463,7 @@ pub async fn run_groups_report(
     epoch_index: EpochIndex,
     records: &Records,
 ) -> Result<(), OnetError> {
-    let onet: Onet = Onet::new().await;
+    let onet = Onet::shared().await;
     let _client = onet.client();
 
     let network = Network::load(onet.rpc()).await?;
@@ -1540,7 +1552,7 @@ pub async fn run_parachains_report(
     epoch_index: EpochIndex,
     records: &Records,
 ) -> Result<(), OnetError> {
-    let onet: Onet = Onet::new().await;
+    let onet = Onet::shared().await;
 
     let network = Network::load(onet.rpc()).await?;
 
@@ -1636,7 +1648,7 @@ pub async fn run_network_report(
     active_era_index: EraIndex,
     records: &Records,
 ) -> Result<(), OnetError> {
-    let onet: Onet = Onet::new().await;
+    let onet = Onet::shared().await;
     let config = CONFIG.clone();
     let rc_api = onet.relay_client().clone();
     let rc_rpc = onet.relay_rpc().clone();
@@ -2273,7 +2285,7 @@ pub async fn cache_nomination_pools(
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     let start = Instant::now();
-    let onet: Onet = Onet::new().await;
+    let onet = Onet::shared().await;
     let ah_api = onet
         .asset_hub_client()
         .as_ref()
@@ -2356,7 +2368,7 @@ pub async fn cache_nomination_pools_stats(
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     let start = Instant::now();
-    let onet: Onet = Onet::new().await;
+    let onet = Onet::shared().await;
     let ah_api = onet
         .asset_hub_client()
         .as_ref()
@@ -2425,7 +2437,7 @@ pub async fn cache_nomination_pools_nominees(
 ) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     let start = Instant::now();
-    let onet: Onet = Onet::new().await;
+    let onet = Onet::shared().await;
     let ah_api = onet
         .asset_hub_client()
         .as_ref()
@@ -2739,7 +2751,7 @@ pub async fn cache_session_stats_records(
 ) -> Result<(), OnetError> {
     let start = Instant::now();
     let config = CONFIG.clone();
-    let onet: Onet = Onet::new().await;
+    let onet = Onet::shared().await;
     let rc_api = onet.client().clone();
     let ah_api = onet
         .asset_hub_client()

@@ -17,6 +17,7 @@ onet-matrix = { path = "../matrix" }
 onet-records = { path = "../records" }
 onet-report = { path = "../report" }
 
+async-std = { workspace = true }
 codec = { workspace = true }
 log = { workspace = true }
 redis = { workspace = true }

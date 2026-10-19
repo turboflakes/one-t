@@ -19,7 +19,7 @@ use std::collections::HashMap;
 /// needed by `cache_session_stats_records` is re-derived from chain state, the same way
 /// the live event handler does it.
 pub async fn backfill_session_stats(session_indices: Vec<EpochIndex>) -> Result<(), OnetError> {
-    let onet: Onet = Onet::new().await;
+    let onet = Onet::shared().await;
     let rc_rpc = onet.relay_rpc().clone();
     let ah_rpc = onet
         .asset_hub_rpc()

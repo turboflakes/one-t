@@ -44,7 +44,7 @@ pub async fn try_fetch_discovery_data(
     _block_hash: H256,
 ) -> Result<(), OnetError> {
     let start = Instant::now();
-    let onet: Onet = Onet::new().await;
+    let onet = Onet::shared().await;
     let api = onet.client().clone();
 
     let config = CONFIG.clone();
