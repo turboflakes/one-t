@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 use onet_pools::PoolId;
+use onet_prediction::DesiredValidators;
 use onet_records::{AuthorityIndex, EpochIndex, EraIndex};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -181,6 +182,12 @@ pub enum CacheKey {
     NomiBoardMetaBySessionAndHash(EpochIndex, H256),
     NomiBoardBySessionAndTrait(EpochIndex, Trait),
     NomiBoardStats,
+    // Predictions (keyed by the number of desired validators)
+    PredictionIndex,
+    PredictionMetaByDesired(DesiredValidators),
+    PredictionAccountsByDesired(DesiredValidators),
+    PredictionValidatorByDesiredAndAccount(DesiredValidators, AccountId32),
+    PredictionNominatorsByDesiredAndAccount(DesiredValidators, AccountId32),
 }
 
 impl CacheKey {
@@ -272,6 +279,15 @@ impl std::fmt::Display for CacheKey {
             }
             Self::NomiBoardStats => {
                 write!(f, "nb:stats")
+            }
+            Self::PredictionIndex => write!(f, "pred:idx"),
+            Self::PredictionMetaByDesired(n) => write!(f, "pred:{}:meta", n),
+            Self::PredictionAccountsByDesired(n) => write!(f, "pred:{}:accs", n),
+            Self::PredictionValidatorByDesiredAndAccount(n, account) => {
+                write!(f, "pred:{}:v:{}", n, account)
+            }
+            Self::PredictionNominatorsByDesiredAndAccount(n, account) => {
+                write!(f, "pred:{}:n:{}", n, account)
             }
         }
     }

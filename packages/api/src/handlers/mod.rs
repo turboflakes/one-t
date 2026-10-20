@@ -26,6 +26,7 @@ pub mod info;
 pub mod parachains;
 pub mod params;
 pub mod pool;
+pub mod predictions;
 pub mod sessions;
 pub mod validators;
 pub mod ws;

@@ -5241,6 +5241,8 @@ dependencies = [
  "onet-matrix",
  "onet-paseo",
  "onet-polkadot",
+ "onet-prediction",
+ "redis",
  "sp-core",
  "subxt",
 ]
@@ -5260,6 +5262,7 @@ dependencies = [
  "onet-dn",
  "onet-mcda",
  "onet-pools",
+ "onet-prediction",
  "onet-records",
  "rand 0.8.8",
  "redis",
@@ -5320,6 +5323,7 @@ dependencies = [
  "onet-config",
  "onet-mcda",
  "onet-pools",
+ "onet-prediction",
  "onet-records",
  "onet-report",
  "redis",
@@ -5564,6 +5568,17 @@ dependencies = [
  "parity-scale-codec",
  "serde",
  "subxt",
+]
+
+[[package]]
+name = "onet-prediction"
+version = "1.20.5"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "subxt",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

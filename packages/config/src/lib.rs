@@ -249,6 +249,23 @@ fn default_dn_url() -> String {
     "https://nodes.web3.foundation/api/cohort/1".into()
 }
 
+/// provides default value for prediction_dir if ONET_PREDICTION_DIR env var is not set
+fn default_prediction_dir() -> String {
+    "./predictions".into()
+}
+
+/// provides default value for prediction_poll_interval if ONET_PREDICTION_POLL_INTERVAL env var is not set
+/// value is given in seconds
+fn default_prediction_poll_interval() -> u64 {
+    10
+}
+
+/// provides default value for prediction_cache_ttl if ONET_PREDICTION_CACHE_TTL env var is not set
+/// value is given in seconds 1 day = 24*60*60 = 86400
+fn default_prediction_cache_ttl() -> u32 {
+    86400
+}
+
 /// provides default value for discovery_timeout if ONET_DISCOVERY_TIMEOUT env var is not set
 /// value is given in seconds (value used by p2p-explorer crate)
 fn default_discovery_timeout() -> u64 {
@@ -421,6 +438,15 @@ pub struct Config {
     // decentralized nodes configuration endpoint
     #[serde(default = "default_dn_url")]
     pub dn_url: String,
+    // validators prediction configuration
+    #[serde(default)]
+    pub prediction_enabled: bool,
+    #[serde(default = "default_prediction_dir")]
+    pub prediction_dir: String,
+    #[serde(default = "default_prediction_poll_interval")]
+    pub prediction_poll_interval: u64,
+    #[serde(default = "default_prediction_cache_ttl")]
+    pub prediction_cache_ttl: u32,
     // discovery p2p configuration
     #[serde(default)]
     pub discovery_enabled: bool,
