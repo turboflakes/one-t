@@ -45,6 +45,7 @@ use onet_dn::dn::try_fetch_stashes_from_remote_url;
 use onet_pools::{PoolId, PoolNominees};
 use onet_records::{
     grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset, ValidatorProfileRecord,
+    Validity,
 };
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize};
@@ -122,7 +123,8 @@ pub struct Params {
     // show_profile indicates whether validator identity should be retrieved or not, default false
     #[serde(default)]
     show_profile: bool,
-    // show_preds indicates whether predictions should be attached to the validator profile or not, default false (requires show_profile)
+    // show_preds indicates whether predictions should be attached to the validator profile or not, default false
+    // (requires show_profile on the validators list, on a single validator the profile is loaded if needed)
     #[serde(default)]
     show_preds: bool,
     // show_sessions indicates whether the list of sessions involved in the grade calculation should be retrieved or not, default false
@@ -1130,7 +1132,7 @@ pub async fn get_validator_by_stash(
             .map_err(CacheError::RedisCMDError)?,
     };
 
-    let (data, _) = get_validator_by_stash_and_index(
+    let (mut data, _) = get_validator_by_stash_and_index(
         stash,
         session_index,
         params.show_stats,
@@ -1140,6 +1142,26 @@ pub async fn get_validator_by_stash(
         cache,
     )
     .await?;
+
+    // predictions are part of the profile, so the cached profile is loaded if not already there
+    if params.show_preds {
+        if data.profile.is_empty() {
+            // NOTE: handling Nil cases, the validator might not have a cached profile
+            if let Ok(redis::Value::Data(raw_data)) = redis::cmd("GET")
+                .arg(CacheKey::ValidatorProfileByAccount(stash))
+                .query_async::<Connection, redis::Value>(&mut conn as &mut Connection)
+                .await
+            {
+                if let Ok(serialized) = String::from_utf8(raw_data) {
+                    data.profile = serialized.into();
+                }
+            }
+        }
+        if !data.profile.is_empty() {
+            data.profile.preds =
+                get_profile_predictions(&mut conn as &mut Connection, stash).await?;
+        }
+    }
 
     respond_json(data)
 }
