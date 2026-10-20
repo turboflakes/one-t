@@ -24,7 +24,7 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, path::Path, str::FromStr};
 use subxt::utils::AccountId32;
 
-pub type DesiredValidators = u32;
+pub type TargetValidators = u32;
 
 /// Amount expressed in the smallest chain unit (planck).
 ///
@@ -158,7 +158,8 @@ struct RawSolutionScore {
 struct RawMetadata {
     #[serde(deserialize_with = "deserialize_timestamp")]
     timestamp: u64,
-    desired_validators: DesiredValidators,
+    #[serde(rename = "desired_validators")]
+    target_validators: TargetValidators,
     round: u32,
     block_number: u32,
     solution_score: RawSolutionScore,
@@ -198,7 +199,7 @@ pub struct SolutionScore {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct PredictionMetadata {
     pub timestamp: u64,
-    pub desired_validators: DesiredValidators,
+    pub target_validators: TargetValidators,
     pub round: u32,
     pub block_number: u32,
     pub solution_score: SolutionScore,
@@ -239,9 +240,9 @@ impl Prediction {
     /// and are converted to planck using `decimals`.
     pub fn from_slice(bytes: &[u8], symbol: &str, decimals: u32) -> Result<Self, PredictionError> {
         let raw: RawPrediction = serde_json::from_slice(bytes)?;
-        if raw.metadata.desired_validators == 0 {
+        if raw.metadata.target_validators == 0 {
             return Err(PredictionError::Other(
-                "desired_validators must be greater than zero".into(),
+                "target_validators must be greater than zero".into(),
             ));
         }
 
@@ -272,7 +273,7 @@ impl Prediction {
         Ok(Prediction {
             metadata: PredictionMetadata {
                 timestamp: raw.metadata.timestamp,
-                desired_validators: raw.metadata.desired_validators,
+                target_validators: raw.metadata.target_validators,
                 round: raw.metadata.round,
                 block_number: raw.metadata.block_number,
                 solution_score: SolutionScore {
@@ -353,7 +354,7 @@ mod tests {
     fn it_parses_prediction_file() {
         let p = Prediction::from_slice(sample().as_bytes(), "DOT", 10).unwrap();
         assert_eq!(p.metadata.timestamp, 1792496043);
-        assert_eq!(p.metadata.desired_validators, 500);
+        assert_eq!(p.metadata.target_validators, 500);
         assert_eq!(p.metadata.validators_count, 1);
         assert_eq!(
             p.metadata.solution_score.sum_stake_squared,

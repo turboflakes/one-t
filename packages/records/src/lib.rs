@@ -1888,11 +1888,11 @@ impl std::fmt::Display for Identity {
 }
 
 // Note: the following structs are useful for api/cache support
-/// Predicted outcome for a validator, one per number of desired validators (`id`)
+/// Predicted outcome for a validator, one per number of target validators (`id`)
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct ProfilePrediction {
     #[serde(rename = "p")]
-    pub desired: u32,
+    pub target: u32,
     #[serde(rename = "tts")]
     pub total_stake: u128,
     #[serde(rename = "nc")]

@@ -26,6 +26,6 @@ pub mod types;
 pub use error::PredictionError;
 pub use files::{discard_failed_file, read_pending_files, remove_file, PendingFile};
 pub use types::{
-    DesiredValidators, Planck, Prediction, PredictionEntry, PredictionMetadata,
-    PredictionNominator, PredictionValidator, SolutionScore,
+    Planck, Prediction, PredictionEntry, PredictionMetadata, PredictionNominator,
+    PredictionValidator, SolutionScore, TargetValidators,
 };

@@ -30,7 +30,7 @@ use onet_cache::{
     types::CacheKey,
 };
 use onet_prediction::{
-    DesiredValidators, PredictionMetadata, PredictionNominator, PredictionValidator,
+    PredictionMetadata, PredictionNominator, PredictionValidator, TargetValidators,
 };
 use onet_records::{ProfilePrediction, Validity};
 use redis::aio::Connection;
@@ -71,28 +71,28 @@ fn parse_stash(stash: &str) -> Result<AccountId32, ApiError> {
 
 async fn get_metadata(
     conn: &mut Connection,
-    desired: DesiredValidators,
+    target: TargetValidators,
 ) -> Result<PredictionMetadata, ApiError> {
     let serialized: Option<String> = redis::cmd("GET")
-        .arg(CacheKey::PredictionMetaByDesired(desired))
+        .arg(CacheKey::PredictionMetaByTarget(target))
         .query_async(conn)
         .await
         .map_err(CacheError::RedisCMDError)?;
     match serialized {
         Some(s) => Ok(serde_json::from_str(&s)?),
         None => Err(ApiError::NotFound(format!(
-            "Prediction for {} desired validators is not available.",
-            desired
+            "Prediction for {} target validators is not available.",
+            target
         ))),
     }
 }
 
-/// Handler to get the metadata of every prediction currently cached, one per `desired_validators`
+/// Handler to get the metadata of every prediction currently cached, one per `target_validators`
 pub async fn get_predictions(
     cache: Data<RedisPool>,
 ) -> Result<Json<Vec<PredictionMetadata>>, ApiError> {
     let mut conn = get_conn(&cache).await?;
-    let mut indices: Vec<DesiredValidators> = redis::cmd("SMEMBERS")
+    let mut indices: Vec<TargetValidators> = redis::cmd("SMEMBERS")
         .arg(CacheKey::PredictionIndex)
         .query_async(&mut conn as &mut Connection)
         .await
@@ -100,36 +100,36 @@ pub async fn get_predictions(
     indices.sort_unstable();
 
     let mut data: Vec<PredictionMetadata> = Vec::with_capacity(indices.len());
-    for desired in indices {
+    for target in indices {
         // entries expire independently, skip the ones that are gone
-        if let Ok(metadata) = get_metadata(&mut conn, desired).await {
+        if let Ok(metadata) = get_metadata(&mut conn, target).await {
             data.push(metadata);
         }
     }
     respond_json(data)
 }
 
-/// Handler to get the metadata of the prediction for a given number of desired validators
-pub async fn get_prediction_by_desired(
-    path: Path<DesiredValidators>,
+/// Handler to get the metadata of the prediction for a given number of target validators
+pub async fn get_prediction_by_target(
+    path: Path<TargetValidators>,
     cache: Data<RedisPool>,
 ) -> Result<Json<PredictionMetadata>, ApiError> {
     let mut conn = get_conn(&cache).await?;
     respond_json(get_metadata(&mut conn, path.into_inner()).await?)
 }
 
-/// Handler to get every validator of the prediction for a given number of desired validators
+/// Handler to get every validator of the prediction for a given number of target validators
 pub async fn get_prediction_validators(
-    path: Path<DesiredValidators>,
+    path: Path<TargetValidators>,
     cache: Data<RedisPool>,
 ) -> Result<Json<Vec<PredictionValidator>>, ApiError> {
-    let desired = path.into_inner();
+    let target = path.into_inner();
     let mut conn = get_conn(&cache).await?;
     // fail with not found if the prediction is not available
-    get_metadata(&mut conn, desired).await?;
+    get_metadata(&mut conn, target).await?;
 
     let accounts: Vec<String> = redis::cmd("SMEMBERS")
-        .arg(CacheKey::PredictionAccountsByDesired(desired))
+        .arg(CacheKey::PredictionAccountsByTarget(target))
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
@@ -138,7 +138,7 @@ pub async fn get_prediction_validators(
     for account in accounts {
         if let Ok(account_id) = AccountId32::from_str(&account) {
             keys.push(
-                CacheKey::PredictionValidatorByDesiredAndAccount(desired, account_id).to_string(),
+                CacheKey::PredictionValidatorByTargetAndAccount(target, account_id).to_string(),
             );
         }
     }
@@ -160,17 +160,17 @@ pub async fn get_prediction_validators(
 
 /// Handler to get the prediction of a single validator
 pub async fn get_prediction_validator(
-    path: Path<(DesiredValidators, String)>,
+    path: Path<(TargetValidators, String)>,
     cache: Data<RedisPool>,
 ) -> Result<Json<PredictionValidatorResult>, ApiError> {
-    let (desired, stash) = path.into_inner();
+    let (target, stash) = path.into_inner();
     let stash = parse_stash(&stash)?;
     let mut conn = get_conn(&cache).await?;
-    let metadata = get_metadata(&mut conn, desired).await?;
+    let metadata = get_metadata(&mut conn, target).await?;
 
     let serialized: Option<String> = redis::cmd("GET")
-        .arg(CacheKey::PredictionValidatorByDesiredAndAccount(
-            desired, stash,
+        .arg(CacheKey::PredictionValidatorByTargetAndAccount(
+            target, stash,
         ))
         .query_async(&mut conn as &mut Connection)
         .await
@@ -182,25 +182,25 @@ pub async fn get_prediction_validator(
             validator: serde_json::from_str(&s)?,
         }),
         None => Err(ApiError::NotFound(format!(
-            "Validator {} is not part of the prediction for {} desired validators.",
-            stash, desired
+            "Validator {} is not part of the prediction for {} target validators.",
+            stash, target
         ))),
     }
 }
 
 /// Handler to get a page of the predicted nominators of a single validator
 pub async fn get_prediction_validator_nominators(
-    path: Path<(DesiredValidators, String)>,
+    path: Path<(TargetValidators, String)>,
     params: Query<PaginationParams>,
     cache: Data<RedisPool>,
 ) -> Result<Json<PredictionNominatorsResult>, ApiError> {
-    let (desired, stash) = path.into_inner();
+    let (target, stash) = path.into_inner();
     let stash = parse_stash(&stash)?;
     let mut conn = get_conn(&cache).await?;
 
     let serialized: Option<String> = redis::cmd("GET")
-        .arg(CacheKey::PredictionNominatorsByDesiredAndAccount(
-            desired, stash,
+        .arg(CacheKey::PredictionNominatorsByTargetAndAccount(
+            target, stash,
         ))
         .query_async(&mut conn as &mut Connection)
         .await
@@ -210,8 +210,8 @@ pub async fn get_prediction_validator_nominators(
         Some(s) => serde_json::from_str(&s)?,
         None => {
             return Err(ApiError::NotFound(format!(
-                "Validator {} is not part of the prediction for {} desired validators.",
-                stash, desired
+                "Validator {} is not part of the prediction for {} target validators.",
+                stash, target
             )))
         }
     };
@@ -235,7 +235,7 @@ pub async fn get_prediction_validator_nominators(
     })
 }
 
-/// Collects, for every cached prediction (one per `desired_validators`), the outcome
+/// Collects, for every cached prediction (one per `target_validators`), the outcome
 /// predicted for the given validator. Predictions where the validator is not expected
 /// to be elected are left out. Sorted from the largest to the smallest `id`.
 pub async fn get_profile_predictions(
@@ -260,22 +260,22 @@ pub async fn get_profiles_predictions(
         return Ok(data);
     }
 
-    let mut indices: Vec<DesiredValidators> = redis::cmd("SMEMBERS")
+    let mut indices: Vec<TargetValidators> = redis::cmd("SMEMBERS")
         .arg(CacheKey::PredictionIndex)
         .query_async(conn)
         .await
         .map_err(CacheError::RedisCMDError)?;
     indices.sort_unstable_by(|a, b| b.cmp(a));
 
-    for desired in indices {
+    for target in indices {
         // metadata and validators expire together, skip if the round is already gone
-        let Ok(metadata) = get_metadata(conn, desired).await else {
+        let Ok(metadata) = get_metadata(conn, target).await else {
             continue;
         };
         let keys: Vec<String> = stashes
             .iter()
             .map(|stash| {
-                CacheKey::PredictionValidatorByDesiredAndAccount(desired, *stash).to_string()
+                CacheKey::PredictionValidatorByTargetAndAccount(target, *stash).to_string()
             })
             .collect();
         let values: Vec<Option<String>> = redis::cmd("MGET")
@@ -291,14 +291,14 @@ pub async fn get_profiles_predictions(
             // a prediction that cannot be decoded (e.g. cached with an older format) must not break the profile
             match serde_json::from_str::<PredictionValidator>(&serialized) {
                 Ok(validator) => predictions.push(ProfilePrediction {
-                    desired,
+                    target,
                     total_stake: validator.total_stake.0,
                     nominators_counter: validator.nominators_counter,
                     ts: metadata.timestamp,
                 }),
                 Err(e) => debug!(
-                    "Skipping prediction for {} desired validators of {}: {:?}",
-                    desired, stash, e
+                    "Skipping prediction for {} target validators of {}: {:?}",
+                    target, stash, e
                 ),
             }
         }

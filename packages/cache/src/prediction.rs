@@ -38,9 +38,9 @@ pub async fn cache_prediction(
     config: &Config,
     prediction: &Prediction,
 ) -> Result<(), CacheError> {
-    let desired = prediction.metadata.desired_validators;
+    let target = prediction.metadata.target_validators;
     let ttl = config.prediction_cache_ttl;
-    let accounts_key = CacheKey::PredictionAccountsByDesired(desired);
+    let accounts_key = CacheKey::PredictionAccountsByTarget(target);
 
     let previous: Vec<String> = redis::cmd("SMEMBERS")
         .arg(accounts_key.to_string())
@@ -61,11 +61,11 @@ pub async fn cache_prediction(
     for account in previous.iter().filter(|a| !current.contains(*a)) {
         if let Ok(account_id) = account.parse::<AccountId32>() {
             pipe.cmd("DEL")
-                .arg(CacheKey::PredictionValidatorByDesiredAndAccount(
-                    desired, account_id,
+                .arg(CacheKey::PredictionValidatorByTargetAndAccount(
+                    target, account_id,
                 ))
-                .arg(CacheKey::PredictionNominatorsByDesiredAndAccount(
-                    desired, account_id,
+                .arg(CacheKey::PredictionNominatorsByTargetAndAccount(
+                    target, account_id,
                 ))
                 .ignore();
         }
@@ -77,9 +77,8 @@ pub async fn cache_prediction(
         nominators,
     } in prediction.entries.iter()
     {
-        let validator_key = CacheKey::PredictionValidatorByDesiredAndAccount(desired, *account_id);
-        let nominators_key =
-            CacheKey::PredictionNominatorsByDesiredAndAccount(desired, *account_id);
+        let validator_key = CacheKey::PredictionValidatorByTargetAndAccount(target, *account_id);
+        let nominators_key = CacheKey::PredictionNominatorsByTargetAndAccount(target, *account_id);
         pipe.cmd("SET")
             .arg(validator_key.to_string())
             .arg(serde_json::to_string(validator)?)
@@ -98,7 +97,7 @@ pub async fn cache_prediction(
             .ignore();
     }
 
-    let meta_key = CacheKey::PredictionMetaByDesired(desired);
+    let meta_key = CacheKey::PredictionMetaByTarget(target);
     pipe.cmd("DEL")
         .arg(accounts_key.to_string())
         .ignore()
@@ -112,7 +111,7 @@ pub async fn cache_prediction(
         .ignore()
         .cmd("SADD")
         .arg(CacheKey::PredictionIndex)
-        .arg(desired)
+        .arg(target)
         .ignore()
         .cmd("EXPIRE")
         .arg(CacheKey::PredictionIndex)

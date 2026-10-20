@@ -99,8 +99,8 @@ async fn ingest_pending_files(pool: &RedisPool, config: &Config) -> Result<(), S
             .await
             .map_err(String::from)?;
         info!(
-            "Cached prediction: desired_validators={} round={} validators={}",
-            prediction.metadata.desired_validators,
+            "Prediction cached for target={} round={} validators={}",
+            prediction.metadata.target_validators,
             prediction.metadata.round,
             prediction.metadata.validators_count
         );
