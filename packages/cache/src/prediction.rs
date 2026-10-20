@@ -28,8 +28,8 @@ use std::collections::HashSet;
 use std::result::Result;
 use subxt::utils::AccountId32;
 
-/// Caches a prediction under its `desired_validators` namespace, replacing whatever
-/// was cached before for the same `desired_validators` and leaving the others untouched.
+/// Caches a prediction under its `target_validators` namespace, replacing whatever
+/// was cached before for the same `target_validators` and leaving the others untouched.
 ///
 /// Everything is written in a single MULTI/EXEC so readers never see a half-written round.
 /// Accounts present in the previous round but missing from this one are deleted.

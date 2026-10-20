@@ -32,9 +32,6 @@ use onet_prediction::{
 use redis::aio::Connection;
 use std::{path::Path, time::Duration};
 
-const POLKADOT_TOKEN_SYMBOL: &str = "DOT";
-const POLKADOT_TOKEN_DECIMALS: u32 = 10;
-
 /// Files modified more recently than this are assumed to still be written by the producer.
 const MIN_FILE_AGE: Duration = Duration::from_secs(2);
 
@@ -44,15 +41,12 @@ pub fn spawn_prediction_ingest() {
     if !config.prediction_enabled {
         return;
     }
-    if SupportedRuntime::from(config.chain_name.clone()) != SupportedRuntime::Polkadot {
-        warn!("Predictions are only supported for Polkadot, ingest is disabled");
-        return;
-    }
     if !config.cache_writer_enabled {
         warn!("Predictions require the cache writer to be enabled, ingest is disabled");
         return;
     }
 
+    let runtime = SupportedRuntime::from(config.chain_name.clone());
     async_std::task::spawn(async move {
         info!(
             "Watching {} for prediction files every {}s",
@@ -60,7 +54,7 @@ pub fn spawn_prediction_ingest() {
         );
         let pool = create_or_await_pool(config.clone());
         loop {
-            if let Err(e) = ingest_pending_files(&pool, &config).await {
+            if let Err(e) = ingest_pending_files(&pool, &config, runtime).await {
                 error!("ingest_pending_files error: {}", e);
             }
             async_std::task::sleep(Duration::from_secs(config.prediction_poll_interval)).await;
@@ -68,16 +62,20 @@ pub fn spawn_prediction_ingest() {
     });
 }
 
-async fn ingest_pending_files(pool: &RedisPool, config: &Config) -> Result<(), String> {
+async fn ingest_pending_files(
+    pool: &RedisPool,
+    config: &Config,
+    runtime: SupportedRuntime,
+) -> Result<(), String> {
     let dir = Path::new(&config.prediction_dir);
     if !dir.is_dir() {
         return Ok(());
     }
-    // oldest first, so the newest file for a given `desired_validators` is cached last
+    // oldest first, so the newest file for a given `target_validators` is cached last
     for PendingFile { path, .. } in read_pending_files(dir, MIN_FILE_AGE).map_err(String::from)? {
         let file_path = path.clone();
         let parsed = async_std::task::spawn_blocking(move || {
-            Prediction::from_path(&file_path, POLKADOT_TOKEN_SYMBOL, POLKADOT_TOKEN_DECIMALS)
+            Prediction::from_path(&file_path, runtime.token_symbol(), runtime.token_decimals())
         })
         .await;
 

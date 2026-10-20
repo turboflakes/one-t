@@ -33,7 +33,7 @@ pub struct PendingFile {
 }
 
 /// Lists the `*.json` files in `dir` ordered from oldest to newest, so that when two
-/// files share the same `desired_validators` the newest one is cached last and wins.
+/// files share the same `target_validators` the newest one is cached last and wins.
 /// Files modified less than `min_age` ago are skipped since the producer may still
 /// be writing them.
 pub fn read_pending_files(
