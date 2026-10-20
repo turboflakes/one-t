@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 use crate::error::ApiError;
+use crate::handlers::predictions::{attach_profile_predictions, get_profile_predictions};
 use crate::{
     helpers::respond_json,
     responses::{
@@ -121,6 +122,9 @@ pub struct Params {
     // show_profile indicates whether validator identity should be retrieved or not, default false
     #[serde(default)]
     show_profile: bool,
+    // show_preds indicates whether predictions should be attached to the validator profile or not, default false (requires show_profile)
+    #[serde(default)]
+    show_preds: bool,
     // show_sessions indicates whether the list of sessions involved in the grade calculation should be retrieved or not, default false
     #[serde(default)]
     show_sessions: bool,
@@ -610,6 +614,20 @@ async fn get_validator_by_stash_and_index(
 
 /// Get a validators filtered by query params
 pub async fn get_validators(
+    req: HttpRequest,
+    params: Query<Params>,
+    cache: Data<RedisPool>,
+) -> Result<Json<ValidatorsResult>, ApiError> {
+    let show_preds = params.show_preds && params.show_profile;
+    let mut result = get_validators_by_params(req, params, cache.clone()).await?;
+    if show_preds {
+        let mut conn = get_conn(&cache).await?;
+        attach_profile_predictions(&mut conn as &mut Connection, &mut result.data).await?;
+    }
+    Ok(result)
+}
+
+async fn get_validators_by_params(
     req: HttpRequest,
     params: Query<Params>,
     cache: Data<RedisPool>,
@@ -1216,7 +1234,10 @@ pub async fn get_validator_profile_by_stash(
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-    respond_json(serialized_data.into())
+    let mut profile = ValidatorProfileResult::from(serialized_data);
+    profile.preds = get_profile_predictions(&mut conn as &mut Connection, stash).await?;
+
+    respond_json(profile)
 }
 
 async fn calculate_validator_grade_by_stash(

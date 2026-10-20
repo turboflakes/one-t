@@ -21,7 +21,9 @@
 
 use crate::error::ApiError;
 use crate::helpers::respond_json;
+use crate::responses::ValidatorResult;
 use actix_web::web::{Data, Json, Path, Query};
+use log::debug;
 use onet_cache::{
     error::CacheError,
     provider::{get_conn, RedisPool},
@@ -30,6 +32,7 @@ use onet_cache::{
 use onet_prediction::{
     DesiredValidators, PredictionMetadata, PredictionNominator, PredictionValidator,
 };
+use onet_records::{ProfilePrediction, Validity};
 use redis::aio::Connection;
 use serde::{Deserialize, Serialize};
 use std::{result::Result, str::FromStr};
@@ -230,4 +233,95 @@ pub async fn get_prediction_validator_nominators(
         size,
         nominators: page,
     })
+}
+
+/// Collects, for every cached prediction (one per `desired_validators`), the outcome
+/// predicted for the given validator. Predictions where the validator is not expected
+/// to be elected are left out. Sorted from the largest to the smallest `id`.
+pub async fn get_profile_predictions(
+    conn: &mut Connection,
+    stash: AccountId32,
+) -> Result<Vec<ProfilePrediction>, ApiError> {
+    Ok(get_profiles_predictions(conn, &[stash])
+        .await?
+        .pop()
+        .unwrap_or_default())
+}
+
+/// Same as `get_profile_predictions` but for many validators at once: the cost is
+/// two redis calls per cached prediction (metadata + one MGET), regardless of how
+/// many validators are requested. The result is aligned with `stashes`.
+pub async fn get_profiles_predictions(
+    conn: &mut Connection,
+    stashes: &[AccountId32],
+) -> Result<Vec<Vec<ProfilePrediction>>, ApiError> {
+    let mut data: Vec<Vec<ProfilePrediction>> = vec![Vec::new(); stashes.len()];
+    if stashes.is_empty() {
+        return Ok(data);
+    }
+
+    let mut indices: Vec<DesiredValidators> = redis::cmd("SMEMBERS")
+        .arg(CacheKey::PredictionIndex)
+        .query_async(conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    indices.sort_unstable_by(|a, b| b.cmp(a));
+
+    for desired in indices {
+        // metadata and validators expire together, skip if the round is already gone
+        let Ok(metadata) = get_metadata(conn, desired).await else {
+            continue;
+        };
+        let keys: Vec<String> = stashes
+            .iter()
+            .map(|stash| {
+                CacheKey::PredictionValidatorByDesiredAndAccount(desired, *stash).to_string()
+            })
+            .collect();
+        let values: Vec<Option<String>> = redis::cmd("MGET")
+            .arg(keys)
+            .query_async(conn)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+
+        for ((stash, serialized), predictions) in stashes.iter().zip(values).zip(data.iter_mut()) {
+            let Some(serialized) = serialized else {
+                continue;
+            };
+            // a prediction that cannot be decoded (e.g. cached with an older format) must not break the profile
+            match serde_json::from_str::<PredictionValidator>(&serialized) {
+                Ok(validator) => predictions.push(ProfilePrediction {
+                    desired,
+                    total_stake: validator.total_stake.0,
+                    nominators_counter: validator.nominators_counter,
+                    ts: metadata.timestamp,
+                }),
+                Err(e) => debug!(
+                    "Skipping prediction for {} desired validators of {}: {:?}",
+                    desired, stash, e
+                ),
+            }
+        }
+    }
+    Ok(data)
+}
+
+/// Attaches predictions to the profile of every validator that has one.
+pub async fn attach_profile_predictions(
+    conn: &mut Connection,
+    validators: &mut [ValidatorResult],
+) -> Result<(), ApiError> {
+    let targets: Vec<(usize, AccountId32)> = validators
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| !v.profile.is_empty())
+        .filter_map(|(i, v)| AccountId32::from_str(&v.address).ok().map(|a| (i, a)))
+        .collect();
+    let stashes: Vec<AccountId32> = targets.iter().map(|(_, a)| *a).collect();
+
+    let predictions = get_profiles_predictions(conn, &stashes).await?;
+    for ((i, _), predictions) in targets.into_iter().zip(predictions) {
+        validators[i].profile.preds = predictions;
+    }
+    Ok(())
 }
