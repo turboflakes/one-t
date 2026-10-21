@@ -11,6 +11,7 @@ edition.workspace = true
 onet-config = { path = "../config" }
 onet-records = { path = "../records" }
 onet-pools = { path = "../pools" }
+onet-prediction = { path = "../prediction" }
 onet-cache = { path = "../cache" }
 onet-mcda = { path = "../mcda" }
 onet-dn = { path = "../dn" }

@@ -41,6 +41,24 @@ impl SupportedRuntime {
         }
     }
 
+    pub fn token_symbol(&self) -> &'static str {
+        match &self {
+            Self::Polkadot => "DOT",
+            Self::Kusama => "KSM",
+            Self::Paseo => "PAS",
+            Self::Westend => "WND",
+        }
+    }
+
+    pub fn token_decimals(&self) -> u32 {
+        match &self {
+            Self::Polkadot => 10,
+            Self::Kusama => 12,
+            Self::Paseo => 10,
+            Self::Westend => 12,
+        }
+    }
+
     pub fn is_people_runtime_available(&self) -> bool {
         match &self {
             Self::Polkadot => true,

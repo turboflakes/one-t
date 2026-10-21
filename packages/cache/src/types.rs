@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 use onet_pools::PoolId;
+use onet_prediction::TargetValidators;
 use onet_records::{AuthorityIndex, EpochIndex, EraIndex};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -181,6 +182,12 @@ pub enum CacheKey {
     NomiBoardMetaBySessionAndHash(EpochIndex, H256),
     NomiBoardBySessionAndTrait(EpochIndex, Trait),
     NomiBoardStats,
+    // Predictions (keyed by the number of target validators)
+    PredictionIndex,
+    PredictionMetaByTarget(TargetValidators),
+    PredictionAccountsByTarget(TargetValidators),
+    PredictionValidatorByTargetAndAccount(TargetValidators, AccountId32),
+    PredictionNominatorsByTargetAndAccount(TargetValidators, AccountId32),
 }
 
 impl CacheKey {
@@ -272,6 +279,15 @@ impl std::fmt::Display for CacheKey {
             }
             Self::NomiBoardStats => {
                 write!(f, "nb:stats")
+            }
+            Self::PredictionIndex => write!(f, "pred:idx"),
+            Self::PredictionMetaByTarget(n) => write!(f, "pred:{}:meta", n),
+            Self::PredictionAccountsByTarget(n) => write!(f, "pred:{}:accs", n),
+            Self::PredictionValidatorByTargetAndAccount(n, account) => {
+                write!(f, "pred:{}:v:{}", n, account)
+            }
+            Self::PredictionNominatorsByTargetAndAccount(n, account) => {
+                write!(f, "pred:{}:n:{}", n, account)
             }
         }
     }

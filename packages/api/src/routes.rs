@@ -26,6 +26,10 @@ use crate::handlers::{
     info::get_info,
     parachains::get_parachains,
     pool::{get_pool, get_pools},
+    predictions::{
+        get_prediction_by_target, get_prediction_validator, get_prediction_validator_nominators,
+        get_prediction_validators, get_predictions,
+    },
     sessions::{get_session_by_index, get_sessions},
     validators::{
         get_cohort_validators_grades, get_cohorts, get_era_validators_grades, get_eras,
@@ -109,6 +113,24 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
                         .route("/{id}", web::get().to(get_pool))
                         // .route("/{id}/nomination", web::get().to(get_pool_nomination))
                         .route("", web::get().to(get_pools)),
+                )
+                // PREDICTION routes
+                .service(
+                    web::scope("/preds")
+                        .route("/{target}", web::get().to(get_prediction_by_target))
+                        .route(
+                            "/{target}/validators",
+                            web::get().to(get_prediction_validators),
+                        )
+                        .route(
+                            "/{target}/validators/{stash}",
+                            web::get().to(get_prediction_validator),
+                        )
+                        .route(
+                            "/{target}/validators/{stash}/nominators",
+                            web::get().to(get_prediction_validator_nominators),
+                        )
+                        .route("", web::get().to(get_predictions)),
                 )
                 // BOARD routes
                 .service(

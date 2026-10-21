@@ -12,6 +12,7 @@ onet-config = { path = "../config" }
 onet-records = { path = "../records" }
 onet-report = { path = "../report" }
 onet-pools = { path = "../pools" }
+onet-prediction = { path = "../prediction" }
 onet-mcda = { path = "../mcda" }
 
 actix-web = { workspace = true }

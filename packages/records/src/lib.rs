@@ -1888,6 +1888,19 @@ impl std::fmt::Display for Identity {
 }
 
 // Note: the following structs are useful for api/cache support
+/// Predicted outcome for a validator, one per number of target validators (`id`)
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct ProfilePrediction {
+    #[serde(rename = "p")]
+    pub target: u32,
+    #[serde(rename = "tts")]
+    pub total_stake: u128,
+    #[serde(rename = "nc")]
+    pub nominators_counter: u32,
+    #[serde(rename = "ts")]
+    pub ts: u64,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ValidatorProfileRecord {
     pub stash: Option<AccountId32>,
@@ -1913,6 +1926,9 @@ pub struct ValidatorProfileRecord {
     pub is_active: bool,
     pub is_chilled: bool,
     pub is_blocked: bool,
+    // Note: preds (predictions) are not cached with the profile, they are attached by the api on request
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preds: Vec<ProfilePrediction>,
 }
 
 impl ValidatorProfileRecord {
@@ -1934,6 +1950,7 @@ impl ValidatorProfileRecord {
             is_active: false,
             is_chilled: false,
             is_blocked: false,
+            preds: Vec::new(),
         }
     }
 

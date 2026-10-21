@@ -21,6 +21,7 @@
 //
 
 mod offline;
+mod prediction;
 
 use actix::Actor;
 use actix_cors::Cors;
@@ -100,6 +101,9 @@ fn start() {
         // close gracefully http server api
         rt::System::new().block_on(server_handle.stop(true));
     } else {
+        // Cache prediction files dropped on the local prediction directory
+        prediction::spawn_prediction_ingest();
+
         // Authenticate matrix and spawn lazy load commands
         spawn_and_restart_matrix_lazy_load_on_error();
 
