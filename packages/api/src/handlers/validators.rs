@@ -20,14 +20,14 @@
 // SOFTWARE.
 
 use crate::error::ApiError;
-use crate::handlers::predictions::{attach_profile_predictions, get_profile_predictions};
+use crate::handlers::predictions::{attach_validators_predictions, get_validator_predictions};
 use crate::{
     helpers::respond_json,
     responses::{
         AuthorityKey, AuthorityKeyCache, CacheMap, CohortValidatorsChangedResult,
         CohortValidatorsGradesResult, CohortsResult, EraValidatorsGradesResult, ErasResult,
-        RankingStats, ValidatorGradeResult, ValidatorProfileResult, ValidatorResult,
-        ValidatorsResult,
+        RankingStats, ValidatorGradeResult, ValidatorProfilePredsResult, ValidatorProfileResult,
+        ValidatorResult, ValidatorsResult,
     },
 };
 use actix_web::{
@@ -45,7 +45,6 @@ use onet_dn::dn::try_fetch_stashes_from_remote_url;
 use onet_pools::{PoolId, PoolNominees};
 use onet_records::{
     grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset, ValidatorProfileRecord,
-    Validity,
 };
 use redis::aio::Connection;
 use serde::{de::Deserializer, Deserialize};
@@ -123,8 +122,7 @@ pub struct Params {
     // show_profile indicates whether validator identity should be retrieved or not, default false
     #[serde(default)]
     show_profile: bool,
-    // show_preds indicates whether predictions should be attached to the validator profile or not, default false
-    // (requires show_profile on the validators list, on a single validator the profile is loaded if needed)
+    // show_preds indicates whether predictions should be attached to the validator or not, default false
     #[serde(default)]
     show_preds: bool,
     // show_sessions indicates whether the list of sessions involved in the grade calculation should be retrieved or not, default false
@@ -620,11 +618,11 @@ pub async fn get_validators(
     params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorsResult>, ApiError> {
-    let show_preds = params.show_preds && params.show_profile;
+    let show_preds = params.show_preds;
     let mut result = get_validators_by_params(req, params, cache.clone()).await?;
     if show_preds {
         let mut conn = get_conn(&cache).await?;
-        attach_profile_predictions(&mut conn as &mut Connection, &mut result.data).await?;
+        attach_validators_predictions(&mut conn as &mut Connection, &mut result.data).await?;
     }
     Ok(result)
 }
@@ -1143,24 +1141,8 @@ pub async fn get_validator_by_stash(
     )
     .await?;
 
-    // predictions are part of the profile, so the cached profile is loaded if not already there
     if params.show_preds {
-        if data.profile.is_empty() {
-            // NOTE: handling Nil cases, the validator might not have a cached profile
-            if let Ok(redis::Value::Data(raw_data)) = redis::cmd("GET")
-                .arg(CacheKey::ValidatorProfileByAccount(stash))
-                .query_async::<Connection, redis::Value>(&mut conn as &mut Connection)
-                .await
-            {
-                if let Ok(serialized) = String::from_utf8(raw_data) {
-                    data.profile = serialized.into();
-                }
-            }
-        }
-        if !data.profile.is_empty() {
-            data.profile.preds =
-                get_profile_predictions(&mut conn as &mut Connection, stash).await?;
-        }
+        data.preds = get_validator_predictions(&mut conn as &mut Connection, stash).await?;
     }
 
     respond_json(data)
@@ -1241,7 +1223,7 @@ pub async fn get_peer_by_authority(
 pub async fn get_validator_profile_by_stash(
     stash: Path<String>,
     cache: Data<RedisPool>,
-) -> Result<Json<ValidatorProfileResult>, ApiError> {
+) -> Result<Json<ValidatorProfilePredsResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
     let stash = AccountId32::from_str(&stash.to_string()).map_err(|e| {
         ApiError::BadRequest(format!(
@@ -1256,10 +1238,10 @@ pub async fn get_validator_profile_by_stash(
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-    let mut profile = ValidatorProfileResult::from(serialized_data);
-    profile.preds = get_profile_predictions(&mut conn as &mut Connection, stash).await?;
-
-    respond_json(profile)
+    respond_json(ValidatorProfilePredsResult {
+        profile: ValidatorProfileResult::from(serialized_data),
+        preds: get_validator_predictions(&mut conn as &mut Connection, stash).await?,
+    })
 }
 
 async fn calculate_validator_grade_by_stash(

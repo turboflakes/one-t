@@ -1926,9 +1926,6 @@ pub struct ValidatorProfileRecord {
     pub is_active: bool,
     pub is_chilled: bool,
     pub is_blocked: bool,
-    // Note: preds (predictions) are not cached with the profile, they are attached by the api on request
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub preds: Vec<ProfilePrediction>,
 }
 
 impl ValidatorProfileRecord {
@@ -1950,7 +1947,6 @@ impl ValidatorProfileRecord {
             is_active: false,
             is_chilled: false,
             is_blocked: false,
-            preds: Vec::new(),
         }
     }
 

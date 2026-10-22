@@ -32,7 +32,7 @@ use onet_cache::{
 use onet_prediction::{
     PredictionMetadata, PredictionNominator, PredictionValidator, TargetValidators,
 };
-use onet_records::{ProfilePrediction, Validity};
+use onet_records::ProfilePrediction;
 use redis::aio::Connection;
 use serde::{Deserialize, Serialize};
 use std::{result::Result, str::FromStr};
@@ -238,20 +238,20 @@ pub async fn get_prediction_validator_nominators(
 /// Collects, for every cached prediction (one per `target_validators`), the outcome
 /// predicted for the given validator. Predictions where the validator is not expected
 /// to be elected are left out. Sorted from the largest to the smallest `id`.
-pub async fn get_profile_predictions(
+pub async fn get_validator_predictions(
     conn: &mut Connection,
     stash: AccountId32,
 ) -> Result<Vec<ProfilePrediction>, ApiError> {
-    Ok(get_profiles_predictions(conn, &[stash])
+    Ok(get_validators_predictions(conn, &[stash])
         .await?
         .pop()
         .unwrap_or_default())
 }
 
-/// Same as `get_profile_predictions` but for many validators at once: the cost is
+/// Same as `get_validator_predictions` but for many validators at once: the cost is
 /// two redis calls per cached prediction (metadata + one MGET), regardless of how
 /// many validators are requested. The result is aligned with `stashes`.
-pub async fn get_profiles_predictions(
+pub async fn get_validators_predictions(
     conn: &mut Connection,
     stashes: &[AccountId32],
 ) -> Result<Vec<Vec<ProfilePrediction>>, ApiError> {
@@ -288,7 +288,7 @@ pub async fn get_profiles_predictions(
             let Some(serialized) = serialized else {
                 continue;
             };
-            // a prediction that cannot be decoded (e.g. cached with an older format) must not break the profile
+            // a prediction that cannot be decoded (e.g. cached with an older format) must not break the response
             match serde_json::from_str::<PredictionValidator>(&serialized) {
                 Ok(validator) => predictions.push(ProfilePrediction {
                     target,
@@ -306,22 +306,21 @@ pub async fn get_profiles_predictions(
     Ok(data)
 }
 
-/// Attaches predictions to the profile of every validator that has one.
-pub async fn attach_profile_predictions(
+/// Attaches predictions to every validator identified by a valid `address`.
+pub async fn attach_validators_predictions(
     conn: &mut Connection,
     validators: &mut [ValidatorResult],
 ) -> Result<(), ApiError> {
     let targets: Vec<(usize, AccountId32)> = validators
         .iter()
         .enumerate()
-        .filter(|(_, v)| !v.profile.is_empty())
         .filter_map(|(i, v)| AccountId32::from_str(&v.address).ok().map(|a| (i, a)))
         .collect();
     let stashes: Vec<AccountId32> = targets.iter().map(|(_, a)| *a).collect();
 
-    let predictions = get_profiles_predictions(conn, &stashes).await?;
+    let predictions = get_validators_predictions(conn, &stashes).await?;
     for ((i, _), predictions) in targets.into_iter().zip(predictions) {
-        validators[i].profile.preds = predictions;
+        validators[i].preds = predictions;
     }
     Ok(())
 }
