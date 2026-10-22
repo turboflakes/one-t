@@ -23,8 +23,8 @@ use onet_cache::types::ChainKey;
 use onet_pools::{Pool, PoolCounter, PoolNominees, PoolNomineesStats, PoolState, PoolStats, Roles};
 use onet_records::{
     AuthorityIndex, AuthorityRecord, BlockNumber, DiscoveryRecord, EpochIndex, EraIndex,
-    NetworkSessionStats, ParaId, ParaStats, ParachainRecord, SessionStats, ValidatorProfileRecord,
-    Validity,
+    NetworkSessionStats, ParaId, ParaStats, ParachainRecord, ProfilePrediction, SessionStats,
+    ValidatorProfileRecord, Validity,
 };
 use serde::{
     de::{Deserializer, MapAccess, Visitor},
@@ -423,6 +423,9 @@ pub struct ValidatorResult {
     pub address: String,
     #[serde(skip_serializing_if = "ValidatorProfileResult::is_empty")]
     pub profile: ValidatorProfileResult,
+    // preds are not cached with the validator, they are attached by the api on request
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub preds: Vec<ProfilePrediction>,
     #[serde(skip_serializing_if = "EpochIndex::is_empty")]
     pub session: EpochIndex,
     pub is_auth: bool,
@@ -460,6 +463,7 @@ impl<'de> Deserialize<'de> for ValidatorResult {
         enum Field {
             Address,
             Profile,
+            Preds,
             Session,
             IsAuth,
             IsPara,
@@ -487,6 +491,7 @@ impl<'de> Deserialize<'de> for ValidatorResult {
             {
                 let mut address: Option<String> = None;
                 let mut profile: Option<ValidatorProfileResult> = None;
+                let mut preds: Option<Vec<ProfilePrediction>> = None;
                 let mut session: Option<EpochIndex> = None;
                 let mut is_auth: Option<bool> = None;
                 let mut is_para: Option<bool> = None;
@@ -511,6 +516,12 @@ impl<'de> Deserialize<'de> for ValidatorResult {
                                 return Err(serde::de::Error::duplicate_field("profile"));
                             }
                             profile = Some(map.next_value()?);
+                        }
+                        Field::Preds => {
+                            if preds.is_some() {
+                                return Err(serde::de::Error::duplicate_field("preds"));
+                            }
+                            preds = Some(map.next_value()?);
                         }
                         Field::Session => {
                             if session.is_some() {
@@ -586,7 +597,7 @@ impl<'de> Deserialize<'de> for ValidatorResult {
                 let discovery = discovery.unwrap_or_default();
                 let pool_counter = pool_counter.unwrap_or_default();
                 let ranking = ranking.unwrap_or_default();
-                Ok(ValidatorResult::new(
+                let mut result = ValidatorResult::new(
                     address,
                     profile,
                     session,
@@ -599,13 +610,16 @@ impl<'de> Deserialize<'de> for ValidatorResult {
                     discovery,
                     pool_counter,
                     ranking,
-                ))
+                );
+                result.preds = preds.unwrap_or_default();
+                Ok(result)
             }
         }
 
         const FIELDS: &[&str] = &[
             "address",
             "profile",
+            "preds",
             "session",
             "is_auth",
             "is_para",
@@ -640,6 +654,7 @@ impl ValidatorResult {
         Self {
             address,
             profile,
+            preds: Vec::new(),
             session,
             is_auth,
             is_para,
@@ -792,6 +807,15 @@ impl From<CacheMap> for ParachainsResult {
 }
 
 pub type ValidatorProfileResult = ValidatorProfileRecord;
+
+/// Validator profile along with the predictions for that validator
+#[derive(Serialize, Clone, Debug)]
+pub struct ValidatorProfilePredsResult {
+    #[serde(flatten)]
+    pub profile: ValidatorProfileResult,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub preds: Vec<ProfilePrediction>,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ValidatorGradeResult {
