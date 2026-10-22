@@ -21,10 +21,17 @@
 
 pub mod error;
 pub mod files;
+pub mod loader;
+pub mod nominators;
 pub mod types;
 
 pub use error::PredictionError;
 pub use files::{discard_failed_file, read_pending_files, remove_file, PendingFile};
+pub use loader::PredictionFile;
+pub use nominators::{
+    target_from_path, NominatorAllocation, NominatorEntry, NominatorPrediction,
+    NominatorsPrediction,
+};
 pub use types::{
     Planck, Prediction, PredictionEntry, PredictionMetadata, PredictionNominator,
     PredictionValidator, SolutionScore, TargetValidators,

@@ -188,6 +188,8 @@ pub enum CacheKey {
     PredictionAccountsByTarget(TargetValidators),
     PredictionValidatorByTargetAndAccount(TargetValidators, AccountId32),
     PredictionNominatorsByTargetAndAccount(TargetValidators, AccountId32),
+    PredictionNominatorAccountsByTarget(TargetValidators),
+    PredictionNominatorByTargetAndAccount(TargetValidators, AccountId32),
 }
 
 impl CacheKey {
@@ -285,6 +287,10 @@ impl std::fmt::Display for CacheKey {
             Self::PredictionAccountsByTarget(n) => write!(f, "pred:{}:accs", n),
             Self::PredictionValidatorByTargetAndAccount(n, account) => {
                 write!(f, "pred:{}:v:{}", n, account)
+            }
+            Self::PredictionNominatorAccountsByTarget(n) => write!(f, "pred:{}:noms", n),
+            Self::PredictionNominatorByTargetAndAccount(n, account) => {
+                write!(f, "pred:{}:nom:{}", n, account)
             }
             Self::PredictionNominatorsByTargetAndAccount(n, account) => {
                 write!(f, "pred:{}:n:{}", n, account)

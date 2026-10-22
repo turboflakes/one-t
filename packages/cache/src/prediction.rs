@@ -22,7 +22,7 @@
 use crate::error::CacheError;
 use crate::types::CacheKey;
 use onet_config::Config;
-use onet_prediction::{Prediction, PredictionEntry};
+use onet_prediction::{NominatorEntry, NominatorsPrediction, Prediction, PredictionEntry};
 use redis::aio::Connection;
 use std::collections::HashSet;
 use std::result::Result;
@@ -124,6 +124,87 @@ pub async fn cache_prediction(
             .arg(current.iter().collect::<Vec<_>>())
             .ignore()
             .cmd("EXPIRE")
+            .arg(accounts_key.to_string())
+            .arg(ttl)
+            .ignore();
+    }
+
+    pipe.query_async::<_, ()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    Ok(())
+}
+
+/// Number of accounts added to the accounts set per SADD command.
+const SADD_CHUNK_SIZE: usize = 1000;
+
+/// Caches a nominators prediction under its `target_validators` namespace, replacing whatever
+/// was cached before for the same `target_validators` and leaving the others untouched.
+///
+/// Everything is written in a single MULTI/EXEC so readers never see a half-written round.
+/// Nominators present in the previous round but missing from this one are deleted.
+pub async fn cache_nominators_prediction(
+    cache: &mut Connection,
+    config: &Config,
+    prediction: &NominatorsPrediction,
+) -> Result<(), CacheError> {
+    let target = prediction.target_validators;
+    let ttl = config.prediction_cache_ttl;
+    let accounts_key = CacheKey::PredictionNominatorAccountsByTarget(target);
+
+    let previous: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(accounts_key.to_string())
+        .query_async(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    let current: Vec<String> = prediction
+        .entries
+        .iter()
+        .map(|e| e.account_id.to_string())
+        .collect();
+    let current_set: HashSet<&String> = current.iter().collect();
+
+    let mut pipe = redis::pipe();
+    pipe.atomic();
+
+    // drop nominators that are no longer part of the prediction
+    for account in previous.iter().filter(|a| !current_set.contains(*a)) {
+        if let Ok(account_id) = account.parse::<AccountId32>() {
+            pipe.cmd("DEL")
+                .arg(CacheKey::PredictionNominatorByTargetAndAccount(
+                    target, account_id,
+                ))
+                .ignore();
+        }
+    }
+
+    for NominatorEntry {
+        account_id,
+        nominator,
+    } in prediction.entries.iter()
+    {
+        pipe.cmd("SET")
+            .arg(CacheKey::PredictionNominatorByTargetAndAccount(
+                target,
+                *account_id,
+            ))
+            .arg(serde_json::to_string(nominator)?)
+            .arg("EX")
+            .arg(ttl)
+            .ignore();
+    }
+
+    pipe.cmd("DEL").arg(accounts_key.to_string()).ignore();
+    for chunk in current.chunks(SADD_CHUNK_SIZE) {
+        pipe.cmd("SADD")
+            .arg(accounts_key.to_string())
+            .arg(chunk)
+            .ignore();
+    }
+    if !current.is_empty() {
+        pipe.cmd("EXPIRE")
             .arg(accounts_key.to_string())
             .arg(ttl)
             .ignore();
