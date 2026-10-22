@@ -30,7 +30,8 @@ use onet_cache::{
     types::CacheKey,
 };
 use onet_prediction::{
-    PredictionMetadata, PredictionNominator, PredictionValidator, TargetValidators,
+    NominatorPrediction, PredictionMetadata, PredictionNominator, PredictionValidator,
+    TargetValidators,
 };
 use onet_records::ProfilePrediction;
 use redis::aio::Connection;
@@ -66,7 +67,7 @@ pub struct PredictionNominatorsResult {
 
 fn parse_stash(stash: &str) -> Result<AccountId32, ApiError> {
     AccountId32::from_str(stash)
-        .map_err(|e| ApiError::BadRequest(format!("Invalid stash {}: {:?}", stash, e)))
+        .map_err(|e| ApiError::BadRequest(format!("Invalid address {}: {:?}", stash, e)))
 }
 
 async fn get_metadata(
@@ -323,4 +324,30 @@ pub async fn attach_validators_predictions(
         validators[i].preds = predictions;
     }
     Ok(())
+}
+
+/// Handler to get the predicted nominations of a single nominator
+pub async fn get_prediction_nominator(
+    path: Path<(TargetValidators, String)>,
+    cache: Data<RedisPool>,
+) -> Result<Json<NominatorPrediction>, ApiError> {
+    let (target, address) = path.into_inner();
+    let address = parse_stash(&address)?;
+    let mut conn = get_conn(&cache).await?;
+
+    let serialized: Option<String> = redis::cmd("GET")
+        .arg(CacheKey::PredictionNominatorByTargetAndAccount(
+            target, address,
+        ))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    match serialized {
+        Some(s) => respond_json(serde_json::from_str(&s)?),
+        None => Err(ApiError::NotFound(format!(
+            "Nominator {} is not part of the prediction for {} target validators.",
+            address, target
+        ))),
+    }
 }

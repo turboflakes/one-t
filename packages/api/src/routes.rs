@@ -27,8 +27,8 @@ use crate::handlers::{
     parachains::get_parachains,
     pool::{get_pool, get_pools},
     predictions::{
-        get_prediction_by_target, get_prediction_validator, get_prediction_validator_nominators,
-        get_prediction_validators, get_predictions,
+        get_prediction_by_target, get_prediction_nominator, get_prediction_validator,
+        get_prediction_validator_nominators, get_prediction_validators, get_predictions,
     },
     sessions::{get_session_by_index, get_sessions},
     validators::{
@@ -129,6 +129,10 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
                         .route(
                             "/{target}/validators/{stash}/nominators",
                             web::get().to(get_prediction_validator_nominators),
+                        )
+                        .route(
+                            "/{target}/nominators/{address}",
+                            web::get().to(get_prediction_nominator),
                         )
                         .route("", web::get().to(get_predictions)),
                 )
