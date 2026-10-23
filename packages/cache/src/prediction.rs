@@ -137,14 +137,17 @@ pub async fn cache_prediction(
     Ok(())
 }
 
-/// Number of accounts added to the accounts set per SADD command.
-const SADD_CHUNK_SIZE: usize = 1000;
+/// Number of nominators added to the accounts sorted set per ZADD command.
+const ZADD_CHUNK_SIZE: usize = 1000;
 
 /// Caches a nominators prediction under its `target_validators` namespace, replacing whatever
 /// was cached before for the same `target_validators` and leaving the others untouched.
 ///
 /// Everything is written in a single MULTI/EXEC so readers never see a half-written round.
 /// Nominators present in the previous round but missing from this one are deleted.
+///
+/// The nominators addresses are kept in a sorted set scored by stake, so they can be paginated
+/// from the largest to the smallest stake.
 pub async fn cache_nominators_prediction(
     cache: &mut Connection,
     config: &Config,
@@ -154,18 +157,22 @@ pub async fn cache_nominators_prediction(
     let ttl = config.prediction_cache_ttl;
     let accounts_key = CacheKey::PredictionNominatorAccountsByTarget(target);
 
-    let previous: Vec<String> = redis::cmd("SMEMBERS")
+    let previous: Vec<String> = redis::cmd("ZRANGE")
         .arg(accounts_key.to_string())
+        .arg(0)
+        .arg(-1)
         .query_async(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-    let current: Vec<String> = prediction
+    // (score, address): the score is only used to sort, so the loss of precision of
+    // stakes above 2^53 planck is not a concern
+    let current: Vec<(f64, String)> = prediction
         .entries
         .iter()
-        .map(|e| e.account_id.to_string())
+        .map(|e| (e.nominator.stake.0 as f64, e.account_id.to_string()))
         .collect();
-    let current_set: HashSet<&String> = current.iter().collect();
+    let current_set: HashSet<&String> = current.iter().map(|(_, a)| a).collect();
 
     let mut pipe = redis::pipe();
     pipe.atomic();
@@ -205,8 +212,8 @@ pub async fn cache_nominators_prediction(
         .ignore();
 
     pipe.cmd("DEL").arg(accounts_key.to_string()).ignore();
-    for chunk in current.chunks(SADD_CHUNK_SIZE) {
-        pipe.cmd("SADD")
+    for chunk in current.chunks(ZADD_CHUNK_SIZE) {
+        pipe.cmd("ZADD")
             .arg(accounts_key.to_string())
             .arg(chunk)
             .ignore();
