@@ -29,7 +29,7 @@ pub use error::PredictionError;
 pub use files::{discard_failed_file, read_pending_files, remove_file, PendingFile};
 pub use loader::PredictionFile;
 pub use nominators::{
-    target_from_path, NominatorAllocation, NominatorEntry, NominatorPrediction,
+    target_from_path, NominatorAllocation, NominatorEntry, NominatorPrediction, NominatorsMetadata,
     NominatorsPrediction,
 };
 pub use types::{

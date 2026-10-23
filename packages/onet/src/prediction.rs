@@ -99,7 +99,7 @@ async fn ingest_pending_files(
                     .await
                     .map_err(String::from)?;
                 info!(
-                    "Prediction cached for target={} round={} validators={}",
+                    "Validators prediction cached for target={} round={} validators={}",
                     prediction.metadata.target_validators,
                     prediction.metadata.round,
                     prediction.metadata.validators_count
@@ -110,9 +110,11 @@ async fn ingest_pending_files(
                     .await
                     .map_err(String::from)?;
                 info!(
-                    "Nominators prediction cached for target={} nominators={}",
+                    "Nominators prediction cached for target={} nominators={} active={} waiting_only={}",
                     prediction.target_validators,
-                    prediction.entries.len()
+                    prediction.metadata.nominators_counter,
+                    prediction.metadata.active_counter,
+                    prediction.metadata.waiting_only_counter
                 );
             }
         }

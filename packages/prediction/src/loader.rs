@@ -41,6 +41,15 @@ struct Probe {
     nominators: Option<IgnoredAny>,
 }
 
+/// Unix timestamp (seconds) of the last time the file was modified.
+fn modified_timestamp(path: &Path) -> Result<u64, PredictionError> {
+    let modified = std::fs::metadata(path)?.modified()?;
+    Ok(modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default())
+}
+
 impl PredictionFile {
     pub fn from_path(path: &Path, symbol: &str, decimals: u32) -> Result<Self, PredictionError> {
         let bytes = std::fs::read(path)?;
@@ -52,6 +61,7 @@ impl PredictionFile {
             (None, Some(_)) => Ok(Self::Nominators(NominatorsPrediction::from_slice(
                 &bytes,
                 target_from_path(path)?,
+                modified_timestamp(path)?,
                 symbol,
                 decimals,
             )?)),

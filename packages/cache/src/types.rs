@@ -185,10 +185,11 @@ pub enum CacheKey {
     // Predictions (keyed by the number of target validators)
     PredictionIndex,
     PredictionMetaByTarget(TargetValidators),
-    PredictionAccountsByTarget(TargetValidators),
+    PredictionValidatorAccountsByTarget(TargetValidators),
     PredictionValidatorByTargetAndAccount(TargetValidators, AccountId32),
-    PredictionNominatorsByTargetAndAccount(TargetValidators, AccountId32),
+    PredictionValidatorNominatorsByTargetAndAccount(TargetValidators, AccountId32),
     PredictionNominatorAccountsByTarget(TargetValidators),
+    PredictionNominatorsMetaByTarget(TargetValidators),
     PredictionNominatorByTargetAndAccount(TargetValidators, AccountId32),
 }
 
@@ -284,15 +285,16 @@ impl std::fmt::Display for CacheKey {
             }
             Self::PredictionIndex => write!(f, "pred:idx"),
             Self::PredictionMetaByTarget(n) => write!(f, "pred:{}:meta", n),
-            Self::PredictionAccountsByTarget(n) => write!(f, "pred:{}:accs", n),
+            Self::PredictionValidatorAccountsByTarget(n) => write!(f, "pred:{}:vals", n),
             Self::PredictionValidatorByTargetAndAccount(n, account) => {
                 write!(f, "pred:{}:v:{}", n, account)
             }
-            Self::PredictionNominatorAccountsByTarget(n) => write!(f, "pred:{}:noms", n),
-            Self::PredictionNominatorByTargetAndAccount(n, account) => {
-                write!(f, "pred:{}:nom:{}", n, account)
+            Self::PredictionValidatorNominatorsByTargetAndAccount(n, account) => {
+                write!(f, "pred:{}:v:{}:noms", n, account)
             }
-            Self::PredictionNominatorsByTargetAndAccount(n, account) => {
+            Self::PredictionNominatorAccountsByTarget(n) => write!(f, "pred:{}:noms", n),
+            Self::PredictionNominatorsMetaByTarget(n) => write!(f, "pred:{}:noms:meta", n),
+            Self::PredictionNominatorByTargetAndAccount(n, account) => {
                 write!(f, "pred:{}:n:{}", n, account)
             }
         }

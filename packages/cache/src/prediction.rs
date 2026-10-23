@@ -40,7 +40,7 @@ pub async fn cache_prediction(
 ) -> Result<(), CacheError> {
     let target = prediction.metadata.target_validators;
     let ttl = config.prediction_cache_ttl;
-    let accounts_key = CacheKey::PredictionAccountsByTarget(target);
+    let accounts_key = CacheKey::PredictionValidatorAccountsByTarget(target);
 
     let previous: Vec<String> = redis::cmd("SMEMBERS")
         .arg(accounts_key.to_string())
@@ -64,7 +64,7 @@ pub async fn cache_prediction(
                 .arg(CacheKey::PredictionValidatorByTargetAndAccount(
                     target, account_id,
                 ))
-                .arg(CacheKey::PredictionNominatorsByTargetAndAccount(
+                .arg(CacheKey::PredictionValidatorNominatorsByTargetAndAccount(
                     target, account_id,
                 ))
                 .ignore();
@@ -78,7 +78,8 @@ pub async fn cache_prediction(
     } in prediction.entries.iter()
     {
         let validator_key = CacheKey::PredictionValidatorByTargetAndAccount(target, *account_id);
-        let nominators_key = CacheKey::PredictionNominatorsByTargetAndAccount(target, *account_id);
+        let nominators_key =
+            CacheKey::PredictionValidatorNominatorsByTargetAndAccount(target, *account_id);
         pipe.cmd("SET")
             .arg(validator_key.to_string())
             .arg(serde_json::to_string(validator)?)
@@ -195,6 +196,13 @@ pub async fn cache_nominators_prediction(
             .arg(ttl)
             .ignore();
     }
+
+    pipe.cmd("SET")
+        .arg(CacheKey::PredictionNominatorsMetaByTarget(target))
+        .arg(serde_json::to_string(&prediction.metadata)?)
+        .arg("EX")
+        .arg(ttl)
+        .ignore();
 
     pipe.cmd("DEL").arg(accounts_key.to_string()).ignore();
     for chunk in current.chunks(SADD_CHUNK_SIZE) {

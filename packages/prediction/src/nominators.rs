@@ -69,10 +69,31 @@ pub struct NominatorEntry {
     pub nominator: NominatorPrediction,
 }
 
+/// Stats about the nominators of a prediction for a given number of target validators.
+/// The nominators without any active validator are split in three mutually exclusive groups:
+/// `inactive_only` (at least one inactive validator), `waiting_only` (at least one waiting
+/// and no inactive validators) and `no_nominations` (none of the above).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct NominatorsMetadata {
+    pub nominators_counter: u32,
+    pub active_counter: u32,
+    pub inactive_only_counter: u32,
+    pub waiting_only_counter: u32,
+    pub no_nominations_counter: u32,
+    pub total_stake: Planck,
+    // active_stake is the sum of the stake allocated to active validators
+    pub active_stake: Planck,
+    // idle_stake is the stake of the nominators without any active validator
+    pub idle_stake: Planck,
+    // timestamp is the unix timestamp of the prediction file
+    pub timestamp: u64,
+}
+
 /// Predicted nominations for a given number of target validators.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NominatorsPrediction {
     pub target_validators: TargetValidators,
+    pub metadata: NominatorsMetadata,
     pub entries: Vec<NominatorEntry>,
 }
 
@@ -98,6 +119,7 @@ impl NominatorsPrediction {
     pub fn from_slice(
         bytes: &[u8],
         target_validators: TargetValidators,
+        timestamp: u64,
         symbol: &str,
         decimals: u32,
     ) -> Result<Self, PredictionError> {
@@ -137,8 +159,34 @@ impl NominatorsPrediction {
             });
         }
 
+        let mut metadata = NominatorsMetadata {
+            nominators_counter: entries.len() as u32,
+            timestamp,
+            ..Default::default()
+        };
+        for NominatorEntry { nominator, .. } in entries.iter() {
+            metadata.total_stake.0 = metadata.total_stake.0.saturating_add(nominator.stake.0);
+            if nominator.active_validators.is_empty() {
+                metadata.idle_stake.0 = metadata.idle_stake.0.saturating_add(nominator.stake.0);
+                if !nominator.inactive_validators.is_empty() {
+                    metadata.inactive_only_counter += 1;
+                } else if !nominator.waiting_validators.is_empty() {
+                    metadata.waiting_only_counter += 1;
+                } else {
+                    metadata.no_nominations_counter += 1;
+                }
+            } else {
+                metadata.active_counter += 1;
+                for a in nominator.active_validators.iter() {
+                    metadata.active_stake.0 =
+                        metadata.active_stake.0.saturating_add(a.allocated_stake.0);
+                }
+            }
+        }
+
         Ok(NominatorsPrediction {
             target_validators,
+            metadata,
             entries,
         })
     }
@@ -153,6 +201,12 @@ mod tests {
     const V1: &str = "14ghKTz5mjZPgGYvgVC9VnFw1HYZmmsnYvSSHFgFTJfMvwQS";
     const V2: &str = "14Y4s6V1PWrwBLvxW47gcYgZCGTYekmmzvFsK1kiqNH2d84t";
     const W1: &str = "14oTqhVovqnamxu2SiP79WfJMvhRRwiF4d2Hjs25d4SDQNjJ";
+    // any other valid addresses
+    const N2: &str = "14b3zfcuDsLrVogj62iRb3adxLsTZ3XH58BrWVUAs3v2doBc";
+    const N3: &str = "1NghFPwbVjAuUaRt82b4tHD89X21CpA9da9sqeKrRrRXQNY";
+    const N4: &str = "14ktrCvJgDmBGRrXymoVRQuaskj4y5Z5PDcy5D31asvbN1QX";
+    const N5: &str = "14ghKTz5mjZPgGYvgVC9VnFw1HYZmmsnYvSSHFgFTJfMvwQS";
+    const N6: &str = "14oTqhVovqnamxu2SiP79WfJMvhRRwiF4d2Hjs25d4SDQNjJ";
 
     fn sample(inactive: &str) -> String {
         format!(
@@ -178,7 +232,8 @@ mod tests {
 
     #[test]
     fn it_parses_nominators_prediction() {
-        let p = NominatorsPrediction::from_slice(sample("[]").as_bytes(), 500, "DOT", 10).unwrap();
+        let p =
+            NominatorsPrediction::from_slice(sample("[]").as_bytes(), 500, 0, "DOT", 10).unwrap();
         assert_eq!(p.target_validators, 500);
         let n = &p.entries[0].nominator;
         assert_eq!(n.stake, Planck(2_436_991_826_599));
@@ -194,18 +249,60 @@ mod tests {
     #[test]
     fn it_parses_inactive_validators_as_addresses() {
         let inactive = format!(r#"["{V2}"]"#);
-        let p =
-            NominatorsPrediction::from_slice(sample(&inactive).as_bytes(), 1, "DOT", 10).unwrap();
+        let p = NominatorsPrediction::from_slice(sample(&inactive).as_bytes(), 1, 0, "DOT", 10)
+            .unwrap();
         let n = &p.entries[0].nominator;
         assert_eq!(n.inactive_validators.len(), 1);
         assert!(n.inactive_validators[0].starts_with('5'));
         let bad = sample(r#"["nope"]"#);
-        assert!(NominatorsPrediction::from_slice(bad.as_bytes(), 1, "DOT", 10).is_err());
+        assert!(NominatorsPrediction::from_slice(bad.as_bytes(), 1, 0, "DOT", 10).is_err());
+    }
+
+    #[test]
+    fn it_computes_metadata() {
+        let nominator = |n: &str, stake: &str, active: &str, inactive: &str, waiting: &str| {
+            format!(
+                r#"{{"address":"{n}","stake":"{stake} DOT","active_validators":{active},"inactive_validators":{inactive},"waiting_validators":{waiting}}}"#
+            )
+        };
+        let active =
+            |stake: &str| format!(r#"[{{"validator":"{V1}","allocated_stake":"{stake} DOT"}}]"#);
+        let list = format!(r#"["{V2}"]"#);
+        let nominators = [
+            nominator(N1, "10", &active("4"), "[]", "[]"),
+            nominator(N2, "20", &active("6"), &list, &list),
+            nominator(N3, "1", "[]", "[]", &list),
+            nominator(N4, "2", "[]", &list, &list),
+            nominator(N5, "3", "[]", &list, "[]"),
+            nominator(N6, "4", "[]", "[]", "[]"),
+        ];
+        let json = format!(r#"{{"nominators":[{}]}}"#, nominators.join(","));
+        let p = NominatorsPrediction::from_slice(json.as_bytes(), 500, 77, "DOT", 10).unwrap();
+        let m = p.metadata;
+        let dot = |v: u128| Planck(v * 10_000_000_000);
+        assert_eq!(p.target_validators, 500);
+        assert_eq!(m.timestamp, 77);
+        assert_eq!(m.nominators_counter, 6);
+        assert_eq!(m.active_counter, 2);
+        // N4 has inactive and waiting validators, inactive takes precedence
+        assert_eq!(m.inactive_only_counter, 2);
+        assert_eq!(m.waiting_only_counter, 1);
+        assert_eq!(m.no_nominations_counter, 1);
+        assert_eq!(
+            m.active_counter
+                + m.waiting_only_counter
+                + m.inactive_only_counter
+                + m.no_nominations_counter,
+            m.nominators_counter
+        );
+        assert_eq!(m.total_stake, dot(40));
+        assert_eq!(m.active_stake, dot(10));
+        assert_eq!(m.idle_stake, dot(10));
     }
 
     #[test]
     fn it_rejects_invalid_account() {
         let bad = sample("[]").replace(W1, "nope");
-        assert!(NominatorsPrediction::from_slice(bad.as_bytes(), 1, "DOT", 10).is_err());
+        assert!(NominatorsPrediction::from_slice(bad.as_bytes(), 1, 0, "DOT", 10).is_err());
     }
 }
