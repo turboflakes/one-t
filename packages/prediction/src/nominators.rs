@@ -25,17 +25,10 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use subxt::utils::AccountId32;
 
-/// A validator the nominator stake is (or would be) allocated to. Producers may list
-/// inactive validators as bare addresses, in which case there is no allocated stake.
 #[derive(Deserialize)]
-#[serde(untagged)]
-enum RawAllocation {
-    Detailed {
-        validator: String,
-        #[serde(default)]
-        allocated_stake: Option<String>,
-    },
-    Address(String),
+struct RawAllocation {
+    validator: String,
+    allocated_stake: String,
 }
 
 #[derive(Deserialize)]
@@ -45,7 +38,7 @@ struct RawNominator {
     #[serde(default)]
     active_validators: Vec<RawAllocation>,
     #[serde(default)]
-    inactive_validators: Vec<RawAllocation>,
+    inactive_validators: Vec<String>,
     #[serde(default)]
     waiting_validators: Vec<String>,
 }
@@ -58,8 +51,7 @@ struct RawNominatorsPrediction {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct NominatorAllocation {
     pub address: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allocated_stake: Option<Planck>,
+    pub allocated_stake: Planck,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -67,7 +59,7 @@ pub struct NominatorPrediction {
     pub address: String,
     pub stake: Planck,
     pub active_validators: Vec<NominatorAllocation>,
-    pub inactive_validators: Vec<NominatorAllocation>,
+    pub inactive_validators: Vec<String>,
     pub waiting_validators: Vec<String>,
 }
 
@@ -114,39 +106,32 @@ impl NominatorsPrediction {
         let mut entries: Vec<NominatorEntry> = Vec::with_capacity(raw.nominators.len());
         for nominator in raw.nominators {
             let account_id = parse_account(&nominator.address)?;
-            let allocations =
-                |raw: Vec<RawAllocation>| -> Result<Vec<NominatorAllocation>, PredictionError> {
-                    raw.into_iter()
-                        .map(|a| {
-                            let (validator, stake) = match a {
-                                RawAllocation::Detailed {
-                                    validator,
-                                    allocated_stake,
-                                } => (validator, allocated_stake),
-                                RawAllocation::Address(validator) => (validator, None),
-                            };
-                            Ok(NominatorAllocation {
-                                address: parse_account(&validator)?.to_string(),
-                                allocated_stake: stake
-                                    .map(|s| Planck::parse(&s, symbol, decimals))
-                                    .transpose()?,
-                            })
-                        })
-                        .collect()
-                };
-            let waiting_validators = nominator
-                .waiting_validators
-                .iter()
-                .map(|v| Ok(parse_account(v)?.to_string()))
+            let active_validators = nominator
+                .active_validators
+                .into_iter()
+                .map(|a| {
+                    Ok(NominatorAllocation {
+                        address: parse_account(&a.validator)?.to_string(),
+                        allocated_stake: Planck::parse(&a.allocated_stake, symbol, decimals)?,
+                    })
+                })
                 .collect::<Result<Vec<_>, PredictionError>>()?;
+            let normalize = |addresses: &[String]| {
+                addresses
+                    .iter()
+                    .map(|v| Ok(parse_account(v)?.to_string()))
+                    .collect::<Result<Vec<_>, PredictionError>>()
+            };
+            let inactive_validators = normalize(&nominator.inactive_validators)?;
+            let waiting_validators = normalize(&nominator.waiting_validators)?;
 
             entries.push(NominatorEntry {
                 account_id,
                 nominator: NominatorPrediction {
                     address: account_id.to_string(),
                     stake: Planck::parse(&nominator.stake, symbol, decimals)?,
-                    active_validators: allocations(nominator.active_validators)?,
-                    inactive_validators: allocations(nominator.inactive_validators)?,
+                    active_validators,
+                    inactive_validators,
                     waiting_validators,
                 },
             });
@@ -200,27 +185,22 @@ mod tests {
         assert_eq!(n.active_validators.len(), 1);
         assert_eq!(
             n.active_validators[0].allocated_stake,
-            Some(Planck(2_436_991_826_599))
+            Planck(2_436_991_826_599)
         );
         assert!(n.address.starts_with('5') && n.waiting_validators[0].starts_with('5'));
         assert!(n.inactive_validators.is_empty());
     }
 
     #[test]
-    fn it_accepts_both_inactive_validator_shapes() {
-        let detailed = format!(r#"[{{"validator":"{V2}","allocated_stake":"1 DOT"}}]"#);
-        let bare = format!(r#"["{V2}"]"#);
-        let a =
-            NominatorsPrediction::from_slice(sample(&detailed).as_bytes(), 1, "DOT", 10).unwrap();
-        let b = NominatorsPrediction::from_slice(sample(&bare).as_bytes(), 1, "DOT", 10).unwrap();
-        assert_eq!(
-            a.entries[0].nominator.inactive_validators[0].allocated_stake,
-            Some(Planck(10_000_000_000))
-        );
-        assert_eq!(
-            b.entries[0].nominator.inactive_validators[0].allocated_stake,
-            None
-        );
+    fn it_parses_inactive_validators_as_addresses() {
+        let inactive = format!(r#"["{V2}"]"#);
+        let p =
+            NominatorsPrediction::from_slice(sample(&inactive).as_bytes(), 1, "DOT", 10).unwrap();
+        let n = &p.entries[0].nominator;
+        assert_eq!(n.inactive_validators.len(), 1);
+        assert!(n.inactive_validators[0].starts_with('5'));
+        let bad = sample(r#"["nope"]"#);
+        assert!(NominatorsPrediction::from_slice(bad.as_bytes(), 1, "DOT", 10).is_err());
     }
 
     #[test]
