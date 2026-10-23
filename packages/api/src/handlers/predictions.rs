@@ -30,8 +30,8 @@ use onet_cache::{
     types::CacheKey,
 };
 use onet_prediction::{
-    NominatorPrediction, NominatorsMetadata, PredictionMetadata, PredictionNominator,
-    PredictionValidator, TargetValidators,
+    NominatorPrediction, NominatorStatus, NominatorsMetadata, PredictionMetadata,
+    PredictionNominator, PredictionValidator, TargetValidators,
 };
 use onet_records::ProfilePrediction;
 use redis::aio::Connection;
@@ -57,6 +57,17 @@ pub struct PredictionMetadataResult {
     pub metadata: PredictionMetadata,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nominators: Option<NominatorsMetadata>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NominatorsParams {
+    #[serde(default)]
+    pub page: usize,
+    #[serde(default)]
+    pub size: Option<usize>,
+    // status filters the nominators by group (active, inactive, waiting or none), default all
+    #[serde(default)]
+    pub status: Option<NominatorStatus>,
 }
 
 #[derive(Debug, Serialize)]
@@ -387,10 +398,10 @@ pub async fn get_prediction_nominator(
 }
 
 /// Handler to get a page of the nominators predictions for a given number of target validators,
-/// from the largest to the smallest stake
+/// from the largest to the smallest stake, optionally only the ones in a given status
 pub async fn get_prediction_nominators(
     path: Path<TargetValidators>,
-    params: Query<PaginationParams>,
+    params: Query<NominatorsParams>,
     cache: Data<RedisPool>,
 ) -> Result<Json<PaginatedResult<NominatorPrediction>>, ApiError> {
     let target = path.into_inner();
@@ -413,7 +424,11 @@ pub async fn get_prediction_nominators(
         .unwrap_or(DEFAULT_PAGE_SIZE)
         .clamp(1, MAX_PAGE_SIZE);
     let start = params.page.saturating_mul(size);
-    let accounts_key = CacheKey::PredictionNominatorAccountsByTarget(target).to_string();
+    let accounts_key = match params.status {
+        Some(status) => CacheKey::PredictionNominatorAccountsByTargetAndStatus(target, status),
+        None => CacheKey::PredictionNominatorAccountsByTarget(target),
+    }
+    .to_string();
 
     let total: usize = redis::cmd("ZCARD")
         .arg(&accounts_key)

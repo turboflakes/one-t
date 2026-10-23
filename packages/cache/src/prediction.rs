@@ -22,7 +22,9 @@
 use crate::error::CacheError;
 use crate::types::CacheKey;
 use onet_config::Config;
-use onet_prediction::{NominatorEntry, NominatorsPrediction, Prediction, PredictionEntry};
+use onet_prediction::{
+    NominatorEntry, NominatorStatus, NominatorsPrediction, Prediction, PredictionEntry,
+};
 use redis::aio::Connection;
 use std::collections::HashSet;
 use std::result::Result;
@@ -147,7 +149,8 @@ const ZADD_CHUNK_SIZE: usize = 1000;
 /// Nominators present in the previous round but missing from this one are deleted.
 ///
 /// The nominators addresses are kept in a sorted set scored by stake, so they can be paginated
-/// from the largest to the smallest stake.
+/// from the largest to the smallest stake. Besides the sorted set with all the nominators, there
+/// is one sorted set per `NominatorStatus` so each group can be paginated on its own.
 pub async fn cache_nominators_prediction(
     cache: &mut Connection,
     config: &Config,
@@ -211,18 +214,33 @@ pub async fn cache_nominators_prediction(
         .arg(ttl)
         .ignore();
 
-    pipe.cmd("DEL").arg(accounts_key.to_string()).ignore();
-    for chunk in current.chunks(ZADD_CHUNK_SIZE) {
-        pipe.cmd("ZADD")
-            .arg(accounts_key.to_string())
-            .arg(chunk)
-            .ignore();
+    // the sorted set with all the nominators followed by one sorted set per status
+    let mut by_status: Vec<(NominatorStatus, Vec<(f64, String)>)> = NominatorStatus::ALL
+        .iter()
+        .map(|status| (*status, Vec::new()))
+        .collect();
+    for entry in prediction.entries.iter() {
+        let status = entry.nominator.status();
+        if let Some((_, members)) = by_status.iter_mut().find(|(s, _)| *s == status) {
+            members.push((entry.nominator.stake.0 as f64, entry.account_id.to_string()));
+        }
     }
-    if !current.is_empty() {
-        pipe.cmd("EXPIRE")
-            .arg(accounts_key.to_string())
-            .arg(ttl)
-            .ignore();
+    let mut sorted_sets: Vec<(String, &[(f64, String)])> =
+        vec![(accounts_key.to_string(), &current)];
+    for (status, members) in by_status.iter() {
+        sorted_sets.push((
+            CacheKey::PredictionNominatorAccountsByTargetAndStatus(target, *status).to_string(),
+            members,
+        ));
+    }
+    for (key, members) in sorted_sets {
+        pipe.cmd("DEL").arg(&key).ignore();
+        for chunk in members.chunks(ZADD_CHUNK_SIZE) {
+            pipe.cmd("ZADD").arg(&key).arg(chunk).ignore();
+        }
+        if !members.is_empty() {
+            pipe.cmd("EXPIRE").arg(&key).arg(ttl).ignore();
+        }
     }
 
     pipe.query_async::<_, ()>(cache)

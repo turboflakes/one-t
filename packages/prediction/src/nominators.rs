@@ -63,6 +63,59 @@ pub struct NominatorPrediction {
     pub waiting_validators: Vec<String>,
 }
 
+/// The group a nominator belongs to, in order of precedence: with at least one `Active`
+/// validator, otherwise with at least one `Inactive` validator, otherwise with at least one
+/// `Waiting` validator, otherwise with `NoNominations` at all. Every nominator is in one group only.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NominatorStatus {
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "inactive")]
+    Inactive,
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "none")]
+    NoNominations,
+}
+
+impl NominatorStatus {
+    pub const ALL: [NominatorStatus; 4] = [
+        NominatorStatus::Active,
+        NominatorStatus::Inactive,
+        NominatorStatus::Waiting,
+        NominatorStatus::NoNominations,
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Inactive => "inactive",
+            Self::Waiting => "waiting",
+            Self::NoNominations => "none",
+        }
+    }
+}
+
+impl std::fmt::Display for NominatorStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl NominatorPrediction {
+    pub fn status(&self) -> NominatorStatus {
+        if !self.active_validators.is_empty() {
+            NominatorStatus::Active
+        } else if !self.inactive_validators.is_empty() {
+            NominatorStatus::Inactive
+        } else if !self.waiting_validators.is_empty() {
+            NominatorStatus::Waiting
+        } else {
+            NominatorStatus::NoNominations
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NominatorEntry {
     pub account_id: AccountId32,
@@ -166,20 +219,21 @@ impl NominatorsPrediction {
         };
         for NominatorEntry { nominator, .. } in entries.iter() {
             metadata.total_stake.0 = metadata.total_stake.0.saturating_add(nominator.stake.0);
-            if nominator.active_validators.is_empty() {
-                metadata.idle_stake.0 = metadata.idle_stake.0.saturating_add(nominator.stake.0);
-                if !nominator.inactive_validators.is_empty() {
-                    metadata.inactive_only_counter += 1;
-                } else if !nominator.waiting_validators.is_empty() {
-                    metadata.waiting_only_counter += 1;
-                } else {
-                    metadata.no_nominations_counter += 1;
+            match nominator.status() {
+                NominatorStatus::Active => {
+                    metadata.active_counter += 1;
+                    for a in nominator.active_validators.iter() {
+                        metadata.active_stake.0 =
+                            metadata.active_stake.0.saturating_add(a.allocated_stake.0);
+                    }
                 }
-            } else {
-                metadata.active_counter += 1;
-                for a in nominator.active_validators.iter() {
-                    metadata.active_stake.0 =
-                        metadata.active_stake.0.saturating_add(a.allocated_stake.0);
+                status => {
+                    metadata.idle_stake.0 = metadata.idle_stake.0.saturating_add(nominator.stake.0);
+                    match status {
+                        NominatorStatus::Inactive => metadata.inactive_only_counter += 1,
+                        NominatorStatus::Waiting => metadata.waiting_only_counter += 1,
+                        _ => metadata.no_nominations_counter += 1,
+                    }
                 }
             }
         }
@@ -298,6 +352,47 @@ mod tests {
         assert_eq!(m.total_stake, dot(40));
         assert_eq!(m.active_stake, dot(10));
         assert_eq!(m.idle_stake, dot(10));
+    }
+
+    #[test]
+    fn it_tells_the_status_of_a_nominator() {
+        let nominator = |active: bool, inactive: bool, waiting: bool| NominatorPrediction {
+            address: N1.into(),
+            stake: Planck(1),
+            active_validators: if active {
+                vec![NominatorAllocation {
+                    address: V1.into(),
+                    allocated_stake: Planck(1),
+                }]
+            } else {
+                vec![]
+            },
+            inactive_validators: if inactive { vec![V2.into()] } else { vec![] },
+            waiting_validators: if waiting { vec![W1.into()] } else { vec![] },
+        };
+        assert_eq!(
+            nominator(true, true, true).status(),
+            NominatorStatus::Active
+        );
+        assert_eq!(
+            nominator(false, true, true).status(),
+            NominatorStatus::Inactive
+        );
+        assert_eq!(
+            nominator(false, false, true).status(),
+            NominatorStatus::Waiting
+        );
+        assert_eq!(
+            nominator(false, false, false).status(),
+            NominatorStatus::NoNominations
+        );
+        let names: Vec<_> = NominatorStatus::ALL.iter().map(|s| s.to_string()).collect();
+        assert_eq!(names, vec!["active", "inactive", "waiting", "none"]);
+        assert_eq!(
+            serde_json::from_str::<NominatorStatus>("\"waiting\"").unwrap(),
+            NominatorStatus::Waiting
+        );
+        assert!(serde_json::from_str::<NominatorStatus>("\"bogus\"").is_err());
     }
 
     #[test]

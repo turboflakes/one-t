@@ -29,8 +29,8 @@ pub use error::PredictionError;
 pub use files::{discard_failed_file, read_pending_files, remove_file, PendingFile};
 pub use loader::PredictionFile;
 pub use nominators::{
-    target_from_path, NominatorAllocation, NominatorEntry, NominatorPrediction, NominatorsMetadata,
-    NominatorsPrediction,
+    target_from_path, NominatorAllocation, NominatorEntry, NominatorPrediction, NominatorStatus,
+    NominatorsMetadata, NominatorsPrediction,
 };
 pub use types::{
     Planck, Prediction, PredictionEntry, PredictionMetadata, PredictionNominator,
