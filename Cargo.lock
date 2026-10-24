@@ -5221,7 +5221,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "onet"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "actix",
  "actix-cors",
@@ -5249,7 +5249,7 @@ dependencies = [
 
 [[package]]
 name = "onet-api"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "actix",
  "actix-web",
@@ -5275,7 +5275,7 @@ dependencies = [
 
 [[package]]
 name = "onet-asset-hub-kusama"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "log",
  "onet-core",
@@ -5288,7 +5288,7 @@ dependencies = [
 
 [[package]]
 name = "onet-asset-hub-paseo"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "log",
  "onet-core",
@@ -5301,7 +5301,7 @@ dependencies = [
 
 [[package]]
 name = "onet-asset-hub-polkadot"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "log",
  "onet-core",
@@ -5314,7 +5314,7 @@ dependencies = [
 
 [[package]]
 name = "onet-cache"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "actix-web",
  "log",
@@ -5336,14 +5336,14 @@ dependencies = [
 
 [[package]]
 name = "onet-chains"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "onet-config",
 ]
 
 [[package]]
 name = "onet-config"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "clap 2.34.0",
  "dotenv",
@@ -5355,7 +5355,7 @@ dependencies = [
 
 [[package]]
 name = "onet-core"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "async-std",
  "log",
@@ -5378,7 +5378,7 @@ dependencies = [
 
 [[package]]
 name = "onet-discovery"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "hex",
  "log",
@@ -5397,7 +5397,7 @@ dependencies = [
 
 [[package]]
 name = "onet-dn"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "log",
  "onet-config",
@@ -5412,7 +5412,7 @@ dependencies = [
 
 [[package]]
 name = "onet-kusama"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "async-recursion",
  "async-std",
@@ -5441,7 +5441,7 @@ dependencies = [
 
 [[package]]
 name = "onet-matrix"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "async-recursion",
  "base64 0.13.1",
@@ -5459,7 +5459,7 @@ dependencies = [
 
 [[package]]
 name = "onet-mcda"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "onet-records",
  "serde",
@@ -5471,7 +5471,7 @@ dependencies = [
 
 [[package]]
 name = "onet-paseo"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "async-recursion",
  "async-std",
@@ -5500,7 +5500,7 @@ dependencies = [
 
 [[package]]
 name = "onet-people-kusama"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "async-recursion",
  "log",
@@ -5511,7 +5511,7 @@ dependencies = [
 
 [[package]]
 name = "onet-people-paseo"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "async-recursion",
  "log",
@@ -5522,7 +5522,7 @@ dependencies = [
 
 [[package]]
 name = "onet-people-polkadot"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "async-recursion",
  "log",
@@ -5533,7 +5533,7 @@ dependencies = [
 
 [[package]]
 name = "onet-polkadot"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "async-recursion",
  "async-std",
@@ -5562,7 +5562,7 @@ dependencies = [
 
 [[package]]
 name = "onet-pools"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "onet-records",
  "parity-scale-codec",
@@ -5572,7 +5572,7 @@ dependencies = [
 
 [[package]]
 name = "onet-prediction"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "log",
  "serde",
@@ -5583,7 +5583,7 @@ dependencies = [
 
 [[package]]
 name = "onet-records"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "hex",
  "log",
@@ -5595,7 +5595,7 @@ dependencies = [
 
 [[package]]
 name = "onet-report"
-version = "1.21.1"
+version = "1.22.0"
 dependencies = [
  "flate2",
  "log",
