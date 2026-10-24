@@ -21,13 +21,13 @@
 
 use log::{error, info, warn};
 use onet_cache::{
-    cache_prediction,
+    cache_nominators_prediction, cache_prediction,
     provider::{create_or_await_pool, get_conn, RedisPool},
 };
 use onet_chains::SupportedRuntime;
 use onet_config::{Config, CONFIG};
 use onet_prediction::{
-    discard_failed_file, read_pending_files, remove_file, PendingFile, Prediction,
+    discard_failed_file, read_pending_files, remove_file, PendingFile, PredictionFile,
 };
 use redis::aio::Connection;
 use std::{path::Path, time::Duration};
@@ -75,7 +75,7 @@ async fn ingest_pending_files(
     for PendingFile { path, .. } in read_pending_files(dir, MIN_FILE_AGE).map_err(String::from)? {
         let file_path = path.clone();
         let parsed = async_std::task::spawn_blocking(move || {
-            Prediction::from_path(&file_path, runtime.token_symbol(), runtime.token_decimals())
+            PredictionFile::from_path(&file_path, runtime.token_symbol(), runtime.token_decimals())
         })
         .await;
 
@@ -93,15 +93,31 @@ async fn ingest_pending_files(
 
         let mut conn = get_conn(pool).await.map_err(String::from)?;
         // on cache failure the file is left in place and retried on the next poll
-        cache_prediction(&mut conn as &mut Connection, config, &prediction)
-            .await
-            .map_err(String::from)?;
-        info!(
-            "Prediction cached for target={} round={} validators={}",
-            prediction.metadata.target_validators,
-            prediction.metadata.round,
-            prediction.metadata.validators_count
-        );
+        match prediction {
+            PredictionFile::Validators(prediction) => {
+                cache_prediction(&mut conn as &mut Connection, config, &prediction)
+                    .await
+                    .map_err(String::from)?;
+                info!(
+                    "Validators prediction cached for target={} round={} validators={}",
+                    prediction.metadata.target_validators,
+                    prediction.metadata.round,
+                    prediction.metadata.validators_count
+                );
+            }
+            PredictionFile::Nominators(prediction) => {
+                cache_nominators_prediction(&mut conn as &mut Connection, config, &prediction)
+                    .await
+                    .map_err(String::from)?;
+                info!(
+                    "Nominators prediction cached for target={} nominators={} active={} waiting_only={}",
+                    prediction.target_validators,
+                    prediction.metadata.nominators_counter,
+                    prediction.metadata.active_counter,
+                    prediction.metadata.waiting_only_counter
+                );
+            }
+        }
         remove_file(&path).map_err(String::from)?;
     }
     Ok(())

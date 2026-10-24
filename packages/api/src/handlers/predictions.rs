@@ -23,14 +23,15 @@ use crate::error::ApiError;
 use crate::helpers::respond_json;
 use crate::responses::ValidatorResult;
 use actix_web::web::{Data, Json, Path, Query};
-use log::debug;
+use log::{debug, warn};
 use onet_cache::{
     error::CacheError,
     provider::{get_conn, RedisPool},
     types::CacheKey,
 };
 use onet_prediction::{
-    PredictionMetadata, PredictionNominator, PredictionValidator, TargetValidators,
+    NominatorPrediction, NominatorStatus, NominatorsMetadata, PredictionMetadata,
+    PredictionNominator, PredictionValidator, TargetValidators,
 };
 use onet_records::ProfilePrediction;
 use redis::aio::Connection;
@@ -49,24 +50,37 @@ pub struct PaginationParams {
     pub size: Option<usize>,
 }
 
+/// Metadata of a prediction, along with the stats of its nominators when available.
 #[derive(Debug, Serialize)]
-pub struct PredictionValidatorResult {
-    pub metadata: PredictionMetadata,
+pub struct PredictionMetadataResult {
     #[serde(flatten)]
-    pub validator: PredictionValidator,
+    pub metadata: PredictionMetadata,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nominators: Option<NominatorsMetadata>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NominatorsParams {
+    #[serde(default)]
+    pub page: usize,
+    #[serde(default)]
+    pub size: Option<usize>,
+    // status filters the nominators by group (active, inactive, waiting or none), default all
+    #[serde(default)]
+    pub status: Option<NominatorStatus>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct PredictionNominatorsResult {
+pub struct PaginatedResult<T> {
     pub total: usize,
     pub page: usize,
     pub size: usize,
-    pub nominators: Vec<PredictionNominator>,
+    pub data: Vec<T>,
 }
 
 fn parse_stash(stash: &str) -> Result<AccountId32, ApiError> {
     AccountId32::from_str(stash)
-        .map_err(|e| ApiError::BadRequest(format!("Invalid stash {}: {:?}", stash, e)))
+        .map_err(|e| ApiError::BadRequest(format!("Invalid address {}: {:?}", stash, e)))
 }
 
 async fn get_metadata(
@@ -87,10 +101,43 @@ async fn get_metadata(
     }
 }
 
+/// Nominators stats are cached independently from the validators metadata (they come from a
+/// different file), so they might not be there yet or might have been cached with an older format.
+async fn get_nominators_metadata(
+    conn: &mut Connection,
+    target: TargetValidators,
+) -> Result<Option<NominatorsMetadata>, ApiError> {
+    let serialized: Option<String> = redis::cmd("GET")
+        .arg(CacheKey::PredictionNominatorsMetaByTarget(target))
+        .query_async(conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    Ok(serialized.and_then(|s| match serde_json::from_str(&s) {
+        Ok(metadata) => Some(metadata),
+        Err(e) => {
+            warn!(
+                "Skipping nominators metadata for {} target validators: {:?}",
+                target, e
+            );
+            None
+        }
+    }))
+}
+
+async fn get_metadata_result(
+    conn: &mut Connection,
+    target: TargetValidators,
+) -> Result<PredictionMetadataResult, ApiError> {
+    Ok(PredictionMetadataResult {
+        metadata: get_metadata(conn, target).await?,
+        nominators: get_nominators_metadata(conn, target).await?,
+    })
+}
+
 /// Handler to get the metadata of every prediction currently cached, one per `target_validators`
 pub async fn get_predictions(
     cache: Data<RedisPool>,
-) -> Result<Json<Vec<PredictionMetadata>>, ApiError> {
+) -> Result<Json<Vec<PredictionMetadataResult>>, ApiError> {
     let mut conn = get_conn(&cache).await?;
     let mut indices: Vec<TargetValidators> = redis::cmd("SMEMBERS")
         .arg(CacheKey::PredictionIndex)
@@ -99,11 +146,14 @@ pub async fn get_predictions(
         .map_err(CacheError::RedisCMDError)?;
     indices.sort_unstable();
 
-    let mut data: Vec<PredictionMetadata> = Vec::with_capacity(indices.len());
+    let mut data: Vec<PredictionMetadataResult> = Vec::with_capacity(indices.len());
     for target in indices {
         // entries expire independently, skip the ones that are gone
         if let Ok(metadata) = get_metadata(&mut conn, target).await {
-            data.push(metadata);
+            data.push(PredictionMetadataResult {
+                metadata,
+                nominators: get_nominators_metadata(&mut conn, target).await?,
+            });
         }
     }
     respond_json(data)
@@ -113,9 +163,9 @@ pub async fn get_predictions(
 pub async fn get_prediction_by_target(
     path: Path<TargetValidators>,
     cache: Data<RedisPool>,
-) -> Result<Json<PredictionMetadata>, ApiError> {
+) -> Result<Json<PredictionMetadataResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
-    respond_json(get_metadata(&mut conn, path.into_inner()).await?)
+    respond_json(get_metadata_result(&mut conn, path.into_inner()).await?)
 }
 
 /// Handler to get every validator of the prediction for a given number of target validators
@@ -129,7 +179,7 @@ pub async fn get_prediction_validators(
     get_metadata(&mut conn, target).await?;
 
     let accounts: Vec<String> = redis::cmd("SMEMBERS")
-        .arg(CacheKey::PredictionAccountsByTarget(target))
+        .arg(CacheKey::PredictionValidatorAccountsByTarget(target))
         .query_async(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
@@ -162,11 +212,10 @@ pub async fn get_prediction_validators(
 pub async fn get_prediction_validator(
     path: Path<(TargetValidators, String)>,
     cache: Data<RedisPool>,
-) -> Result<Json<PredictionValidatorResult>, ApiError> {
+) -> Result<Json<PredictionValidator>, ApiError> {
     let (target, stash) = path.into_inner();
     let stash = parse_stash(&stash)?;
     let mut conn = get_conn(&cache).await?;
-    let metadata = get_metadata(&mut conn, target).await?;
 
     let serialized: Option<String> = redis::cmd("GET")
         .arg(CacheKey::PredictionValidatorByTargetAndAccount(
@@ -177,10 +226,7 @@ pub async fn get_prediction_validator(
         .map_err(CacheError::RedisCMDError)?;
 
     match serialized {
-        Some(s) => respond_json(PredictionValidatorResult {
-            metadata,
-            validator: serde_json::from_str(&s)?,
-        }),
+        Some(s) => respond_json(serde_json::from_str(&s)?),
         None => Err(ApiError::NotFound(format!(
             "Validator {} is not part of the prediction for {} target validators.",
             stash, target
@@ -193,13 +239,13 @@ pub async fn get_prediction_validator_nominators(
     path: Path<(TargetValidators, String)>,
     params: Query<PaginationParams>,
     cache: Data<RedisPool>,
-) -> Result<Json<PredictionNominatorsResult>, ApiError> {
+) -> Result<Json<PaginatedResult<PredictionNominator>>, ApiError> {
     let (target, stash) = path.into_inner();
     let stash = parse_stash(&stash)?;
     let mut conn = get_conn(&cache).await?;
 
     let serialized: Option<String> = redis::cmd("GET")
-        .arg(CacheKey::PredictionNominatorsByTargetAndAccount(
+        .arg(CacheKey::PredictionValidatorNominatorsByTargetAndAccount(
             target, stash,
         ))
         .query_async(&mut conn as &mut Connection)
@@ -221,17 +267,17 @@ pub async fn get_prediction_validator_nominators(
         .unwrap_or(DEFAULT_PAGE_SIZE)
         .clamp(1, MAX_PAGE_SIZE);
     let total = nominators.len();
-    let page: Vec<PredictionNominator> = nominators
+    let data: Vec<PredictionNominator> = nominators
         .into_iter()
         .skip(params.page.saturating_mul(size))
         .take(size)
         .collect();
 
-    respond_json(PredictionNominatorsResult {
+    respond_json(PaginatedResult {
         total,
         page: params.page,
         size,
-        nominators: page,
+        data,
     })
 }
 
@@ -323,4 +369,109 @@ pub async fn attach_validators_predictions(
         validators[i].preds = predictions;
     }
     Ok(())
+}
+
+/// Handler to get the predicted nominations of a single nominator
+pub async fn get_prediction_nominator(
+    path: Path<(TargetValidators, String)>,
+    cache: Data<RedisPool>,
+) -> Result<Json<NominatorPrediction>, ApiError> {
+    let (target, address) = path.into_inner();
+    let address = parse_stash(&address)?;
+    let mut conn = get_conn(&cache).await?;
+
+    let serialized: Option<String> = redis::cmd("GET")
+        .arg(CacheKey::PredictionNominatorByTargetAndAccount(
+            target, address,
+        ))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    match serialized {
+        Some(s) => respond_json(serde_json::from_str(&s)?),
+        None => Err(ApiError::NotFound(format!(
+            "Nominator {} is not part of the prediction for {} target validators.",
+            address, target
+        ))),
+    }
+}
+
+/// Handler to get a page of the nominators predictions for a given number of target validators,
+/// from the largest to the smallest stake, optionally only the ones in a given status
+pub async fn get_prediction_nominators(
+    path: Path<TargetValidators>,
+    params: Query<NominatorsParams>,
+    cache: Data<RedisPool>,
+) -> Result<Json<PaginatedResult<NominatorPrediction>>, ApiError> {
+    let target = path.into_inner();
+    let mut conn = get_conn(&cache).await?;
+
+    let available: bool = redis::cmd("EXISTS")
+        .arg(CacheKey::PredictionNominatorsMetaByTarget(target))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    if !available {
+        return Err(ApiError::NotFound(format!(
+            "Nominators prediction for {} target validators is not available.",
+            target
+        )));
+    }
+
+    let size = params
+        .size
+        .unwrap_or(DEFAULT_PAGE_SIZE)
+        .clamp(1, MAX_PAGE_SIZE);
+    let start = params.page.saturating_mul(size);
+    let accounts_key = match params.status {
+        Some(status) => CacheKey::PredictionNominatorAccountsByTargetAndStatus(target, status),
+        None => CacheKey::PredictionNominatorAccountsByTarget(target),
+    }
+    .to_string();
+
+    let total: usize = redis::cmd("ZCARD")
+        .arg(&accounts_key)
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    let accounts: Vec<String> = redis::cmd("ZREVRANGE")
+        .arg(&accounts_key)
+        .arg(start)
+        .arg(start.saturating_add(size - 1))
+        .query_async(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    let keys: Vec<String> = accounts
+        .iter()
+        .filter_map(|a| AccountId32::from_str(a).ok())
+        .map(|a| CacheKey::PredictionNominatorByTargetAndAccount(target, a).to_string())
+        .collect();
+
+    let mut data: Vec<NominatorPrediction> = Vec::with_capacity(keys.len());
+    if !keys.is_empty() {
+        let values: Vec<Option<String>> = redis::cmd("MGET")
+            .arg(keys)
+            .query_async(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+        for serialized in values.into_iter().flatten() {
+            match serde_json::from_str(&serialized) {
+                Ok(nominator) => data.push(nominator),
+                Err(e) => warn!(
+                    "Skipping nominator prediction for {} target validators: {:?}",
+                    target, e
+                ),
+            }
+        }
+    }
+
+    respond_json(PaginatedResult {
+        total,
+        page: params.page,
+        size,
+        data,
+    })
 }

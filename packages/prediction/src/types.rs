@@ -293,7 +293,7 @@ impl Prediction {
     }
 }
 
-fn parse_account(value: &str) -> Result<AccountId32, PredictionError> {
+pub(crate) fn parse_account(value: &str) -> Result<AccountId32, PredictionError> {
     AccountId32::from_str(value).map_err(|_| PredictionError::InvalidAccount(value.into()))
 }
 

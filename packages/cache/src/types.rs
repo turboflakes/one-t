@@ -20,7 +20,7 @@
 // SOFTWARE.
 
 use onet_pools::PoolId;
-use onet_prediction::TargetValidators;
+use onet_prediction::{NominatorStatus, TargetValidators};
 use onet_records::{AuthorityIndex, EpochIndex, EraIndex};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -185,9 +185,13 @@ pub enum CacheKey {
     // Predictions (keyed by the number of target validators)
     PredictionIndex,
     PredictionMetaByTarget(TargetValidators),
-    PredictionAccountsByTarget(TargetValidators),
+    PredictionValidatorAccountsByTarget(TargetValidators),
     PredictionValidatorByTargetAndAccount(TargetValidators, AccountId32),
-    PredictionNominatorsByTargetAndAccount(TargetValidators, AccountId32),
+    PredictionValidatorNominatorsByTargetAndAccount(TargetValidators, AccountId32),
+    PredictionNominatorAccountsByTarget(TargetValidators),
+    PredictionNominatorAccountsByTargetAndStatus(TargetValidators, NominatorStatus),
+    PredictionNominatorsMetaByTarget(TargetValidators),
+    PredictionNominatorByTargetAndAccount(TargetValidators, AccountId32),
 }
 
 impl CacheKey {
@@ -282,11 +286,19 @@ impl std::fmt::Display for CacheKey {
             }
             Self::PredictionIndex => write!(f, "pred:idx"),
             Self::PredictionMetaByTarget(n) => write!(f, "pred:{}:meta", n),
-            Self::PredictionAccountsByTarget(n) => write!(f, "pred:{}:accs", n),
+            Self::PredictionValidatorAccountsByTarget(n) => write!(f, "pred:{}:vals", n),
             Self::PredictionValidatorByTargetAndAccount(n, account) => {
                 write!(f, "pred:{}:v:{}", n, account)
             }
-            Self::PredictionNominatorsByTargetAndAccount(n, account) => {
+            Self::PredictionValidatorNominatorsByTargetAndAccount(n, account) => {
+                write!(f, "pred:{}:v:{}:noms", n, account)
+            }
+            Self::PredictionNominatorAccountsByTarget(n) => write!(f, "pred:{}:noms", n),
+            Self::PredictionNominatorAccountsByTargetAndStatus(n, status) => {
+                write!(f, "pred:{}:noms:{}", n, status)
+            }
+            Self::PredictionNominatorsMetaByTarget(n) => write!(f, "pred:{}:noms:meta", n),
+            Self::PredictionNominatorByTargetAndAccount(n, account) => {
                 write!(f, "pred:{}:n:{}", n, account)
             }
         }

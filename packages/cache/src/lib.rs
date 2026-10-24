@@ -38,4 +38,4 @@ pub use nomination_pools::{
     cache_nomination_pool, cache_nomination_pool_nominees, cache_nomination_pool_stats,
 };
 
-pub use prediction::cache_prediction;
+pub use prediction::{cache_nominators_prediction, cache_prediction};
