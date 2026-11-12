@@ -60,19 +60,19 @@ fetch_metadata() {
 }
 
 # Relay Chains
-fetch_metadata "westend"  "westend.rpc.turboflakes.io"
+fetch_metadata "westend"  "westend-rpc.polkadot.io"
 fetch_metadata "paseo"    "paseo.rpc.turboflakes.io"
 fetch_metadata "kusama"   "kusama.rpc.turboflakes.io"
 fetch_metadata "polkadot" "polkadot.rpc.turboflakes.io"
 
 # AssetHub Chains
-fetch_metadata "asset-hub-westend"  "asset-hub-westend.rpc.turboflakes.io"
+fetch_metadata "asset-hub-westend"  "westend-asset-hub-rpc.polkadot.io"
 fetch_metadata "asset-hub-paseo"    "asset-hub-paseo.rpc.turboflakes.io"
 fetch_metadata "asset-hub-kusama"   "asset-hub-kusama.rpc.turboflakes.io"
 fetch_metadata "asset-hub-polkadot" "asset-hub-polkadot.rpc.turboflakes.io"
 
 # People Chains
-fetch_metadata "people-westend"  "people-westend.rpc.turboflakes.io"
+fetch_metadata "people-westend"  "westend-people-rpc.polkadot.io"
 fetch_metadata "people-paseo"    "people-paseo.rpc.turboflakes.io"
 fetch_metadata "people-kusama"   "people-kusama.rpc.turboflakes.io"
 fetch_metadata "people-polkadot" "people-polkadot.rpc.turboflakes.io"
