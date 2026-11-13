@@ -168,6 +168,7 @@ pub async fn get_session_by_index(
     } else {
         Index::Str(index.to_string())
     };
+    let requested = index.to_string();
 
     let mut data: CacheMap = redis::cmd("HGETALL")
         .arg(CacheKey::SessionByIndex(index))
@@ -176,7 +177,7 @@ pub async fn get_session_by_index(
         .map_err(CacheError::RedisCMDError)?;
 
     if data.is_empty() {
-        let msg = "Current session details not found".to_string();
+        let msg = format!("Session {} details not found", requested);
         warn!("{}", msg);
         return Err(ApiError::NotFound(msg));
     }
