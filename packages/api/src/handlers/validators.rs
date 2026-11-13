@@ -317,13 +317,18 @@ async fn get_session_authorities(
                 ApiError::BadRequest(format!("Invalid account: {:?} error: {e:?}", address))
             })?;
 
-            let profile: String = redis::cmd("GET")
+            // NOTE: the profile may not be cached (yet), in which case it is simply omitted
+            let profile: Option<String> = redis::cmd("GET")
                 .arg(CacheKey::ValidatorProfileByAccount(acc))
                 .query_async(&mut conn as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
 
-            auth.insert(String::from("profile"), profile);
+            if let Some(profile) = profile {
+                auth.insert(String::from("profile"), profile);
+            } else {
+                debug!("Profile not found in cache for: {}", address);
+            }
         }
 
         data.push(auth.into());
@@ -1234,9 +1239,14 @@ pub async fn get_validator_profile_by_stash(
 
     let serialized_data: String = redis::cmd("GET")
         .arg(CacheKey::ValidatorProfileByAccount(stash))
-        .query_async(&mut conn as &mut Connection)
+        .query_async::<Connection, Option<String>>(&mut conn as &mut Connection)
         .await
-        .map_err(CacheError::RedisCMDError)?;
+        .map_err(CacheError::RedisCMDError)?
+        .ok_or_else(|| {
+            let msg = format!("Profile for validator address {} was not found.", stash);
+            warn!("{}", msg);
+            ApiError::NotFound(msg)
+        })?;
 
     respond_json(ValidatorProfilePredsResult {
         profile: ValidatorProfileResult::from(serialized_data),
@@ -1659,13 +1669,18 @@ async fn get_waiting_validators_by_session(
             let acc = AccountId32::from_str(&stash).map_err(|e| {
                 ApiError::BadRequest(format!("Invalid account: {:?} error: {e:?}", stash))
             })?;
-            let profile: String = redis::cmd("GET")
+            // NOTE: the profile may not be cached (yet), in which case it is simply omitted
+            let profile: Option<String> = redis::cmd("GET")
                 .arg(CacheKey::ValidatorProfileByAccount(acc))
                 .query_async(&mut conn as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
 
-            val.profile = ValidatorProfileResult::from(profile);
+            if let Some(profile) = profile {
+                val.profile = ValidatorProfileResult::from(profile);
+            } else {
+                debug!("Profile not found in cache for: {}", stash);
+            }
         }
 
         data.push(val);
