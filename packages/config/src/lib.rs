@@ -640,6 +640,12 @@ fn get_config() -> Config {
             }
             env::set_var("ONET_CHAIN_NAME", "kusama");
         }
+        Some("westend") => {
+            if env::var("ONET_SUBSTRATE_WS_URL").is_err() {
+                env::set_var("ONET_SUBSTRATE_WS_URL", "wss://westend-rpc.polkadot.io:443");
+            }
+            env::set_var("ONET_CHAIN_NAME", "westend");
+        }
         Some("polkadot") => {
             if env::var("ONET_SUBSTRATE_WS_URL").is_err() {
                 env::set_var(
