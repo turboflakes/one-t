@@ -25,7 +25,7 @@ use onet_config::Config;
 use onet_prediction::{
     NominatorEntry, NominatorStatus, NominatorsPrediction, Prediction, PredictionEntry,
 };
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use std::collections::HashSet;
 use std::result::Result;
 use subxt::utils::AccountId32;
@@ -132,7 +132,7 @@ pub async fn cache_prediction(
             .ignore();
     }
 
-    pipe.query_async::<_, ()>(cache)
+    pipe.query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -243,7 +243,7 @@ pub async fn cache_nominators_prediction(
         }
     }
 
-    pipe.query_async::<_, ()>(cache)
+    pipe.query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 

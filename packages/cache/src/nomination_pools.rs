@@ -26,7 +26,7 @@ use onet_config::Config;
 use onet_pools::{Pool, PoolId, PoolNominees, PoolStats};
 use onet_records::EpochIndex;
 
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use std::result::Result;
 
 pub async fn cache_nomination_pool(
@@ -52,7 +52,7 @@ pub async fn cache_nomination_pool(
         .cmd("EXPIRE")
         .arg(CacheKey::NominationPoolIdsBySession(pool_id))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -81,7 +81,7 @@ pub async fn cache_nomination_pool_nominees(
             current_epoch,
         ))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -110,7 +110,7 @@ pub async fn cache_nomination_pool_stats(
             current_epoch,
         ))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 

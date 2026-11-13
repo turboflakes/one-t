@@ -31,7 +31,7 @@ use onet_cache::{
 };
 use onet_pools::{Pool, PoolId, PoolNominees, PoolNomineesStats};
 use onet_records::EpochIndex;
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use std::convert::TryInto;
 use std::result::Result;
 
@@ -86,7 +86,7 @@ pub async fn get_pools(
                     .arg(CacheKey::NominationPoolIdsBySession(session_index))
                     .arg(0) // min
                     .arg(-1) // max
-                    .query_async::<Connection, Vec<PoolId>>(&mut conn)
+                    .query_async::<Vec<PoolId>>(&mut conn as &mut Connection)
                     .await
                     .unwrap_or_default()
             };
@@ -96,7 +96,7 @@ pub async fn get_pools(
                     let pool: Pool = if params.show_metadata {
                         if let Ok(serialized_data) = redis::cmd("GET")
                             .arg(CacheKey::NominationPoolRecord(*id))
-                            .query_async::<Connection, String>(&mut conn)
+                            .query_async::<String>(&mut conn as &mut Connection)
                             .await
                         {
                             serde_json::from_str(&serialized_data).unwrap_or_default()
@@ -121,7 +121,7 @@ pub async fn get_pools(
                                 *id,
                                 session_index,
                             ))
-                            .query_async::<Connection, String>(&mut conn)
+                            .query_async::<String>(&mut conn as &mut Connection)
                             .await
                         {
                             pool_response.stats =
@@ -135,7 +135,7 @@ pub async fn get_pools(
                                 *id,
                                 session_index,
                             ))
-                            .query_async::<Connection, String>(&mut conn)
+                            .query_async::<String>(&mut conn as &mut Connection)
                             .await
                         {
                             pool_response.nominees =
@@ -149,7 +149,7 @@ pub async fn get_pools(
                                 *id,
                                 session_index,
                             ))
-                            .query_async::<Connection, String>(&mut conn)
+                            .query_async::<String>(&mut conn as &mut Connection)
                             .await
                         {
                             // TODO: nominees_changed
@@ -207,7 +207,7 @@ pub async fn get_pool(
 
     if let Ok(serialized_data) = redis::cmd("GET")
         .arg(CacheKey::NominationPoolRecord(*id))
-        .query_async::<Connection, String>(&mut conn)
+        .query_async::<String>(&mut conn as &mut Connection)
         .await
     {
         let pool: Pool = serde_json::from_str(&serialized_data).unwrap_or_default();
@@ -219,7 +219,7 @@ pub async fn get_pool(
                     *id,
                     requested_session_index,
                 ))
-                .query_async::<Connection, String>(&mut conn)
+                .query_async::<String>(&mut conn as &mut Connection)
                 .await
             {
                 pool_response.stats = serde_json::from_str(&serialized_data).unwrap_or_default();
@@ -232,7 +232,7 @@ pub async fn get_pool(
                     *id,
                     requested_session_index,
                 ))
-                .query_async::<Connection, String>(&mut conn)
+                .query_async::<String>(&mut conn as &mut Connection)
                 .await
             {
                 pool_response.nominees = serde_json::from_str(&serialized_data).unwrap_or_default();

@@ -29,7 +29,7 @@ use onet_records::{
     ParaId, ParaRecord, ParaStats, ParachainRecord, Records, SessionStats, ValidatorProfileRecord,
 };
 use onet_report::Network;
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use std::{collections::BTreeMap, result::Result, time::Instant};
 use subxt::utils::AccountId32;
 
@@ -213,7 +213,7 @@ async fn cache_para_stats_data(
             Verbosity::Stats,
         ))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -251,7 +251,7 @@ async fn cache_para_summary_data(
             Verbosity::Summary,
         ))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -266,7 +266,7 @@ pub async fn cache_best_block(
     redis::cmd("SET")
         .arg(CacheKey::BestBlock(chain_key))
         .arg(block_number.to_string())
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -281,7 +281,7 @@ pub async fn cache_finalized_block(
     redis::cmd("SET")
         .arg(CacheKey::FinalizedBlock(chain_key))
         .arg(block_number.to_string())
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -303,7 +303,7 @@ async fn cache_authority_data(
         .cmd("EXPIRE")
         .arg(authority_key.to_string())
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -356,7 +356,7 @@ async fn cache_session_stats(
             "current",
         ))))
         .arg(current_epoch.to_string())
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -380,7 +380,7 @@ async fn cache_parachain_stats(
             .cmd("EXPIRE")
             .arg(CacheKey::ParachainsBySession(current_epoch))
             .arg(config.cache_writer_prunning)
-            .query_async::<_, ()>(cache)
+            .query_async::<()>(cache)
             .await
             .map_err(CacheError::RedisCMDError)?;
     }
@@ -496,7 +496,7 @@ async fn cache_authority_stash(
         .cmd("EXPIRE")
         .arg(authority_key.to_string())
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -530,7 +530,7 @@ async fn cache_authority_key(
             current_epoch,
         ))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -552,7 +552,7 @@ async fn cache_authority_key_into_authorities(
         .cmd("EXPIRE")
         .arg(CacheKey::AuthorityKeysBySession(current_epoch))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -574,7 +574,7 @@ async fn cache_para_authority_key_into_authorities(
         .cmd("EXPIRE")
         .arg(CacheKey::AuthorityKeysBySessionParaOnly(current_epoch))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -644,7 +644,7 @@ async fn cache_session_by_index(
             (current_epoch - 1).into(),
         )))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -724,7 +724,7 @@ pub async fn cache_validator_profile(
             Trait::NominatorsCounter,
         ))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -745,7 +745,7 @@ pub async fn cache_waiting_validator(
         .cmd("EXPIRE")
         .arg(CacheKey::WaitingValidatorAccountsBySession(current_epoch))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -767,7 +767,7 @@ pub async fn cache_validator_profile_only(
         .cmd("EXPIRE")
         .arg(CacheKey::ValidatorProfileByAccount(*stash))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -793,7 +793,7 @@ pub async fn cache_network_stats_at_session(
             current_epoch.into(),
         )))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -842,7 +842,7 @@ pub async fn cache_board_limits_at_session(
         .cmd("SET")
         .arg(CacheKey::EraByIndex(Index::Current))
         .arg(current_era.to_string())
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -870,7 +870,7 @@ pub async fn cache_latest_pushed_block_v2(
             *client_id,
         ))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -891,7 +891,7 @@ pub async fn cache_latest_pushed_block(
         .cmd("EXPIRE")
         .arg(CacheKey::PushedBlockByClientId(*client_id))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(cache)
+        .query_async::<()>(cache)
         .await
         .map_err(CacheError::RedisCMDError)?;
 

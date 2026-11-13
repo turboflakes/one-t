@@ -9,7 +9,7 @@ use onet_cache::{
 };
 use onet_core::{core::Onet, error::OnetError};
 use onet_records::{BlockNumber, EpochIndex};
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use std::collections::HashMap;
 
 /// Recompute and cache session stats for a list of already-elapsed sessions.

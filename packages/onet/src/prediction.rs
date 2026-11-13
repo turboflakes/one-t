@@ -29,7 +29,7 @@ use onet_config::{Config, CONFIG};
 use onet_prediction::{
     discard_failed_file, read_pending_files, remove_file, PendingFile, PredictionFile,
 };
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use std::{path::Path, time::Duration};
 
 /// Files modified more recently than this are assumed to still be written by the producer.

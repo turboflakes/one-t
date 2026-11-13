@@ -32,7 +32,7 @@ use onet_cache::{
     types::{CacheKey, Index},
 };
 use onet_records::EpochIndex;
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]

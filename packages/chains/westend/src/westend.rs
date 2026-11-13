@@ -82,7 +82,7 @@ use onet_report::{
     group_by_points, position, Callout, Metadata as ReportMetadata, Network, RawData, RawDataGroup,
     RawDataPara, RawDataParachains, RawDataRank, Report, ReportType, Validator, Validators,
 };
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 
 use codec::Decode;
 use std::{
@@ -2859,7 +2859,7 @@ pub async fn cache_session_stats_records(
             // mark validator has chilled
             let profile: ValidatorProfileRecord = if let Ok(serialized_data) = redis::cmd("GET")
                 .arg(CacheKey::ValidatorProfileByAccount(*stash))
-                .query_async::<Connection, String>(&mut cache as &mut Connection)
+                .query_async::<String>(&mut cache as &mut Connection)
                 .await
             {
                 let mut profile: ValidatorProfileRecord =
@@ -3071,11 +3071,11 @@ pub async fn try_calculate_avg_mvr_by_session_and_stash_from_cache(
 
     if let Ok(value) = redis::cmd("GET")
         .arg(CacheKey::ValidatorProfileByAccount(stash))
-        .query_async::<Connection, redis::Value>(&mut conn as &mut Connection)
+        .query_async::<redis::Value>(&mut conn as &mut Connection)
         .await
     {
         match value {
-            redis::Value::Data(data) => {
+            redis::Value::BulkString(data) => {
                 let serialized_data = String::from_utf8(data).expect("Data should be valid utf8");
                 let v: ValidatorProfileRecord = serde_json::from_str(&serialized_data)
                     .expect("Serialized data should be a valid profile record");
@@ -3112,7 +3112,7 @@ pub async fn calculate_mvr_by_session_and_stash(
             stash,
             session_index,
         ))
-        .query_async::<Connection, AuthorityKeyCache>(&mut conn as &mut Connection)
+        .query_async::<AuthorityKeyCache>(&mut conn as &mut Connection)
         .await
     {
         if !authority_key_data.is_empty() {
@@ -3123,7 +3123,7 @@ pub async fn calculate_mvr_by_session_and_stash(
                     Verbosity::Summary,
                 ))
                 .arg("para_summary".to_string())
-                .query_async::<Connection, String>(&mut conn as &mut Connection)
+                .query_async::<String>(&mut conn as &mut Connection)
                 .await
             {
                 let para_summary: ParaStats = serde_json::from_str(&serialized).unwrap_or_default();

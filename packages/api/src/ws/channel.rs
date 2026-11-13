@@ -38,7 +38,7 @@ use onet_records::{BlockNumber, EpochIndex, SS58};
 
 use futures::executor::block_on;
 use log::{info, warn};
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use std::{collections::HashMap, str::FromStr, time::Duration};
 use subxt::utils::AccountId32;
 
@@ -205,7 +205,7 @@ impl Channel {
         let cache_key = CacheKey::FinalizedBlock(chain_key.clone());
         if let Ok(finalized_block_number) = redis::cmd("GET")
             .arg(CacheKey::FinalizedBlock(chain_key.clone()))
-            .query_async::<Connection, BlockNumber>(conn)
+            .query_async::<BlockNumber>(conn)
             .await
         {
             if let Ok(Some(pushed_block_number)) = redis::cmd("GET")
@@ -213,7 +213,7 @@ impl Channel {
                     cache_key.to_string(),
                     client_id,
                 ))
-                .query_async::<Connection, Option<BlockNumber>>(conn)
+                .query_async::<Option<BlockNumber>>(conn)
                 .await
             {
                 // Note: if latest pushed block is different than the finalized block in the cache
@@ -231,7 +231,7 @@ impl Channel {
                             let block_number = pushed_block_number + 1;
                             if let Ok(serialized_data) = redis::cmd("GET")
                                 .arg(CacheKey::BlockByIndexStats(Index::Num(block_number)))
-                                .query_async::<Connection, String>(conn)
+                                .query_async::<String>(conn)
                                 .await
                             {
                                 let mut block_data = CacheMap::new();
@@ -255,7 +255,7 @@ impl Channel {
                             .arg(CacheKey::BlockByIndexStats(Index::Num(
                                 previous_session_block_number,
                             )))
-                            .query_async::<Connection, String>(conn)
+                            .query_async::<String>(conn)
                             .await
                         {
                             let mut block_data = CacheMap::new();
@@ -296,7 +296,7 @@ impl Channel {
                     .arg(CacheKey::BlockByIndexStats(Index::Num(
                         finalized_block_number,
                     )))
-                    .query_async::<Connection, String>(conn)
+                    .query_async::<String>(conn)
                     .await
                 {
                     let mut block_data = CacheMap::new();
@@ -342,7 +342,7 @@ impl Channel {
         let cache_key = CacheKey::FinalizedBlock(chain_key.clone());
         if let Ok(Some(block_number)) = redis::cmd("GET")
             .arg(CacheKey::FinalizedBlock(chain_key.clone()))
-            .query_async::<Connection, Option<BlockNumber>>(conn)
+            .query_async::<Option<BlockNumber>>(conn)
             .await
         {
             if let Ok(pushed_block_number) = redis::cmd("GET")
@@ -350,7 +350,7 @@ impl Channel {
                     cache_key.to_string(),
                     client_id,
                 ))
-                .query_async::<Connection, Option<BlockNumber>>(conn)
+                .query_async::<Option<BlockNumber>>(conn)
                 .await
             {
                 // Note: Check if it has not been sent to client already.
@@ -395,7 +395,7 @@ impl Channel {
             let cache_key = CacheKey::BestBlock(chain_key.clone());
             if let Ok(Some(block_number)) = redis::cmd("GET")
                 .arg(CacheKey::BestBlock(chain_key.clone()))
-                .query_async::<Connection, Option<BlockNumber>>(conn)
+                .query_async::<Option<BlockNumber>>(conn)
                 .await
             {
                 if let Ok(pushed_block_number) = redis::cmd("GET")
@@ -403,7 +403,7 @@ impl Channel {
                         cache_key.to_string(),
                         client_id,
                     ))
-                    .query_async::<Connection, Option<BlockNumber>>(conn)
+                    .query_async::<Option<BlockNumber>>(conn)
                     .await
                 {
                     // Note: Check if it has not been sent to client already.
@@ -445,12 +445,12 @@ impl Channel {
             .arg(CacheKey::SessionByIndex(Index::Str(String::from(
                 "current",
             ))))
-            .query_async::<Connection, EpochIndex>(conn)
+            .query_async::<EpochIndex>(conn)
             .await
         {
             if let Ok(mut current_data) = redis::cmd("HGETALL")
                 .arg(CacheKey::SessionByIndex(Index::Num(current.into())))
-                .query_async::<Connection, CacheMap>(conn)
+                .query_async::<CacheMap>(conn)
                 .await
             {
                 let zero = "0".to_string();
@@ -473,7 +473,7 @@ impl Channel {
                     // since is no longer the current session)
                     if let Ok(mut previous_data) = redis::cmd("HGETALL")
                         .arg(CacheKey::SessionByIndex(Index::Num((current - 1).into())))
-                        .query_async::<Connection, CacheMap>(conn)
+                        .query_async::<CacheMap>(conn)
                         .await
                     {
                         // set is_current to false and send previous session
@@ -509,7 +509,7 @@ impl Channel {
         let cache_key = CacheKey::FinalizedBlock(ChainKey::RC);
         if let Ok(finalized_block_number) = redis::cmd("GET")
             .arg(cache_key.to_string())
-            .query_async::<Connection, BlockNumber>(conn)
+            .query_async::<BlockNumber>(conn)
             .await
         {
             if let Ok(pushed_block_number) = redis::cmd("GET")
@@ -517,7 +517,7 @@ impl Channel {
                     cache_key.to_string(),
                     client_id,
                 ))
-                .query_async::<Connection, BlockNumber>(conn)
+                .query_async::<BlockNumber>(conn)
                 .await
             {
                 // Note: if latest pushed block equals finalized block in cache
@@ -527,7 +527,7 @@ impl Channel {
                         .arg(CacheKey::SessionByIndex(Index::Str(String::from(
                             "current",
                         ))))
-                        .query_async::<Connection, EpochIndex>(conn)
+                        .query_async::<EpochIndex>(conn)
                         .await
                     {
                         if let Ok(data) = redis::cmd("HGETALL")
@@ -535,7 +535,7 @@ impl Channel {
                                 AccountId32::from_str(account).unwrap(),
                                 current_session,
                             ))
-                            .query_async::<Connection, AuthorityKeyCache>(conn)
+                            .query_async::<AuthorityKeyCache>(conn)
                             .await
                         {
                             if !data.is_empty() {
@@ -543,7 +543,7 @@ impl Channel {
 
                                 if let Ok(mut data) = redis::cmd("HGETALL")
                                     .arg(key.to_string())
-                                    .query_async::<Connection, CacheMap>(conn)
+                                    .query_async::<CacheMap>(conn)
                                     .await
                                 {
                                     if let Ok(tmp) = redis::cmd("HGETALL")
@@ -551,7 +551,7 @@ impl Channel {
                                             key.to_string(),
                                             Verbosity::Stats,
                                         ))
-                                        .query_async::<Connection, CacheMap>(conn)
+                                        .query_async::<CacheMap>(conn)
                                         .await
                                     {
                                         data.extend(tmp);
@@ -561,7 +561,7 @@ impl Channel {
                                             key.to_string(),
                                             Verbosity::Summary,
                                         ))
-                                        .query_async::<Connection, CacheMap>(conn)
+                                        .query_async::<CacheMap>(conn)
                                         .await
                                     {
                                         data.extend(tmp);
@@ -597,7 +597,7 @@ impl Channel {
         let cache_key = CacheKey::FinalizedBlock(ChainKey::RC);
         if let Ok(finalized_block_number) = redis::cmd("GET")
             .arg(cache_key.to_string())
-            .query_async::<Connection, BlockNumber>(conn)
+            .query_async::<BlockNumber>(conn)
             .await
         {
             if let Ok(pushed_block_number) = redis::cmd("GET")
@@ -605,7 +605,7 @@ impl Channel {
                     cache_key.to_string(),
                     client_id,
                 ))
-                .query_async::<Connection, BlockNumber>(conn)
+                .query_async::<BlockNumber>(conn)
                 .await
             {
                 // Note: if latest pushed block equals finalized block in cache
@@ -613,7 +613,7 @@ impl Channel {
                 if pushed_block_number == finalized_block_number {
                     if let Ok(authority_keys) = redis::cmd("SMEMBERS")
                         .arg(CacheKey::AuthorityKeysBySessionParaOnly(index))
-                        .query_async::<Connection, Vec<String>>(conn)
+                        .query_async::<Vec<String>>(conn)
                         .await
                     {
                         if !authority_keys.is_empty() {
@@ -621,7 +621,7 @@ impl Channel {
                             for key in authority_keys.iter() {
                                 if let Ok(mut auth) = redis::cmd("HGETALL")
                                     .arg(key)
-                                    .query_async::<Connection, CacheMap>(conn)
+                                    .query_async::<CacheMap>(conn)
                                     .await
                                 {
                                     // Extend with requested verbosity data
@@ -630,7 +630,7 @@ impl Channel {
                                             key.to_string(),
                                             verbosity.clone(),
                                         ))
-                                        .query_async::<Connection, CacheMap>(conn)
+                                        .query_async::<CacheMap>(conn)
                                         .await
                                     {
                                         auth.extend(tmp);
@@ -685,7 +685,7 @@ impl Channel {
         let cache_key = CacheKey::FinalizedBlock(ChainKey::RC);
         if let Ok(finalized_block_number) = redis::cmd("GET")
             .arg(cache_key.to_string())
-            .query_async::<Connection, BlockNumber>(conn)
+            .query_async::<BlockNumber>(conn)
             .await
         {
             if let Ok(pushed_block_number) = redis::cmd("GET")
@@ -693,7 +693,7 @@ impl Channel {
                     cache_key.to_string(),
                     client_id,
                 ))
-                .query_async::<Connection, BlockNumber>(conn)
+                .query_async::<BlockNumber>(conn)
                 .await
             {
                 // Note: if latest pushed block equals finalized block in cache
@@ -701,7 +701,7 @@ impl Channel {
                 if pushed_block_number == finalized_block_number {
                     if let Ok(mut data) = redis::cmd("HGETALL")
                         .arg(CacheKey::ParachainsBySession(index))
-                        .query_async::<Connection, CacheMap>(conn)
+                        .query_async::<CacheMap>(conn)
                         .await
                     {
                         if !data.is_empty() {
@@ -775,7 +775,7 @@ impl Handler<Get> for Channel {
                 if let Ok(mut conn) = get_conn(&self.cache).await {
                     if let Ok(serialized_data) = redis::cmd("GET")
                         .arg(CacheKey::BlockByIndexStats(Index::Num(*block_number)))
-                        .query_async::<Connection, String>(&mut conn)
+                        .query_async::<String>(&mut conn as &mut Connection)
                         .await
                     {
                         let mut block_data = CacheMap::new();
@@ -867,7 +867,7 @@ impl Handler<Unsubscribe> for Channel {
                     if let Ok(mut conn) = get_conn(&self.cache).await {
                         if let Err(e) = redis::cmd("DEL")
                             .arg(CacheKey::PushedBlockByClientId(id))
-                            .query_async::<Connection, u8>(&mut conn)
+                            .query_async::<u8>(&mut conn as &mut Connection)
                             .await
                         {
                             warn!(

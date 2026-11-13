@@ -33,7 +33,7 @@ use onet_cache::{
     types::{CacheKey, ChainKey, Index},
 };
 use onet_records::{BlockNumber, EpochIndex};
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
@@ -83,7 +83,7 @@ pub async fn get_blocks(
         )))
         .arg(0) // min
         .arg(-1) // max
-        .query_async::<Connection, Vec<BlockNumber>>(&mut conn)
+        .query_async::<Vec<BlockNumber>>(&mut conn as &mut Connection)
         .await
     {
         let mut data: Vec<BlockResult> = Vec::new();
@@ -96,7 +96,7 @@ pub async fn get_blocks(
                 if params.show_stats {
                     if let Ok(stats) = redis::cmd("GET")
                         .arg(CacheKey::BlockByIndexStats(Index::Num(*block_number)))
-                        .query_async::<Connection, String>(&mut conn)
+                        .query_async::<String>(&mut conn as &mut Connection)
                         .await
                     {
                         block_data.insert(String::from("stats"), stats);
@@ -126,7 +126,7 @@ pub async fn get_finalized_block(
 
     if let Ok(block_number) = redis::cmd("GET")
         .arg(CacheKey::FinalizedBlock(chain_key.clone()))
-        .query_async::<Connection, BlockNumber>(&mut conn)
+        .query_async::<BlockNumber>(&mut conn as &mut Connection)
         .await
     {
         let mut data = CacheMap::new();
@@ -137,7 +137,7 @@ pub async fn get_finalized_block(
         if params.show_stats {
             if let Ok(stats) = redis::cmd("GET")
                 .arg(CacheKey::BlockByIndexStats(Index::Num(block_number)))
-                .query_async::<Connection, String>(&mut conn)
+                .query_async::<String>(&mut conn as &mut Connection)
                 .await
             {
                 data.insert(String::from("stats"), stats);
@@ -163,7 +163,7 @@ pub async fn get_best_block(
 
     if let Ok(block_number) = redis::cmd("GET")
         .arg(CacheKey::BestBlock(chain_key.clone()))
-        .query_async::<Connection, BlockNumber>(&mut conn)
+        .query_async::<BlockNumber>(&mut conn as &mut Connection)
         .await
     {
         let mut data = CacheMap::new();
@@ -187,7 +187,7 @@ pub async fn get_block_by_number(
 
     if let Ok(stats) = redis::cmd("GET")
         .arg(CacheKey::BlockByIndexStats(Index::Num(*block_number)))
-        .query_async::<Connection, String>(&mut conn)
+        .query_async::<String>(&mut conn as &mut Connection)
         .await
     {
         let mut data = CacheMap::new();

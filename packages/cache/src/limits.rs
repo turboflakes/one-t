@@ -25,7 +25,7 @@ use crate::types::{CacheKey, Trait};
 use onet_mcda::criterias::{CriteriaLimits, Interval};
 use onet_records::EpochIndex;
 
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use std::result::Result;
 
 async fn calculate_min_limit(
