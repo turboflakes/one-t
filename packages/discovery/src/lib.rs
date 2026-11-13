@@ -28,7 +28,7 @@ use onet_cache::{
 use onet_config::CONFIG;
 use onet_core::{error::OnetError, Onet};
 use onet_records::Records;
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
@@ -168,7 +168,7 @@ pub async fn try_fetch_discovery_data(
                             Verbosity::Discovery,
                         ))
                         .arg(config.cache_writer_prunning)
-                        .query_async::<_, ()>(&mut cache as &mut Connection)
+                        .query_async::<()>(&mut cache as &mut Connection)
                         .await
                         .map_err(CacheError::RedisCMDError)?;
 

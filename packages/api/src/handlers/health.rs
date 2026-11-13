@@ -26,7 +26,7 @@ use onet_cache::{
     error::CacheError,
     provider::{get_conn, RedisPool},
 };
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]

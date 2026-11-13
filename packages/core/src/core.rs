@@ -32,7 +32,7 @@ use onet_config::{Config, BLOCK_FILENAME, CONFIG};
 use onet_matrix::{matrix::Matrix, matrix::UserID, matrix::MATRIX_SUBSCRIBERS_FILENAME};
 use onet_records::EpochIndex;
 use onet_report::{Network, ReportType};
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use sp_core::crypto;
 use std::{
     collections::BTreeMap,

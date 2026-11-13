@@ -19,7 +19,7 @@ onet-prediction = { path = "../prediction" }
 onet-paseo = { path = "../chains/paseo" }
 onet-kusama = { path = "../chains/kusama" }
 onet-polkadot = { path = "../chains/polkadot" }
-# onet-westend = { path = "../chains/westend" }
+onet-westend = { path = "../chains/westend" }
 
 redis = { workspace = true }
 actix = { workspace = true }

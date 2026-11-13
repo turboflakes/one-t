@@ -20,9 +20,9 @@ members = [
     "packages/chains/asset-hub-polkadot",
     "packages/chains/people-polkadot",
     "packages/chains/polkadot",
-    # "packages/chains/asset-hub-westend",
-    # "packages/chains/people-westend",
-    # "packages/chains/westend",
+    "packages/chains/asset-hub-westend",
+    "packages/chains/people-westend",
+    "packages/chains/westend",
     "packages/chains/asset-hub-paseo",
     "packages/chains/paseo",
     "packages/chains/people-paseo",
@@ -64,9 +64,9 @@ actix = "0.13"
 actix-web = "4"
 actix-web-actors = "4.1"
 actix-cors = "0.6"
-redis = { version = "0.19.0", features = ["async-std-comp"] }
-mobc = { version = "0.7", default-features = false, features = ["async-std"] }
-mobc-redis = { version = "0.7", default-features = false, features = [
+redis = { version = "0.28", features = ["async-std-comp"] }
+mobc = { version = "0.9", default-features = false, features = ["async-std"] }
+mobc-redis = { version = "0.9", default-features = false, features = [
     "async-std-comp",
 ] }
 ctrlc = { version = "3.0", features = ["termination"] }

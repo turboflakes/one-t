@@ -46,7 +46,7 @@ use onet_pools::{PoolId, PoolNominees};
 use onet_records::{
     grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset, ValidatorProfileRecord,
 };
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, convert::TryInto, iter::FromIterator, str::FromStr};
@@ -317,13 +317,18 @@ async fn get_session_authorities(
                 ApiError::BadRequest(format!("Invalid account: {:?} error: {e:?}", address))
             })?;
 
-            let profile: String = redis::cmd("GET")
+            // NOTE: the profile may not be cached (yet), in which case it is simply omitted
+            let profile: Option<String> = redis::cmd("GET")
                 .arg(CacheKey::ValidatorProfileByAccount(acc))
                 .query_async(&mut conn as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
 
-            auth.insert(String::from("profile"), profile);
+            if let Some(profile) = profile {
+                auth.insert(String::from("profile"), profile);
+            } else {
+                debug!("Profile not found in cache for: {}", address);
+            }
         }
 
         data.push(auth.into());
@@ -527,9 +532,9 @@ async fn get_validator_by_authority_key(
         if let Some(stash) = data.get("address") {
             if let Ok(stash) = AccountId32::from_str(stash) {
                 // NOTE: Fetching validator profile from Redis cache handling Nil cases
-                if let Ok(redis::Value::Data(raw_data)) = redis::cmd("GET")
+                if let Ok(redis::Value::BulkString(raw_data)) = redis::cmd("GET")
                     .arg(CacheKey::ValidatorProfileByAccount(stash))
-                    .query_async::<Connection, redis::Value>(&mut conn as &mut Connection)
+                    .query_async::<redis::Value>(&mut conn as &mut Connection)
                     .await
                 {
                     let profile: String =
@@ -805,7 +810,7 @@ async fn get_validators_by_params(
         // Check if query is already cached
         if let Ok(serialized_data) = redis::cmd("GET")
             .arg(CacheKey::QueryValidators(req.query_string().to_string()))
-            .query_async::<Connection, String>(&mut conn)
+            .query_async::<String>(&mut conn as &mut Connection)
             .await
         {
             let data: Vec<ValidatorResult> = serde_json::from_str(&serialized_data).unwrap();
@@ -969,7 +974,7 @@ async fn get_validators_by_params(
                 .arg(serialized.to_string())
                 .arg("ex")
                 .arg(config.blocks_per_session * 6)
-                .query_async::<Connection, String>(&mut conn)
+                .query_async::<String>(&mut conn as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
 
@@ -993,7 +998,7 @@ async fn get_validators_by_params(
             ))
             .arg(0) // min
             .arg(-1) // max
-            .query_async::<Connection, Vec<PoolId>>(&mut conn)
+            .query_async::<Vec<PoolId>>(&mut conn as &mut Connection)
             .await
         {
             if !session_pool_ids.is_empty() {
@@ -1004,7 +1009,7 @@ async fn get_validators_by_params(
                             *id,
                             requested_session_index,
                         ))
-                        .query_async::<Connection, String>(&mut conn)
+                        .query_async::<String>(&mut conn as &mut Connection)
                         .await
                     {
                         let pool_nominees: PoolNominees =
@@ -1035,14 +1040,14 @@ async fn get_validators_by_params(
                         stash,
                         requested_session_index,
                     ))
-                    .query_async::<Connection, AuthorityKeyCache>(&mut conn as &mut Connection)
+                    .query_async::<AuthorityKeyCache>(&mut conn as &mut Connection)
                     .await
                 {
                     if authority_key_data.is_empty() {
                         // pull only profile
                         if let Ok(serialized_data) = redis::cmd("GET")
                             .arg(CacheKey::ValidatorProfileByAccount(stash))
-                            .query_async::<Connection, String>(&mut conn as &mut Connection)
+                            .query_async::<String>(&mut conn as &mut Connection)
                             .await
                         {
                             let mut v = ValidatorResult::with_address(stash.to_string());
@@ -1234,9 +1239,14 @@ pub async fn get_validator_profile_by_stash(
 
     let serialized_data: String = redis::cmd("GET")
         .arg(CacheKey::ValidatorProfileByAccount(stash))
-        .query_async(&mut conn as &mut Connection)
+        .query_async::<Option<String>>(&mut conn as &mut Connection)
         .await
-        .map_err(CacheError::RedisCMDError)?;
+        .map_err(CacheError::RedisCMDError)?
+        .ok_or_else(|| {
+            let msg = format!("Profile for validator address {} was not found.", stash);
+            warn!("{}", msg);
+            ApiError::NotFound(msg)
+        })?;
 
     respond_json(ValidatorProfilePredsResult {
         profile: ValidatorProfileResult::from(serialized_data),
@@ -1606,7 +1616,7 @@ pub async fn update_cohort_validators_by_session(
         })?;
         if let Ok(serialized) = redis::cmd("GET")
             .arg(CacheKey::ValidatorProfileByAccount(stash))
-            .query_async::<Connection, String>(&mut conn as &mut Connection)
+            .query_async::<String>(&mut conn as &mut Connection)
             .await
         {
             let mut v = ValidatorProfileRecord::from(serialized);
@@ -1626,7 +1636,7 @@ pub async fn update_cohort_validators_by_session(
                 .cmd("EXPIRE")
                 .arg(CacheKey::ValidatorProfileByAccount(stash))
                 .arg(config.cache_writer_prunning)
-                .query_async::<_, ()>(&mut conn as &mut Connection)
+                .query_async::<()>(&mut conn as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
 
@@ -1659,13 +1669,18 @@ async fn get_waiting_validators_by_session(
             let acc = AccountId32::from_str(&stash).map_err(|e| {
                 ApiError::BadRequest(format!("Invalid account: {:?} error: {e:?}", stash))
             })?;
-            let profile: String = redis::cmd("GET")
+            // NOTE: the profile may not be cached (yet), in which case it is simply omitted
+            let profile: Option<String> = redis::cmd("GET")
                 .arg(CacheKey::ValidatorProfileByAccount(acc))
                 .query_async(&mut conn as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
 
-            val.profile = ValidatorProfileResult::from(profile);
+            if let Some(profile) = profile {
+                val.profile = ValidatorProfileResult::from(profile);
+            } else {
+                debug!("Profile not found in cache for: {}", stash);
+            }
         }
 
         data.push(val);

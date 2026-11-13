@@ -37,7 +37,7 @@ use onet_cache::{
 };
 use onet_config::CONFIG;
 use onet_records::EpochIndex;
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 
 /// Get a sessions filtered by query params
 pub async fn get_sessions(
@@ -70,7 +70,7 @@ pub async fn get_sessions(
         // Check if query is already cached
         if let Ok(serialized_data) = redis::cmd("GET")
             .arg(CacheKey::QuerySessions(req.query_string().to_string()))
-            .query_async::<Connection, String>(&mut conn)
+            .query_async::<String>(&mut conn as &mut Connection)
             .await
         {
             let data: Vec<SessionResult> = serde_json::from_str(&serialized_data).unwrap();
@@ -100,7 +100,7 @@ pub async fn get_sessions(
                     .arg(CacheKey::SessionByIndexStats(Index::Num(
                         session_index.into(),
                     )))
-                    .query_async::<Connection, String>(&mut conn)
+                    .query_async::<String>(&mut conn as &mut Connection)
                     .await
                 {
                     session_data.insert(String::from("stats"), serialized_data);
@@ -115,7 +115,7 @@ pub async fn get_sessions(
                     .arg(CacheKey::NetworkStatsBySession(Index::Num(
                         session_index.into(),
                     )))
-                    .query_async::<Connection, String>(&mut conn)
+                    .query_async::<String>(&mut conn as &mut Connection)
                     .await
                 {
                     session_data.insert(String::from("netstats"), serialized_data);
@@ -142,7 +142,7 @@ pub async fn get_sessions(
             .arg(serialized.to_string())
             .arg("ex")
             .arg(config.blocks_per_session * 6)
-            .query_async::<Connection, String>(&mut conn)
+            .query_async::<String>(&mut conn as &mut Connection)
             .await
             .map_err(CacheError::RedisCMDError)?;
     }
@@ -168,6 +168,7 @@ pub async fn get_session_by_index(
     } else {
         Index::Str(index.to_string())
     };
+    let requested = index.to_string();
 
     let mut data: CacheMap = redis::cmd("HGETALL")
         .arg(CacheKey::SessionByIndex(index))
@@ -176,7 +177,7 @@ pub async fn get_session_by_index(
         .map_err(CacheError::RedisCMDError)?;
 
     if data.is_empty() {
-        let msg = "Current session details not found".to_string();
+        let msg = format!("Session {} details not found", requested);
         warn!("{}", msg);
         return Err(ApiError::NotFound(msg));
     }

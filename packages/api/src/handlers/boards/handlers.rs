@@ -42,7 +42,7 @@ use onet_mcda::{
     scores::{calculate_scores, scores_to_string},
 };
 use onet_records::{BlockNumber, EpochIndex, ValidatorProfileRecord};
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use std::{collections::BTreeMap, result::Result, str::FromStr};
 use subxt::utils::AccountId32;
 
@@ -269,7 +269,7 @@ async fn generate_board_scores(
         })?;
         if let Ok(serialized_data) = redis::cmd("GET")
             .arg(CacheKey::ValidatorProfileByAccount(stash))
-            .query_async::<Connection, String>(&mut conn as &mut Connection)
+            .query_async::<String>(&mut conn as &mut Connection)
             .await
         {
             let validator = ValidatorProfileRecord::from(serialized_data);
@@ -373,7 +373,7 @@ async fn generate_board_scores(
                     board_hash,
                 ))
                 .arg(config.cache_writer_prunning)
-                .query_async::<_, ()>(&mut conn as &mut Connection)
+                .query_async::<()>(&mut conn as &mut Connection)
                 .await
                 .map_err(CacheError::RedisCMDError)?;
         }
@@ -400,7 +400,7 @@ async fn generate_board_scores(
             board_hash,
         ))
         .arg(config.cache_writer_prunning)
-        .query_async::<_, ()>(&mut conn as &mut Connection)
+        .query_async::<()>(&mut conn as &mut Connection)
         .await
         .map_err(CacheError::RedisCMDError)?;
 

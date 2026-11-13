@@ -34,7 +34,7 @@ use onet_prediction::{
     PredictionNominator, PredictionValidator, TargetValidators,
 };
 use onet_records::ProfilePrediction;
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection as Connection;
 use serde::{Deserialize, Serialize};
 use std::{result::Result, str::FromStr};
 use subxt::utils::AccountId32;
