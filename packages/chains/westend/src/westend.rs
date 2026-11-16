@@ -76,9 +76,9 @@ use onet_pools::{
 };
 
 use onet_records::{
-    AuthorityIndex, AuthorityRecord, BlockNumber, DiscoveryRecord, EpochIndex, EpochKey, EraIndex,
-    NetworkSessionStats, ParaId, ParaRecord, ParaStats, Points, Records, Subscribers, Subset,
-    SubsetStats, ValidatorProfileRecord,
+    collators::CollatorSummary, AuthorityIndex, AuthorityRecord, BlockNumber, DiscoveryRecord,
+    EpochIndex, EpochKey, EraIndex, NetworkSessionStats, ParaId, ParaRecord, ParaStats, Points,
+    Records, Subscribers, Subset, SubsetStats, ValidatorProfileRecord,
 };
 use onet_report::{
     group_by_points, position, Callout, Metadata as ReportMetadata, Network, RawData, RawDataGroup,
@@ -2915,6 +2915,11 @@ pub async fn cache_session_stats_records(
             profile.mvr_session = Some(epoch_index);
         }
 
+        // calculate session mcr (collation) and avg it with previous value
+        (profile.mcr, profile.mcr_session) =
+            try_calculate_avg_mcr_by_session_and_stash_from_cache(&onet, epoch_index, stash)
+                .await?;
+
         // check if block nominations
         profile.is_blocked = prefs.blocked;
 
@@ -3242,6 +3247,73 @@ pub async fn calculate_mvr_by_session_and_stash(
     }
 
     Ok(None)
+}
+
+/// Average the missed collation ratio (mcr) of the session with the previous one kept in the
+/// validator profile. Returns the mcr and the session from where it was last updated.
+pub async fn try_calculate_avg_mcr_by_session_and_stash_from_cache(
+    onet: &Onet,
+    session_index: EpochIndex,
+    stash: AccountId32,
+) -> Result<(Option<u64>, Option<EpochIndex>), OnetError> {
+    let mut conn = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+    let previous: Option<ValidatorProfileRecord> = redis::cmd("GET")
+        .arg(CacheKey::ValidatorProfileByAccount(stash))
+        .query_async::<Option<String>>(&mut conn as &mut Connection)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok());
+    let (previous_mcr, previous_session) =
+        previous.map(|p| (p.mcr, p.mcr_session)).unwrap_or_default();
+
+    match calculate_mcr_by_session_and_stash(onet, session_index, stash).await? {
+        Some(latest) => Ok((
+            Some(previous_mcr.map_or(latest, |previous| (previous + latest) / 2)),
+            Some(session_index),
+        )),
+        None => Ok((previous_mcr, previous_session)),
+    }
+}
+
+/// Missed collation ratio (scaled by `base_decimals`) of a validator in a session, taken from
+/// the collation summary (all parachains) of the validator authority record.
+pub async fn calculate_mcr_by_session_and_stash(
+    onet: &Onet,
+    session_index: EpochIndex,
+    stash: AccountId32,
+) -> Result<Option<u64>, OnetError> {
+    let mut conn = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+
+    let authority_key_data = redis::cmd("HGETALL")
+        .arg(CacheKey::AuthorityKeyByAccountAndSession(
+            stash,
+            session_index,
+        ))
+        .query_async::<AuthorityKeyCache>(&mut conn as &mut Connection)
+        .await
+        .unwrap_or_default();
+    if authority_key_data.is_empty() {
+        return Ok(None);
+    }
+    let auth_key: AuthorityKey = authority_key_data.into();
+    let summary = redis::cmd("HGET")
+        .arg(CacheKey::AuthorityRecordVerbose(
+            auth_key.to_string(),
+            Verbosity::Summary,
+        ))
+        .arg("collation_summary")
+        .query_async::<Option<String>>(&mut conn as &mut Connection)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str::<CollatorSummary>(&s).ok())
+        .unwrap_or_default();
+
+    Ok(summary
+        .mcr()
+        .map(|mcr| (mcr * base_decimals() as f64).round() as u64))
 }
 
 /// Helper fetch functions

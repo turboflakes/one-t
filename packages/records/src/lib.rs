@@ -235,8 +235,22 @@ impl std::fmt::Display for Grade {
     }
 }
 
-pub fn grade(mvr: f64, bur: f64) -> Grade {
-    let ratio = 1.0_f64 - (mvr * 0.75 + bur * 0.25);
+/// Grade of a validator based on the missed votes ratio (`mvr`), the bitfields unavailability
+/// ratio (`bur`) and, if the validator also collated, the missed collation ratio (`mcr`).
+pub fn grade(mvr: f64, bur: f64, mcr: Option<f64>) -> Grade {
+    let ratio = match mcr {
+        Some(mcr) => 1.0_f64 - (mvr * 0.6 + bur * 0.15 + mcr * 0.25),
+        None => 1.0_f64 - (mvr * 0.75 + bur * 0.25),
+    };
+    grade_from_ratio(ratio)
+}
+
+/// Grade of a validator that only collated, based on the missed collation ratio (`mcr`).
+pub fn collation_grade(mcr: f64) -> Grade {
+    grade_from_ratio(1.0_f64 - mcr)
+}
+
+fn grade_from_ratio(ratio: f64) -> Grade {
     let p = (ratio * 10000.0).round() as u32;
     match p {
         9901..=10000 => Grade::Ap,
@@ -726,7 +740,7 @@ impl Records {
                     let tu = para_record.total_unavailability();
                     let bur = tu as f64 / (ta + tu) as f64;
                     // Identify failed and exceptional epochs
-                    let grade = grade(mvr, bur);
+                    let grade = grade(mvr, bur, None);
                     if grade == Grade::F {
                         flagged_epochs += 1;
                     } else if grade == Grade::Ap {
@@ -2161,6 +2175,13 @@ pub struct ValidatorProfileRecord {
     pub mvr: Option<u64>,
     // mvr_session contains the session from where the mvr was last updated
     pub mvr_session: Option<EpochIndex>,
+    // mcr is the missed collation ratio averaged with the previous sessions,
+    // none if the validator never collated
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcr: Option<u64>,
+    // mcr_session contains the session from where the mcr was last updated
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcr_session: Option<EpochIndex>,
     // TODO: DEPRECATE is_oversubscribed, after runtime v1.2 no longer needed
     pub is_oversubscribed: bool,
     pub is_active: bool,
@@ -2183,6 +2204,8 @@ impl ValidatorProfileRecord {
             subset: Subset::NONTVP,
             mvr: None,
             mvr_session: None,
+            mcr: None,
+            mcr_session: None,
             is_oversubscribed: false,
             is_active: false,
             is_chilled: false,
@@ -2382,6 +2405,34 @@ impl SubsetStats {
 mod tests {
     use super::*;
     use std::str::FromStr;
+
+    #[test]
+    fn grade_with_and_without_collation() {
+        // without collation: 75% votes, 25% bitfields
+        assert_eq!(grade(0.0, 0.0, None), Grade::Ap);
+        assert_eq!(grade(0.04, 0.0, None), Grade::A);
+        // with collation: 60% votes, 15% bitfields, 25% collation
+        assert_eq!(grade(0.0, 0.0, Some(0.0)), Grade::Ap);
+        assert_eq!(grade(0.0, 0.0, Some(0.02)), Grade::Ap);
+        assert_eq!(grade(0.0, 0.0, Some(0.03)), Grade::Ap);
+        assert_eq!(grade(0.0, 0.0, Some(0.04)), Grade::A);
+        assert_eq!(grade(0.0, 0.0, Some(0.2)), Grade::Bp);
+        assert_eq!(grade(0.05, 0.0, Some(0.0)), Grade::A);
+        assert_eq!(grade(0.1, 0.0, Some(0.0)), Grade::Bp);
+        assert_eq!(grade(0.0, 0.1, Some(0.0)), Grade::A);
+        // a validator that missed all its collation blocks loses 25 points
+        assert_eq!(grade(0.0, 0.0, Some(1.0)), Grade::Cp);
+        // a perfect collation does not change a grade without it, if votes are perfect
+        assert_eq!(grade(0.0, 0.0, None), grade(0.0, 0.0, Some(0.0)));
+    }
+
+    #[test]
+    fn grade_of_a_validator_that_only_collated() {
+        assert_eq!(collation_grade(0.0), Grade::Ap);
+        assert_eq!(collation_grade(0.02), Grade::A);
+        assert_eq!(collation_grade(0.25), Grade::Cp);
+        assert_eq!(collation_grade(1.0), Grade::F);
+    }
 
     #[test]
     fn collator_records_are_tracked_by_para_session_and_epoch() {

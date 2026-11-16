@@ -44,7 +44,8 @@ use onet_config::CONFIG;
 use onet_dn::dn::try_fetch_stashes_from_remote_url;
 use onet_pools::{PoolId, PoolNominees};
 use onet_records::{
-    grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset, ValidatorProfileRecord,
+    collation_grade, collators::CollatorSummary, grade, BitfieldsRecord, DiscoveryRecord,
+    EpochIndex, Grade, Subset, ValidatorProfileRecord,
 };
 use redis::aio::MultiplexedConnection as Connection;
 use serde::{de::Deserializer, Deserialize};
@@ -1254,6 +1255,37 @@ pub async fn get_validator_profile_by_stash(
     })
 }
 
+/// Collation of a validator over the sessions
+struct CollationGrade {
+    // sessions in which the validator owned slots over the requested sessions
+    slots_inclusion: f64,
+    produced_blocks: u32,
+    missed_blocks: u32,
+    // missed collation ratio, none if the validator did not collate
+    mcr: Option<f64>,
+}
+
+/// Sum the collation of the sessions and calculate the missed collation ratio over them.
+/// Note: the ratio is calculated from the totals, so sessions with more blocks weight more.
+fn calculate_collation(data: &[ValidatorResult], number_last_sessions: u32) -> CollationGrade {
+    let mut total = CollatorSummary::default();
+    let mut sessions = 0_u32;
+    for validator in data.iter().filter(|v| !v.collation_summary.is_empty()) {
+        total.add(&validator.collation_summary);
+        sessions += 1;
+    }
+    CollationGrade {
+        slots_inclusion: if number_last_sessions > 0 {
+            sessions as f64 / number_last_sessions as f64
+        } else {
+            0.0
+        },
+        produced_blocks: total.pb,
+        missed_blocks: total.eb.saturating_sub(total.pb),
+        mcr: total.mcr(),
+    }
+}
+
 async fn calculate_validator_grade_by_stash(
     stash: String,
     params: Query<Params>,
@@ -1329,22 +1361,38 @@ async fn calculate_validator_grade_by_stash(
     let auth_epochs = data.iter().filter(|v| v.is_auth).count();
     let para_epochs = data.iter().filter(|v| v.is_para).count();
 
+    // collation of the sessions, if the validator collated
+    let collation = calculate_collation(&data, params.number_last_sessions);
+
     if para_epochs == 0 {
+        // Note: a validator that is not a para authority can still be a collator,
+        // in that case the grade only reflects the collation
+        let grade = collation
+            .mcr
+            .map(collation_grade)
+            .unwrap_or(Grade::NA)
+            .to_string();
         if params.show_summary {
             return Ok(ValidatorGradeResult {
                 address: stash.to_string(),
-                grade: Grade::NA.to_string(),
+                grade: grade.clone(),
                 authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
                 para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
+                collation_slots_inclusion: collation.slots_inclusion,
+                collation_produced_blocks_total: collation.produced_blocks,
+                collation_missed_blocks_total: collation.missed_blocks,
                 sessions_data: data,
                 ..Default::default()
             });
         }
         return Ok(ValidatorGradeResult {
             address: stash.to_string(),
-            grade: Grade::NA.to_string(),
+            grade,
             authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
             para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
+            collation_slots_inclusion: collation.slots_inclusion,
+            collation_produced_blocks_total: collation.produced_blocks,
+            collation_missed_blocks_total: collation.missed_blocks,
             sessions: data.iter().map(|v| v.session).collect(),
             ..Default::default()
         });
@@ -1389,7 +1437,7 @@ async fn calculate_validator_grade_by_stash(
     if params.show_summary {
         return Ok(ValidatorGradeResult {
             address: stash.to_string(),
-            grade: grade(mvr, bur).to_string(),
+            grade: grade(mvr, bur, collation.mcr).to_string(),
             authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
             para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
             explicit_votes_total: data
@@ -1421,6 +1469,9 @@ async fn calculate_validator_grade_by_stash(
                 .filter_map(|value| serde_json::from_value::<BitfieldsRecord>(value.clone()).ok())
                 .map(|bitfields| bitfields.unavailability())
                 .sum(),
+            collation_slots_inclusion: collation.slots_inclusion,
+            collation_produced_blocks_total: collation.produced_blocks,
+            collation_missed_blocks_total: collation.missed_blocks,
             sessions_data: data,
             ..Default::default()
         });
@@ -1428,7 +1479,7 @@ async fn calculate_validator_grade_by_stash(
 
     Ok(ValidatorGradeResult {
         address: stash.to_string(),
-        grade: grade(mvr, bur).to_string(),
+        grade: grade(mvr, bur, collation.mcr).to_string(),
         authority_inclusion: auth_epochs as f64 / params.number_last_sessions as f64,
         para_authority_inclusion: para_epochs as f64 / params.number_last_sessions as f64,
         explicit_votes_total: data
@@ -1460,6 +1511,9 @@ async fn calculate_validator_grade_by_stash(
             .filter_map(|value| serde_json::from_value::<BitfieldsRecord>(value.clone()).ok())
             .map(|bitfields| bitfields.unavailability())
             .sum(),
+        collation_slots_inclusion: collation.slots_inclusion,
+        collation_produced_blocks_total: collation.produced_blocks,
+        collation_missed_blocks_total: collation.missed_blocks,
         sessions: data.iter().map(|v| v.session).collect(),
         ..Default::default()
     })
@@ -1720,4 +1774,46 @@ async fn get_waiting_validator_stashes_by_session(
         .map_err(CacheError::RedisCMDError)?;
 
     Ok(stashes)
+}
+
+#[cfg(test)]
+mod grade_tests {
+    use super::*;
+
+    #[test]
+    fn calculate_collation_sums_the_sessions() {
+        let a = ValidatorResult {
+            collation_summary: CollatorSummary {
+                os: 2,
+                eb: 24,
+                pb: 24,
+                pt: 480,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let b = ValidatorResult {
+            collation_summary: CollatorSummary {
+                os: 1,
+                eb: 12,
+                pb: 6,
+                pt: 120,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // a session where the validator did not collate
+        let c = ValidatorResult::default();
+
+        let g = calculate_collation(&[a, b, c], 4);
+        assert!((g.slots_inclusion - 0.5).abs() < 1e-9);
+        assert_eq!((g.produced_blocks, g.missed_blocks), (30, 6));
+        // 6 of 36 blocks were missed
+        assert!((g.mcr.unwrap() - 6.0 / 36.0).abs() < 1e-9);
+
+        let g = calculate_collation(&[ValidatorResult::default()], 1);
+        assert_eq!(g.slots_inclusion, 0.0);
+        assert_eq!((g.produced_blocks, g.missed_blocks), (0, 0));
+        assert_eq!(g.mcr, None);
+    }
 }

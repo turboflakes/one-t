@@ -92,6 +92,15 @@ impl CollatorSummary {
         self.os == 0
     }
 
+    /// Missed collation ratio: 1 - produced blocks / expected blocks, clamped to [0, 1],
+    /// none if there were no blocks expected
+    pub fn mcr(&self) -> Option<f64> {
+        if self.eb == 0 {
+            return None;
+        }
+        Some((1.0 - self.pb as f64 / self.eb as f64).clamp(0.0, 1.0))
+    }
+
     /// Add the counters of another summary, kind is not aggregated
     pub fn add(&mut self, other: &CollatorSummary) {
         self.os += other.os;
@@ -502,6 +511,19 @@ mod tests {
             r#"{"os":1,"eb":2,"pb":2,"pt":40,"ms":0}"#
         );
         assert!(r.summary().kind.is_some());
+    }
+
+    #[test]
+    fn mcr_is_the_ratio_of_missed_blocks() {
+        let mut summary = CollatorSummary::default();
+        assert_eq!(summary.mcr(), None);
+        summary.eb = 24;
+        summary.pb = 24;
+        assert_eq!(summary.mcr(), Some(0.0));
+        summary.pb = 18;
+        assert_eq!(summary.mcr(), Some(0.25));
+        summary.pb = 30;
+        assert_eq!(summary.mcr(), Some(0.0));
     }
 
     #[test]
