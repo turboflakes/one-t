@@ -875,15 +875,25 @@ pub struct RankingStats {
     pub mvr: f64,
     pub avg_para_points: u32,
     pub para_epochs: u32,
+    // missed collation ratio over the sessions, only set if the score takes collation into account
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcr: Option<f64>,
 }
 
 impl RankingStats {
-    pub fn with(score: u32, mvr: f64, avg_para_points: u32, para_epochs: u32) -> Self {
+    pub fn with(
+        score: u32,
+        mvr: f64,
+        avg_para_points: u32,
+        para_epochs: u32,
+        mcr: Option<f64>,
+    ) -> Self {
         Self {
             score,
             mvr,
             avg_para_points,
             para_epochs,
+            mcr,
         }
     }
 }

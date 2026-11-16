@@ -132,6 +132,9 @@ pub struct Params {
     // nominees_only indicates validators that are present on nomination pools as nominees, dafault false
     #[serde(default)]
     nominees_only: bool,
+    // collators_only indicates validators that also collated (owned collation slots) in the requested sessions, default false
+    #[serde(default)]
+    collators_only: bool,
     // fetch_peers indicates whether peers should be also retrieved and included in the response, default false
     #[serde(default)]
     fetch_peers: bool,
@@ -231,7 +234,24 @@ where
     }
 }
 
+/// Whether the validator of the authority key had collation slots expected in the session
+async fn has_collation(key: &str, conn: &mut Connection) -> Result<bool, ApiError> {
+    let summary = redis::cmd("HGET")
+        .arg(CacheKey::AuthorityRecordVerbose(
+            key.to_string(),
+            Verbosity::Summary,
+        ))
+        .arg("collation_summary")
+        .query_async::<Option<String>>(conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?
+        .and_then(|s| serde_json::from_str::<CollatorSummary>(&s).ok())
+        .unwrap_or_default();
+    Ok(summary.eb > 0)
+}
+
 /// Get active validators
+#[allow(clippy::too_many_arguments)]
 async fn get_session_authorities(
     index: EpochIndex,
     role: Role,
@@ -239,6 +259,7 @@ async fn get_session_authorities(
     show_summary: bool,
     show_discovery: bool,
     show_profile: bool,
+    collators_only: bool,
     cache: Data<RedisPool>,
 ) -> Result<ValidatorsResult, ApiError> {
     let mut conn = get_conn(&cache).await?;
@@ -266,6 +287,9 @@ async fn get_session_authorities(
 
     let mut data: Vec<ValidatorResult> = Vec::new();
     for key in authority_keys.iter() {
+        if collators_only && !has_collation(key, &mut conn).await? {
+            continue;
+        }
         let mut auth: CacheMap = redis::cmd("HGETALL")
             .arg(key)
             .query_async(&mut conn as &mut Connection)
@@ -777,6 +801,9 @@ async fn get_validators_by_params(
                     .map_err(CacheError::RedisCMDError)?;
 
                 for key in authority_keys.iter() {
+                    if params.collators_only && !has_collation(key, &mut conn).await? {
+                        continue;
+                    }
                     let val = get_validator_by_authority_key(
                         (*key).clone().into(),
                         params.show_stats,
@@ -806,6 +833,14 @@ async fn get_validators_by_params(
     // Calculate a score based on the formula
     // SCORE_1 = (1-MVR)*0.50 + BAR * 0.25 + ((AVG_PV_POINTS - MIN_AVG_PV_POINTS)/(MAX_AVG_PV_POINTS-MIN_AVG_PV_POINTS))*0.18 + (PV_SESSIONS/TOTAL_SESSIONS)*0.07
     //
+    // Validators that also collated, with at least MIN_COLLATION_EXPECTED_BLOCKS expected blocks
+    // over the sessions, get 25% of the score from the produced blocks ratio:
+    // SCORE_2 = SCORE_1 * 0.75 + (1-MCR) * 0.25
+    // where MCR = 1 - (PRODUCED_BLOCKS/EXPECTED_BLOCKS) summed over the sessions.
+    // Validators without collation keep SCORE_1.
+    //
+    // collators_only=true keeps only the validators that were expected to collate (eb > 0).
+    //
     //
     if params.from != 0 && params.from < params.to && params.ranking == Ranking::Performance {
         // Check if query is already cached
@@ -826,6 +861,8 @@ async fn get_validators_by_params(
             //
             let mut aggregator: BTreeMap<String, ValidatorScoreAggregator> = BTreeMap::new();
             let mut validators: BTreeMap<String, ValidatorResult> = BTreeMap::new();
+            // collation of each validator summed over the sessions
+            let mut collation: BTreeMap<String, CollatorSummary> = BTreeMap::new();
             let mut total_epochs: u32 = 0;
             let mut i = Some(start_session);
             while let Some(session_index) = i {
@@ -874,6 +911,10 @@ async fn get_validators_by_params(
                                 },
                             )
                             .or_insert((Subset::NotDefined, 0, 0, 0, 0, 0, 0, 0, 0));
+                        collation
+                            .entry(val.address.clone())
+                            .or_default()
+                            .add(&val.collation_summary);
                         validators.insert(val.address.clone(), val);
                     }
                     total_epochs += 1;
@@ -910,13 +951,20 @@ async fn get_validators_by_params(
                         let mvr = *mv as f64 / (*ev + *iv + *mv) as f64;
                         let bar = *ba as f64 / (*ba + *bu) as f64;
                         let avg_para_points = *para_points / *para_epochs;
+                        // collation is only taken into account with enough expected blocks
+                        let mcr = collation
+                            .get(stash)
+                            .filter(|c| c.eb >= MIN_COLLATION_EXPECTED_BLOCKS)
+                            .and_then(|c| c.mcr());
                         let score = if max - min > 0 {
-                            (((1.0_f64 - mvr) * 0.50_f64
-                                + bar * 0.25_f64
-                                + ((avg_para_points - *min) as f64 / (*max - *min) as f64)
-                                    * 0.18_f64
-                                + (*para_epochs as f64 / total_epochs as f64) * 0.07_f64)
-                                * 1000000.0_f64) as u32
+                            performance_score(
+                                (1.0_f64 - mvr) * 0.50_f64
+                                    + bar * 0.25_f64
+                                    + ((avg_para_points - *min) as f64 / (*max - *min) as f64)
+                                        * 0.18_f64
+                                    + (*para_epochs as f64 / total_epochs as f64) * 0.07_f64,
+                                mcr,
+                            )
                         } else {
                             0
                         };
@@ -924,7 +972,7 @@ async fn get_validators_by_params(
                         // Add ranking stats to the validator result
                         validators.entry(stash.clone()).and_modify(|v| {
                             v.ranking =
-                                RankingStats::with(score, mvr, avg_para_points, *para_epochs);
+                                RankingStats::with(score, mvr, avg_para_points, *para_epochs, mcr);
                         });
                     },
                 );
@@ -939,9 +987,12 @@ async fn get_validators_by_params(
 
             let mut i = 0;
             while i < aggregator_vec.len() {
-                let (_, (subset, para_epochs, _, _, _, _, _, _, _)) = &mut aggregator_vec[i];
+                let (address, (subset, para_epochs, _, _, _, _, _, _, _)) = &mut aggregator_vec[i];
+                let not_a_collator = params.collators_only
+                    && collation.get(address).map(|c| c.eb).unwrap_or_default() == 0;
                 if (*subset != params.subset && params.subset != Subset::NotDefined)
                     || *para_epochs < min_para_epochs
+                    || not_a_collator
                 {
                     aggregator_vec.remove(i);
                 } else {
@@ -1096,6 +1147,7 @@ async fn get_validators_by_params(
         params.show_summary,
         params.show_discovery,
         params.show_profile,
+        params.collators_only,
         cache,
     )
     .await?;
@@ -1253,6 +1305,20 @@ pub async fn get_validator_profile_by_stash(
         profile: ValidatorProfileResult::from(serialized_data),
         preds: get_validator_predictions(&mut conn as &mut Connection, stash).await?,
     })
+}
+
+/// Minimum blocks a validator must be expected to produce, over the requested sessions, for
+/// its collation to be part of the performance score (two slots of 12 blocks)
+const MIN_COLLATION_EXPECTED_BLOCKS: u32 = 24;
+
+/// Performance score scaled to an integer. Validators that also collated get 25% of the score
+/// from the produced blocks ratio (1 - mcr), the remaining 75% is the score without collation.
+fn performance_score(base: f64, mcr: Option<f64>) -> u32 {
+    let score = match mcr {
+        Some(mcr) => base * 0.75_f64 + (1.0_f64 - mcr) * 0.25_f64,
+        None => base,
+    };
+    (score * 1000000.0_f64) as u32
 }
 
 /// Collation of a validator over the sessions
@@ -1779,6 +1845,18 @@ async fn get_waiting_validator_stashes_by_session(
 #[cfg(test)]
 mod grade_tests {
     use super::*;
+
+    #[test]
+    fn performance_score_with_and_without_collation() {
+        // without collation the score is unchanged
+        assert_eq!(performance_score(0.8, None), 800_000);
+        // a perfect collation does not change a perfect score
+        assert_eq!(performance_score(1.0, Some(0.0)), 1_000_000);
+        // 75% of the score plus 25% of the produced blocks ratio
+        assert_eq!(performance_score(0.8, Some(0.0)), 850_000);
+        assert_eq!(performance_score(0.8, Some(1.0)), 600_000);
+        assert_eq!(performance_score(1.0, Some(0.2)), 950_000);
+    }
 
     #[test]
     fn calculate_collation_sums_the_sessions() {
