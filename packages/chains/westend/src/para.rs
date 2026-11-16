@@ -41,7 +41,7 @@ use subxt::{
 };
 
 /// Maximum number of para blocks followed back from the head in one go
-const MAX_BLOCKS_WALK: u64 = 500;
+const MAX_BLOCKS_WALK: u64 = 3600;
 
 type ParaRpc = LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>;
 
@@ -62,6 +62,7 @@ fn describe(collators: &[(AccountId32, CollatorKind)]) -> String {
 /// Blocks are processed oldest first.
 pub async fn process_para_block(
     chain: &ChainClient,
+    ah: &ChainClient,
     runtime: SupportedParasRuntime,
     head_number: BlockNumber,
     head_hash: H256,
@@ -97,13 +98,14 @@ pub async fn process_para_block(
     blocks.reverse();
 
     for (number, hash) in blocks {
-        process_block(chain, runtime, number, hash, records).await?;
+        process_block(chain, ah, runtime, number, hash, records).await?;
     }
     Ok(())
 }
 
 async fn process_block(
     chain: &ChainClient,
+    ah: &ChainClient,
     runtime: SupportedParasRuntime,
     number: BlockNumber,
     hash: H256,
@@ -116,7 +118,7 @@ async fn process_block(
         .para_slots(para_id)
         .is_some_and(|t| t.is_initialized())
     {
-        initialize_tracker(&at, runtime, number, records).await?;
+        initialize_tracker(&at, ah, runtime, number, records).await?;
     }
 
     // Right after a rotation print both candidates so the assumed owner can be confirmed
@@ -150,6 +152,12 @@ async fn process_block(
     // The session index changes in the block of the event, the collators only apply from the next block
     if let Some(session_index) = new_session {
         records.para_slots_mut(para_id).set_session(session_index);
+        // era points per block are set by governance, so refresh them at every new session
+        let points = fetch_points_per_block(ah, runtime).await?;
+        if points != records.para_slots_mut(para_id).points_per_block() {
+            info!("{runtime}: era points per collated block changed to {points}");
+            records.para_slots_mut(para_id).set_points_per_block(points);
+        }
     }
     match slot {
         Some(slot) => records.track_para_block(para_id, number, slot),
@@ -170,6 +178,7 @@ async fn process_block(
 
 async fn initialize_tracker(
     at: &OnlineClientAtBlock<PolkadotConfig>,
+    ah: &ChainClient,
     runtime: SupportedParasRuntime,
     number: BlockNumber,
     records: &mut Records,
@@ -181,16 +190,28 @@ async fn initialize_tracker(
 
     let session = fetch_session_current_index(runtime, at).await?;
     let collators = fetch_collators(runtime, at).await?;
+    let points_per_block = fetch_points_per_block(ah, runtime).await?;
 
     info!(
-        "{runtime}: tracker initialized at block {number} session {session} slot_duration {slot_duration}ms blocks_per_slot {blocks_per_slot} collators [{}]",
+        "{runtime}: tracker initialized at block {number} session {session} slot_duration {slot_duration}ms blocks_per_slot {blocks_per_slot} points_per_block {points_per_block} collators [{}]",
         describe(&collators)
     );
     let tracker = records.para_slots_mut(para_id);
     tracker.set_blocks_per_slot(blocks_per_slot);
+    tracker.set_points_per_block(points_per_block);
     tracker.set_session(session);
     tracker.set_collators(collators);
     Ok(())
+}
+
+/// Era points a validator earns for each block collated on the parachain.
+/// Note: points are set on asset hub (staking), for every parachain source.
+async fn fetch_points_per_block(
+    ah: &ChainClient,
+    runtime: SupportedParasRuntime,
+) -> Result<u32, OnetError> {
+    let at = ah.client.at_current_block().await?;
+    asset_hub::fetch_collation_points_per_block(&at, runtime.para_id()).await
 }
 
 /// Runtimes with the collators pallets wired

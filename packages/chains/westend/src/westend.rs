@@ -45,10 +45,11 @@ use onet_asset_hub_westend::{
     fetch_relay_parent_block_number, fetch_total_issuance, AssetHubCall, NominationPoolsCall,
 };
 use onet_cache::{
-    cache_best_block, cache_board_limits_at_session, cache_finalized_block,
+    cache_best_block, cache_board_limits_at_session, cache_collator_records, cache_finalized_block,
     cache_network_stats_at_session, cache_nomination_pool, cache_nomination_pool_nominees,
     cache_nomination_pool_stats, cache_records, cache_records_at_new_session,
     cache_validator_profile, cache_validator_profile_only, cache_waiting_validator,
+    rehydrate_collator_records,
 };
 use onet_cache::{
     error::CacheError,
@@ -349,6 +350,8 @@ pub async fn process_best_block(
     match chain_key {
         ChainKey::RC => records.set_relay_chain_best_block_number(block_number),
         ChainKey::AH => records.set_asset_hub_best_block_number(block_number),
+        // Note: people best block is not tracked in records
+        ChainKey::PEOPLE => {}
     };
 
     // if api enabled cache best block
@@ -528,7 +531,7 @@ async fn process_relay_chain_events(
                 )
                 .await?;
             } else if ev.0.descriptor.para_id == Id(config.people_para_id) {
-                track_people_block(people, ev.0.descriptor.para_head, records).await;
+                track_people_block(onet, people, ev.0.descriptor.para_head, records).await;
             }
         } else if let Some(ev) = event.decode_fields_as::<NewSession>().transpose()? {
             info!("RC Event {:?}", ev);
@@ -538,15 +541,6 @@ async fn process_relay_chain_events(
                 try_run_cache_discovery_records(records, rc_block_hash).await?;
             }
         }
-        // else if let Some(ev) = event.decode_fields_as::<relay_runtime::staking::events::EraPaid>().transpose()? {
-        //     info!("RC Event {:?}", ev);
-        // } else if let Some(ev) = event.decode_fields_as::<RootStored>().transpose()? {
-        //     info!("RC Event {:?}", ev);
-        // } else if let Some(ev) = event.decode_fields_as::<ValidatorSetReceived>().transpose()? {
-        //     info!("RC Event {:?}", ev);
-        // } else if let Some(ev) = event.decode_fields_as::<NewAuthorities>().transpose()? {
-        //     info!("RC Event NewAuthorities: {:?}", ev.authority_set.len());
-        // }
     }
 
     Ok(())
@@ -571,7 +565,8 @@ async fn process_asset_hub_events(
     let at_ah = asset_hub.client.at_block(ah_block_hash).await?;
 
     // Track paras at every block.
-    if let Err(e) = process_para_block(
+    track_para_block(
+        onet,
         asset_hub,
         SupportedParasRuntime::AssetHubWestend,
         ah_block_number,
@@ -579,13 +574,7 @@ async fn process_asset_hub_events(
         ah_parent_block_hash,
         records,
     )
-    .await
-    {
-        error!("Failed to track AH block {}: {:?}", ah_block_number, e);
-        records
-            .para_slots_mut(SupportedParasRuntime::AssetHubWestend.para_id())
-            .break_continuity();
-    }
+    .await;
 
     // Fetch the RC Parent block
     let rc_parent_number = fetch_relay_parent_block_number(&at_ah).await?;
@@ -687,27 +676,91 @@ async fn process_asset_hub_events(
 
 /// Track a people chain block at the given hash.
 /// Note: a failure here must not stop the processing of the remaining events.
-async fn track_people_block(people: &ChainClient, block_hash: H256, records: &mut Records) {
+async fn track_people_block(
+    onet: &Onet,
+    people: &ChainClient,
+    block_hash: H256,
+    records: &mut Records,
+) {
     let runtime = SupportedParasRuntime::PeopleWestend;
+    match try_fetch_block_info(&people.rpc, block_hash).await {
+        Ok((block_number, parent_hash)) => {
+            track_para_block(
+                onet,
+                people,
+                runtime,
+                block_number,
+                block_hash,
+                parent_hash,
+                records,
+            )
+            .await
+        }
+        Err(e) => {
+            error!(
+                "Failed to fetch {} block info {:?}: {:?}",
+                runtime, block_hash, e
+            );
+            records.para_slots_mut(runtime.para_id()).break_continuity();
+        }
+    }
+}
+
+/// Chain key used to cache a parachain
+fn para_chain_key(runtime: SupportedParasRuntime) -> ChainKey {
+    match runtime {
+        SupportedParasRuntime::PeopleWestend => ChainKey::PEOPLE,
+        _ => ChainKey::AH,
+    }
+}
+
+/// Track a parachain block and cache the collator records it changed.
+/// Note: a failure here must not stop the processing of the remaining events.
+async fn track_para_block(
+    onet: &Onet,
+    chain: &ChainClient,
+    runtime: SupportedParasRuntime,
+    block_number: BlockNumber,
+    block_hash: H256,
+    parent_hash: H256,
+    records: &mut Records,
+) {
+    let para_id = runtime.para_id();
+    let chain_key = para_chain_key(runtime);
+    let cache_enabled = CONFIG.cache_writer_enabled;
     let result = async {
-        let (block_number, parent_hash) = try_fetch_block_info(&people.rpc, block_hash).await?;
+        // Note: the cache is only needed to resume after a restart and to serve the api
+        let mut cache = if cache_enabled {
+            Some(onet.cache.get().await.map_err(CacheError::RedisPoolError)?)
+        } else {
+            None
+        };
+        // Resume from the cache after a restart
+        if let (Some(cache), true) = (cache.as_mut(), records.para_slots(para_id).is_none()) {
+            rehydrate_collator_records(cache, chain_key.clone(), para_id, records).await?;
+        }
         process_para_block(
-            people,
+            chain,
+            onet.asset_hub(),
             runtime,
             block_number,
             block_hash,
             parent_hash,
             records,
         )
-        .await
+        .await?;
+        if let Some(cache) = cache.as_mut() {
+            cache_collator_records(cache, chain_key, para_id, records).await?;
+        }
+        Ok::<(), OnetError>(())
     }
     .await;
     if let Err(e) = result {
         error!(
-            "Failed to track {} block {:?}: {:?}",
-            runtime, block_hash, e
+            "Failed to track {} block {}: {:?}",
+            runtime, block_number, e
         );
-        records.para_slots_mut(runtime.para_id()).break_continuity();
+        records.para_slots_mut(para_id).break_continuity();
     }
 }
 

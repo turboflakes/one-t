@@ -27,7 +27,7 @@ use onet_config::CONFIG;
 use serde::{Deserialize, Serialize};
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     convert::TryInto,
     hash::Hash,
     net::IpAddr,
@@ -292,6 +292,11 @@ pub struct Records {
     authority_discovery_keys: HashMap<PublicKey, AuthorityIndex>,
     // Note: collator records are keyed by parachain, parachain session and collator address
     collator_records: HashMap<CollatorKey, CollatorRecord>,
+    // Note: same counters keyed by the relay chain session in which the slots closed,
+    // to be easily served alongside the relay chain authorities
+    collator_epoch_records: HashMap<CollatorKey, CollatorRecord>,
+    // collator records changed since the last time they were cached
+    dirty_collators: HashMap<ParaId, BTreeSet<(EpochIndex, EpochIndex, SS58)>>,
     para_slots: HashMap<ParaId, ParaSlots>,
 }
 
@@ -326,6 +331,8 @@ impl Records {
             groups: HashMap::new(),
             authority_discovery_keys: HashMap::new(),
             collator_records: HashMap::new(),
+            collator_epoch_records: HashMap::new(),
+            dirty_collators: HashMap::new(),
             para_slots: HashMap::new(),
         }
     }
@@ -345,20 +352,91 @@ impl Records {
         number: BlockNumber,
         slot: collators::Slot,
     ) {
+        let epoch = self.current_epoch;
         for closed in self.para_slots_mut(para_id).on_block(number, slot) {
             let Some((account, kind)) = closed.owner else {
                 continue;
             };
             let address = account.to_string();
-            self.collator_records
-                .entry(CollatorKey(
-                    para_id,
-                    EpochKey(closed.session),
-                    address.clone(),
-                ))
-                .or_insert_with(|| CollatorRecord::new(address, kind))
-                .add_slot(closed.slot, &closed.blocks, closed.expected_blocks);
+            for (records, index) in [
+                (&mut self.collator_records, closed.session),
+                (&mut self.collator_epoch_records, epoch),
+            ] {
+                records
+                    .entry(CollatorKey(para_id, EpochKey(index), address.clone()))
+                    .or_insert_with(|| CollatorRecord::new(address.clone(), kind))
+                    .add_slot(
+                        closed.slot,
+                        &closed.blocks,
+                        closed.expected_blocks,
+                        closed.points_per_block,
+                    );
+            }
+            self.dirty_collators.entry(para_id).or_default().insert((
+                closed.session,
+                epoch,
+                address,
+            ));
         }
+    }
+
+    /// Collator records (parachain session, relay session, address) changed since last cleared
+    pub fn dirty_collators(&self, para_id: ParaId) -> Vec<(EpochIndex, EpochIndex, SS58)> {
+        self.dirty_collators
+            .get(&para_id)
+            .map(|d| d.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn clear_dirty_collators(&mut self, para_id: ParaId) {
+        self.dirty_collators.remove(&para_id);
+    }
+
+    /// Insert a collator record read from the cache, used to resume after a restart
+    pub fn insert_collator_record(
+        &mut self,
+        para_id: ParaId,
+        session: EpochIndex,
+        record: CollatorRecord,
+    ) {
+        self.collator_records.insert(
+            CollatorKey(para_id, EpochKey(session), record.address().clone()),
+            record,
+        );
+    }
+
+    /// Insert a collator record per relay session read from the cache
+    pub fn insert_collator_epoch_record(
+        &mut self,
+        para_id: ParaId,
+        epoch: EpochIndex,
+        record: CollatorRecord,
+    ) {
+        self.collator_epoch_records.insert(
+            CollatorKey(para_id, EpochKey(epoch), record.address().clone()),
+            record,
+        );
+    }
+
+    pub fn get_collator_epoch_record(
+        &self,
+        para_id: ParaId,
+        epoch: EpochIndex,
+        address: &str,
+    ) -> Option<&CollatorRecord> {
+        self.collator_epoch_records
+            .get(&CollatorKey(para_id, EpochKey(epoch), address.to_string()))
+    }
+
+    /// Relay chain authority index of an address, if active in the relay session
+    pub fn get_authority_index_by_address(
+        &self,
+        address: &str,
+        epoch: EpochIndex,
+    ) -> Option<AuthorityIndex> {
+        self.addresses
+            .get(&AddressKey(EpochKey(epoch), address.to_string()))
+            .copied()
     }
 
     pub fn get_collator_record(
@@ -2207,6 +2285,46 @@ impl SubsetStats {
 mod tests {
     use super::*;
     use std::str::FromStr;
+
+    #[test]
+    fn collator_records_are_tracked_by_para_session_and_epoch() {
+        use collators::CollatorKind;
+        let para_id = 1000;
+        let a = AccountId32([1; 32]);
+        let mut records = Records::with_era_epoch_and_block(10, 100, 1);
+        let slots = records.para_slots_mut(para_id);
+        slots.set_blocks_per_slot(2);
+        slots.set_points_per_block(20);
+        slots.set_session(7);
+        slots.set_collators(vec![(a, CollatorKind::Validator)]);
+
+        // slot 1 is partial, slot 2 has 2 blocks, slot 3 closes slot 2
+        records.track_para_block(para_id, 1, 1);
+        records.track_para_block(para_id, 2, 2);
+        records.track_para_block(para_id, 3, 2);
+        assert!(records.dirty_collators(para_id).is_empty());
+        records.track_para_block(para_id, 4, 3);
+
+        let address = a.to_string();
+        assert_eq!(
+            records.dirty_collators(para_id),
+            vec![(7, 100, address.clone())]
+        );
+        let by_session = records.get_collator_record(para_id, 7, &address).unwrap();
+        let by_epoch = records
+            .get_collator_epoch_record(para_id, 100, &address)
+            .unwrap();
+        assert_eq!(by_session, by_epoch);
+        assert_eq!(by_session.produced_blocks(), 2);
+        assert_eq!(by_session.msr(), Some(0.0));
+        assert_eq!(by_session.summary().pt, 40);
+        assert!(records
+            .get_collator_record(para_id + 1, 7, &address)
+            .is_none());
+
+        records.clear_dirty_collators(para_id);
+        assert!(records.dirty_collators(para_id).is_empty());
+    }
 
     #[test]
     fn test_subscribers() {

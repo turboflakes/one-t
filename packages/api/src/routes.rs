@@ -22,6 +22,7 @@
 use crate::handlers::{
     blocks::{get_best_block, get_block_by_number, get_blocks, get_finalized_block},
     boards::handlers::{get_boards, get_criteria_limits},
+    collators::get_collators,
     health::get_health,
     info::get_info,
     parachains::get_parachains,
@@ -87,6 +88,8 @@ pub fn routes(cfg: &mut web::ServiceConfig) {
                         )
                         .route("", web::get().to(get_validators)),
                 )
+                // COLLATORS routes
+                .service(web::scope("/collators").route("", web::get().to(get_collators)))
                 // COHORTS routes (endpoint specific for DN program)
                 .service(
                     web::scope("/cohorts")

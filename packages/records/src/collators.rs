@@ -32,10 +32,14 @@ const MAX_SLOT_GAP: u64 = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CollatorKind {
+    #[serde(rename = "I")]
     Invulnerable,
+    #[serde(rename = "P")]
     Permissionless,
+    #[serde(rename = "V")]
     Validator,
     // session validator not found in invulnerables, candidates or drawn collators
+    #[serde(rename = "U")]
     Unknown,
 }
 
@@ -45,18 +49,92 @@ pub struct CollatorRecord {
     address: SS58,
     kind: Option<CollatorKind>,
     // slots owned by the collator and closed in the session
+    #[serde(rename = "os")]
     owned_slots: u32,
     // blocks that were possible to be produced in the owned slots
+    #[serde(rename = "eb")]
     expected_blocks: u32,
     // blocks actually produced in the owned slots
+    #[serde(rename = "pb")]
     produced_blocks: u32,
+    // era points earned by the produced blocks
+    #[serde(rename = "pt", default)]
+    points: u32,
     // block numbers produced
+    #[serde(rename = "pbn")]
     produced_block_numbers: Vec<BlockNumber>,
     // slots owned where no block was produced at all
+    #[serde(rename = "msl")]
     missed_slots: Vec<Slot>,
 }
 
+/// Counters of a collator, serialized to the validators response
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CollatorSummary {
+    // Note: kind is skipped when not set, e.g. in the validators response where collators are always validators
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<CollatorKind>,
+    // owned slots
+    pub os: u32,
+    // expected blocks
+    pub eb: u32,
+    // produced blocks
+    pub pb: u32,
+    // era points
+    #[serde(default)]
+    pub pt: u32,
+    // missed slots
+    pub ms: u32,
+}
+
+impl CollatorSummary {
+    pub fn is_empty(&self) -> bool {
+        self.os == 0
+    }
+}
+
+/// Block and slot numbers of a collator, serialized to the validators response
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CollatorStats {
+    // produced block numbers
+    pub pbn: Vec<BlockNumber>,
+    // missed slot numbers
+    pub msl: Vec<Slot>,
+}
+
+impl CollatorStats {
+    pub fn is_empty(&self) -> bool {
+        self.pbn.is_empty() && self.msl.is_empty()
+    }
+}
+
 impl CollatorRecord {
+    pub fn summary(&self) -> CollatorSummary {
+        CollatorSummary {
+            kind: self.kind,
+            os: self.owned_slots,
+            eb: self.expected_blocks,
+            pb: self.produced_blocks,
+            pt: self.points,
+            ms: self.missed_slots.len() as u32,
+        }
+    }
+
+    /// Summary without the collator kind
+    pub fn summary_without_kind(&self) -> CollatorSummary {
+        CollatorSummary {
+            kind: None,
+            ..self.summary()
+        }
+    }
+
+    pub fn stats(&self) -> CollatorStats {
+        CollatorStats {
+            pbn: self.produced_block_numbers.clone(),
+            msl: self.missed_slots.clone(),
+        }
+    }
+
     pub fn new(address: SS58, kind: CollatorKind) -> Self {
         Self {
             address,
@@ -74,10 +152,17 @@ impl CollatorRecord {
     }
 
     /// Add a closed slot to the record
-    pub fn add_slot(&mut self, slot: Slot, blocks: &[BlockNumber], expected_blocks: u32) {
+    pub fn add_slot(
+        &mut self,
+        slot: Slot,
+        blocks: &[BlockNumber],
+        expected_blocks: u32,
+        points_per_block: u32,
+    ) {
         self.owned_slots += 1;
         self.expected_blocks += expected_blocks;
         self.produced_blocks += blocks.len() as u32;
+        self.points += blocks.len() as u32 * points_per_block;
         self.produced_block_numbers.extend_from_slice(blocks);
         if blocks.is_empty() {
             self.missed_slots.push(slot);
@@ -122,6 +207,8 @@ pub struct ClosedSlot {
     pub owner: Option<(AccountId32, CollatorKind)>,
     pub blocks: Vec<BlockNumber>,
     pub expected_blocks: u32,
+    // era points per block in force when the slot was closed
+    pub points_per_block: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +225,7 @@ struct OpenSlot {
 #[derive(Debug, Clone, Default)]
 pub struct ParaSlots {
     blocks_per_slot: u64,
+    points_per_block: u32,
     last_block: Option<BlockNumber>,
     session: Option<EpochIndex>,
     // collators ordered as the aura authorities
@@ -166,6 +254,20 @@ impl ParaSlots {
 
     pub fn set_blocks_per_slot(&mut self, blocks_per_slot: u64) {
         self.blocks_per_slot = blocks_per_slot;
+    }
+
+    pub fn points_per_block(&self) -> u32 {
+        self.points_per_block
+    }
+
+    /// Set the era points a validator earns for each block collated
+    pub fn set_points_per_block(&mut self, points_per_block: u32) {
+        self.points_per_block = points_per_block;
+    }
+
+    /// Resume from a block already counted, blocks up to it are ignored.
+    pub fn set_last_block(&mut self, number: BlockNumber) {
+        self.last_block = Some(number);
     }
 
     /// Set the parachain session and the collators ordered as the aura authorities.
@@ -285,6 +387,7 @@ impl ParaSlots {
             owner,
             blocks,
             expected_blocks: self.blocks_per_slot as u32,
+            points_per_block: self.points_per_block,
         })
     }
 }
@@ -353,11 +456,37 @@ mod tests {
     }
 
     #[test]
+    fn summary_and_stats_use_abbreviations() {
+        let mut r = CollatorRecord::new("a".to_string(), CollatorKind::Validator);
+        r.add_slot(4, &[1, 2], 2, 20);
+        r.add_slot(5, &[], 2, 20);
+        assert_eq!(
+            serde_json::to_string(&r.summary()).unwrap(),
+            r#"{"kind":"V","os":2,"eb":4,"pb":2,"pt":40,"ms":1}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&r.stats()).unwrap(),
+            r#"{"pbn":[1,2],"msl":[5]}"#
+        );
+    }
+
+    #[test]
+    fn summary_without_kind_omits_kind() {
+        let mut r = CollatorRecord::new("a".to_string(), CollatorKind::Validator);
+        r.add_slot(4, &[1, 2], 2, 20);
+        assert_eq!(
+            serde_json::to_string(&r.summary_without_kind()).unwrap(),
+            r#"{"os":1,"eb":2,"pb":2,"pt":40,"ms":0}"#
+        );
+        assert!(r.summary().kind.is_some());
+    }
+
+    #[test]
     fn record_msr() {
         let mut r = CollatorRecord::new("a".to_string(), CollatorKind::Validator);
         assert_eq!(r.msr(), None);
-        r.add_slot(4, &[1, 2, 3], 3);
-        r.add_slot(5, &[], 3);
+        r.add_slot(4, &[1, 2, 3], 3, 0);
+        r.add_slot(5, &[], 3, 0);
         assert_eq!(r.owned_slots(), 2);
         assert_eq!(r.produced_blocks(), 3);
         assert_eq!(r.missed_slots(), &[5]);

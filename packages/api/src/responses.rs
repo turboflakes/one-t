@@ -22,6 +22,7 @@
 use onet_cache::types::ChainKey;
 use onet_pools::{Pool, PoolCounter, PoolNominees, PoolNomineesStats, PoolState, PoolStats, Roles};
 use onet_records::{
+    collators::{CollatorRecord, CollatorStats, CollatorSummary},
     AuthorityIndex, AuthorityRecord, BlockNumber, DiscoveryRecord, EpochIndex, EraIndex,
     NetworkSessionStats, ParaId, ParaStats, ParachainRecord, ProfilePrediction, SessionStats,
     ValidatorProfileRecord, Validity,
@@ -438,6 +439,11 @@ pub struct ValidatorResult {
     pub para_summary: ParaStats,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub para_stats: BTreeMap<ParaId, ParaStats>,
+    // collator summary and stats (missed slot ratio) by parachain id
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub collator_summary: BTreeMap<ParaId, CollatorSummary>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub collator_stats: BTreeMap<ParaId, CollatorStats>,
     // P2P data
     #[serde(skip_serializing_if = "DiscoveryRecord::is_empty")]
     pub discovery: DiscoveryRecord,
@@ -471,6 +477,8 @@ impl<'de> Deserialize<'de> for ValidatorResult {
             Para,
             ParaSummary,
             ParaStats,
+            CollatorSummary,
+            CollatorStats,
             Discovery,
             PoolCounter,
             Ranking,
@@ -499,6 +507,8 @@ impl<'de> Deserialize<'de> for ValidatorResult {
                 let mut para: Option<BTreeMap<String, Value>> = None;
                 let mut para_summary: Option<ParaStats> = None;
                 let mut para_stats: Option<BTreeMap<ParaId, ParaStats>> = None;
+                let mut collator_summary: Option<BTreeMap<ParaId, CollatorSummary>> = None;
+                let mut collator_stats: Option<BTreeMap<ParaId, CollatorStats>> = None;
                 let mut discovery: Option<DiscoveryRecord> = None;
                 let mut pool_counter: Option<PoolCounter> = None;
                 let mut ranking: Option<RankingStats> = None;
@@ -565,6 +575,18 @@ impl<'de> Deserialize<'de> for ValidatorResult {
                             }
                             para_stats = Some(map.next_value()?);
                         }
+                        Field::CollatorSummary => {
+                            if collator_summary.is_some() {
+                                return Err(serde::de::Error::duplicate_field("collator_summary"));
+                            }
+                            collator_summary = Some(map.next_value()?);
+                        }
+                        Field::CollatorStats => {
+                            if collator_stats.is_some() {
+                                return Err(serde::de::Error::duplicate_field("collator_stats"));
+                            }
+                            collator_stats = Some(map.next_value()?);
+                        }
                         Field::Discovery => {
                             if discovery.is_some() {
                                 return Err(serde::de::Error::duplicate_field("discovery"));
@@ -612,6 +634,8 @@ impl<'de> Deserialize<'de> for ValidatorResult {
                     ranking,
                 );
                 result.preds = preds.unwrap_or_default();
+                result.collator_summary = collator_summary.unwrap_or_default();
+                result.collator_stats = collator_stats.unwrap_or_default();
                 Ok(result)
             }
         }
@@ -627,6 +651,8 @@ impl<'de> Deserialize<'de> for ValidatorResult {
             "para",
             "para_summary",
             "para_stats",
+            "collator_summary",
+            "collator_stats",
             "discovery",
             "pool_counter",
             "ranking",
@@ -662,6 +688,8 @@ impl ValidatorResult {
             para,
             para_summary,
             para_stats,
+            collator_summary: BTreeMap::new(),
+            collator_stats: BTreeMap::new(),
             discovery,
             pool_counter,
             ranking,
@@ -707,6 +735,20 @@ impl From<CacheMap> for ValidatorResult {
         let para_stats: BTreeMap<ParaId, ParaStats> =
             serde_json::from_str(&serialized).unwrap_or_default();
 
+        // collator summary and stats by parachain
+        let serialized = data
+            .get("collator_summary")
+            .unwrap_or(&"{}".to_string())
+            .to_string();
+        let collator_summary: BTreeMap<ParaId, CollatorSummary> =
+            serde_json::from_str(&serialized).unwrap_or_default();
+        let serialized = data
+            .get("collator_stats")
+            .unwrap_or(&"{}".to_string())
+            .to_string();
+        let collator_stats: BTreeMap<ParaId, CollatorStats> =
+            serde_json::from_str(&serialized).unwrap_or_default();
+
         // discovery
         let serialized = data
             .get("discovery")
@@ -734,6 +776,8 @@ impl From<CacheMap> for ValidatorResult {
             para,
             para_summary,
             para_stats,
+            collator_summary,
+            collator_stats,
             discovery,
             ..Default::default()
         }
@@ -745,6 +789,53 @@ pub struct ValidatorsResult {
     #[serde(skip_serializing_if = "EpochIndex::is_empty")]
     pub session: EpochIndex,
     pub data: Vec<ValidatorResult>,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct CollatorResult {
+    pub address: String,
+    #[serde(flatten)]
+    pub summary: CollatorSummary,
+    #[serde(skip_serializing_if = "CollatorStats::is_empty")]
+    pub stats: CollatorStats,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct CollatorsResult {
+    pub chain_key: String,
+    pub para_id: ParaId,
+    pub session: EpochIndex,
+    pub data: Vec<CollatorResult>,
+}
+
+impl CollatorsResult {
+    pub fn new(
+        chain_key: String,
+        para_id: ParaId,
+        session: EpochIndex,
+        records: Vec<CollatorRecord>,
+        show_stats: bool,
+    ) -> Self {
+        let mut data: Vec<CollatorResult> = records
+            .iter()
+            .map(|r| CollatorResult {
+                address: r.address().clone(),
+                summary: r.summary(),
+                stats: if show_stats {
+                    r.stats()
+                } else {
+                    CollatorStats::default()
+                },
+            })
+            .collect();
+        data.sort_by(|a, b| a.address.cmp(&b.address));
+        Self {
+            chain_key,
+            para_id,
+            session,
+            data,
+        }
+    }
 }
 
 // Validator RankingStats
@@ -922,4 +1013,19 @@ pub struct CohortValidatorsChangedResult {
     pub cohort: String,
     pub session: EpochIndex,
     pub updated_counter: u32,
+}
+
+#[cfg(test)]
+mod collator_tests {
+    use super::*;
+
+    #[test]
+    fn collator_summary_is_keyed_by_para_id() {
+        let mut collator_summary: BTreeMap<ParaId, CollatorSummary> = BTreeMap::new();
+        collator_summary.insert(1000, CollatorSummary::default());
+        let serialized = serde_json::to_string(&collator_summary).unwrap();
+        assert!(serialized.starts_with("{\"1000\":"));
+        let parsed: BTreeMap<ParaId, CollatorSummary> = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(parsed, collator_summary);
+    }
 }

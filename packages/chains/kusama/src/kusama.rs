@@ -348,6 +348,8 @@ pub async fn process_best_block(
     match chain_key {
         ChainKey::RC => records.set_relay_chain_best_block_number(block_number),
         ChainKey::AH => records.set_asset_hub_best_block_number(block_number),
+        // Note: people best block is not tracked in records
+        ChainKey::PEOPLE => {}
     };
 
     // if api enabled cache best block

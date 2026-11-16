@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 pub mod cache;
+pub mod collators;
 pub mod error;
 pub mod limits;
 pub mod nomination_pools;
@@ -33,6 +34,8 @@ pub use cache::{
     cache_records, cache_records_at_new_session, cache_validator_profile,
     cache_validator_profile_only, cache_waiting_validator,
 };
+
+pub use collators::{cache_collator_records, rehydrate_collator_records};
 
 pub use nomination_pools::{
     cache_nomination_pool, cache_nomination_pool_nominees, cache_nomination_pool_stats,

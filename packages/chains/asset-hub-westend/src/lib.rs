@@ -467,3 +467,30 @@ pub fn fetch_aura_slot_duration(
         .entry(asset_hub_runtime::constants().aura().slot_duration())
         .map_err(|e| OnetError::from(format!("Aura slot duration not available: {e:?}")))
 }
+
+/// Fetch the era points a validator earns for each block collated on a parachain,
+/// at an already resolved block. Absent means zero.
+pub async fn fetch_collation_points_per_block(
+    at: &OnlineClientAtBlock<PolkadotConfig>,
+    para_id: u32,
+) -> Result<u32, OnetError> {
+    let addr = asset_hub_runtime::storage()
+        .staking_points_converter()
+        .points_per_service();
+
+    Ok(at
+        .storage()
+        .try_fetch(
+            addr,
+            (
+                asset_hub_runtime::runtime_types::polkadot_parachain_primitives::primitives::Id(
+                    para_id,
+                ),
+                asset_hub_runtime::runtime_types::sp_staking::ServiceKind::Collation,
+            ),
+        )
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
+        .unwrap_or_default())
+}
