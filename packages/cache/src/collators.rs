@@ -30,11 +30,15 @@ use crate::types::{CacheKey, ChainKey, Verbosity};
 use log::{info, warn};
 use onet_config::{Config, CONFIG};
 use onet_records::{
-    collators::{CollatorRecord, CollatorStats, CollatorSummary},
+    collators::{CollatorRecord, CollatorSessionStats, CollatorSummary},
     BlockNumber, EpochIndex, ParaId, Records,
 };
 use redis::aio::MultiplexedConnection as Connection;
-use std::{collections::BTreeMap, result::Result, str::FromStr};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    result::Result,
+    str::FromStr,
+};
 use subxt::utils::AccountId32;
 
 const RECORD_FIELD: &str = "record";
@@ -89,6 +93,33 @@ pub async fn cache_collator_records(
                 record,
             )?;
         }
+    }
+    // Note: stats are recomputed from all the records of the session
+    let sessions: BTreeSet<EpochIndex> = dirty.iter().map(|(session, _, _)| *session).collect();
+    for session in sessions {
+        let key = CacheKey::CollatorStatsBySession(chain_key.clone(), session);
+        pipe.cmd("SET")
+            .arg(&key)
+            .arg(serde_json::to_string(
+                &records.collator_session_stats(para_id, session),
+            )?)
+            .cmd("EXPIRE")
+            .arg(&key)
+            .arg(config.cache_writer_prunning);
+    }
+    // Note: one field by parachain, so they are written independently
+    let epochs: BTreeSet<EpochIndex> = dirty.iter().map(|(_, epoch, _)| *epoch).collect();
+    for epoch in epochs {
+        let key = CacheKey::CollatorStatsByEpoch(epoch);
+        pipe.cmd("HSET")
+            .arg(&key)
+            .arg(para_id.to_string())
+            .arg(serde_json::to_string(
+                &records.collator_epoch_stats(para_id, epoch),
+            )?)
+            .cmd("EXPIRE")
+            .arg(&key)
+            .arg(config.cache_writer_prunning);
     }
     // Note: the cursor and the current session are written with the records
     pipe.cmd("SET")
@@ -151,8 +182,8 @@ fn add_record(
     Ok(())
 }
 
-/// Add the collator summary and stats of a parachain to the authority summary and stats
-/// Note: fields hold one entry per parachain, so the current ones are read and merged
+/// Add the collation of a parachain to the authority summary (all parachains) and stats
+/// (by parachain). Note: stats hold one entry per parachain, so the current ones are read and merged
 async fn cache_authority_collator_data(
     cache: &mut Connection,
     config: &Config,
@@ -164,26 +195,28 @@ async fn cache_authority_collator_data(
         CacheKey::AuthorityRecordVerbose(authority_key.to_string(), Verbosity::Summary);
     let stats_key = CacheKey::AuthorityRecordVerbose(authority_key.to_string(), Verbosity::Stats);
 
-    let mut summary: BTreeMap<ParaId, CollatorSummary> =
-        read_map(cache, &summary_key, "collator_summary").await?;
-    // Note: collators in the authority data are always validators, so kind is omitted
-    summary.insert(para_id, record.summary_without_kind());
-    let mut stats: BTreeMap<ParaId, CollatorStats> =
-        read_map(cache, &stats_key, "collator_stats").await?;
-    stats.insert(para_id, record.stats());
+    // Note: collation stats are by parachain and the summary aggregates all of them,
+    // collators in the authority data are always validators, so kind is omitted
+    let mut stats: BTreeMap<ParaId, CollatorSummary> =
+        read_map(cache, &stats_key, "collation_stats").await?;
+    stats.insert(para_id, record.summary_without_kind());
+    let mut summary = CollatorSummary::default();
+    for para_stats in stats.values() {
+        summary.add(para_stats);
+    }
 
     redis::pipe()
         .atomic()
         .cmd("HSET")
         .arg(&summary_key)
-        .arg("collator_summary")
+        .arg("collation_summary")
         .arg(serde_json::to_string(&summary)?)
         .cmd("EXPIRE")
         .arg(&summary_key)
         .arg(config.cache_writer_prunning)
         .cmd("HSET")
         .arg(&stats_key)
-        .arg("collator_stats")
+        .arg("collation_stats")
         .arg(serde_json::to_string(&stats)?)
         .cmd("EXPIRE")
         .arg(&stats_key)
@@ -252,6 +285,26 @@ pub async fn rehydrate_collator_records(
     {
         records.insert_collator_epoch_record(para_id, epoch, record);
         loaded += 1;
+    }
+    // Resume the block ranges so the start of the sessions is not lost
+    let session_stats: Option<CollatorSessionStats> = redis::cmd("GET")
+        .arg(CacheKey::CollatorStatsBySession(chain_key.clone(), session))
+        .query_async::<Option<String>>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?
+        .and_then(|s| serde_json::from_str(&s).ok());
+    if let Some(stats) = session_stats.filter(|s| s.sbix > 0) {
+        records.seed_para_session_blocks(para_id, session, stats.sbix, stats.ebix);
+    }
+    let epoch_stats: Option<CollatorSessionStats> = redis::cmd("HGET")
+        .arg(CacheKey::CollatorStatsByEpoch(epoch))
+        .arg(para_id.to_string())
+        .query_async::<Option<String>>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?
+        .and_then(|s| serde_json::from_str(&s).ok());
+    if let Some(stats) = epoch_stats.filter(|s| s.sbix > 0) {
+        records.seed_para_epoch_blocks(para_id, epoch, stats.sbix, stats.ebix);
     }
     records.para_slots_mut(para_id).set_last_block(last_block);
 

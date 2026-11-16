@@ -297,6 +297,9 @@ pub struct Records {
     collator_epoch_records: HashMap<CollatorKey, CollatorRecord>,
     // collator records changed since the last time they were cached
     dirty_collators: HashMap<ParaId, BTreeSet<(EpochIndex, EpochIndex, SS58)>>,
+    // first and last parachain block tracked by parachain session and by relay session
+    para_session_blocks: HashMap<(ParaId, EpochIndex), (BlockNumber, BlockNumber)>,
+    para_epoch_blocks: HashMap<(ParaId, EpochIndex), (BlockNumber, BlockNumber)>,
     para_slots: HashMap<ParaId, ParaSlots>,
 }
 
@@ -333,6 +336,8 @@ impl Records {
             collator_records: HashMap::new(),
             collator_epoch_records: HashMap::new(),
             dirty_collators: HashMap::new(),
+            para_session_blocks: HashMap::new(),
+            para_epoch_blocks: HashMap::new(),
             para_slots: HashMap::new(),
         }
     }
@@ -353,7 +358,23 @@ impl Records {
         slot: collators::Slot,
     ) {
         let epoch = self.current_epoch;
-        for closed in self.para_slots_mut(para_id).on_block(number, slot) {
+        let closed_slots = self.para_slots_mut(para_id).on_block(number, slot);
+        // Note: the session is set before the block of a new session is tracked
+        if let Some(session) = self.para_slots(para_id).and_then(|t| t.session()) {
+            Self::extend_blocks(
+                &mut self.para_session_blocks,
+                (para_id, session),
+                number,
+                number,
+            );
+        }
+        Self::extend_blocks(
+            &mut self.para_epoch_blocks,
+            (para_id, epoch),
+            number,
+            number,
+        );
+        for closed in closed_slots {
             let Some((account, kind)) = closed.owner else {
                 continue;
             };
@@ -378,6 +399,44 @@ impl Records {
                 address,
             ));
         }
+    }
+
+    fn extend_blocks(
+        blocks: &mut HashMap<(ParaId, EpochIndex), (BlockNumber, BlockNumber)>,
+        key: (ParaId, EpochIndex),
+        start: BlockNumber,
+        end: BlockNumber,
+    ) {
+        let range = blocks.entry(key).or_insert((start, end));
+        range.0 = range.0.min(start);
+        range.1 = range.1.max(end);
+    }
+
+    /// Resume the block range of a parachain session read from the cache
+    pub fn seed_para_session_blocks(
+        &mut self,
+        para_id: ParaId,
+        session: EpochIndex,
+        start: BlockNumber,
+        end: BlockNumber,
+    ) {
+        Self::extend_blocks(
+            &mut self.para_session_blocks,
+            (para_id, session),
+            start,
+            end,
+        );
+    }
+
+    /// Resume the block range of a parachain in a relay session read from the cache
+    pub fn seed_para_epoch_blocks(
+        &mut self,
+        para_id: ParaId,
+        epoch: EpochIndex,
+        start: BlockNumber,
+        end: BlockNumber,
+    ) {
+        Self::extend_blocks(&mut self.para_epoch_blocks, (para_id, epoch), start, end);
     }
 
     /// Collator records (parachain session, relay session, address) changed since last cleared
@@ -416,6 +475,44 @@ impl Records {
             CollatorKey(para_id, EpochKey(epoch), record.address().clone()),
             record,
         );
+    }
+
+    /// Counters of the collators of a parachain session
+    pub fn collator_session_stats(
+        &self,
+        para_id: ParaId,
+        session: EpochIndex,
+    ) -> collators::CollatorSessionStats {
+        let mut stats = collators::CollatorSessionStats::default();
+        for (key, record) in self.collator_records.iter() {
+            if key.0 == para_id && key.1 == EpochKey(session) {
+                stats.add(record);
+            }
+        }
+        if let Some((start, end)) = self.para_session_blocks.get(&(para_id, session)) {
+            stats.sbix = *start;
+            stats.ebix = *end;
+        }
+        stats
+    }
+
+    /// Counters of the collators of a parachain in a relay chain session
+    pub fn collator_epoch_stats(
+        &self,
+        para_id: ParaId,
+        epoch: EpochIndex,
+    ) -> collators::CollatorSessionStats {
+        let mut stats = collators::CollatorSessionStats::default();
+        for (key, record) in self.collator_epoch_records.iter() {
+            if key.0 == para_id && key.1 == EpochKey(epoch) {
+                stats.add(record);
+            }
+        }
+        if let Some((start, end)) = self.para_epoch_blocks.get(&(para_id, epoch)) {
+            stats.sbix = *start;
+            stats.ebix = *end;
+        }
+        stats
     }
 
     pub fn get_collator_epoch_record(
@@ -2318,6 +2415,16 @@ mod tests {
         assert_eq!(by_session.produced_blocks(), 2);
         assert_eq!(by_session.msr(), Some(0.0));
         assert_eq!(by_session.summary().pt, 40);
+        let stats = records.collator_session_stats(para_id, 7);
+        assert_eq!((stats.nc, stats.pb, stats.pt), (1, 2, 40));
+        assert_eq!((stats.sbix, stats.ebix), (1, 4));
+        assert_eq!(stats, records.collator_epoch_stats(para_id, 100));
+        assert!(records.collator_session_stats(para_id, 8).is_empty());
+
+        // resume the range after a restart, the earliest start and the latest end are kept
+        records.seed_para_session_blocks(para_id, 7, 0, 3);
+        let stats = records.collator_session_stats(para_id, 7);
+        assert_eq!((stats.sbix, stats.ebix), (0, 4));
         assert!(records
             .get_collator_record(para_id + 1, 7, &address)
             .is_none());

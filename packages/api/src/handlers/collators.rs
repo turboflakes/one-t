@@ -29,7 +29,10 @@ use onet_cache::{
     types::{CacheKey, ChainKey, Index},
 };
 use onet_config::CONFIG;
-use onet_records::{collators::CollatorRecord, EpochIndex};
+use onet_records::{
+    collators::{CollatorRecord, CollatorSessionStats},
+    EpochIndex,
+};
 use redis::aio::MultiplexedConnection as Connection;
 use serde::Deserialize;
 
@@ -41,9 +44,15 @@ pub struct Params {
     // parachain session, default current
     #[serde(default = "default_index")]
     session: Index,
-    // show_stats indicates wheter produced blocks and missed slots should be retrieved or not, default false
+    // show_stats indicates whether the session stats should be retrieved or not, default false
     #[serde(default)]
     show_stats: bool,
+    // show_block_numbers indicates whether the produced block numbers (pbn) of each collator should be retrieved or not, default false
+    #[serde(default)]
+    show_block_numbers: bool,
+    // show_missed_slots indicates whether the missed slots (msl) of each collator should be retrieved or not, default false
+    #[serde(default)]
+    show_missed_slots: bool,
 }
 
 fn default_chain() -> ChainKey {
@@ -108,11 +117,29 @@ pub async fn get_collators(
         _ => config.asset_hub_para_id,
     };
 
+    // Note: session stats are only retrieved when requested
+    let stats: CollatorSessionStats = if params.show_stats {
+        redis::cmd("GET")
+            .arg(CacheKey::CollatorStatsBySession(
+                params.chain_key.clone(),
+                session_index,
+            ))
+            .query_async::<Option<String>>(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    } else {
+        CollatorSessionStats::default()
+    };
+
     respond_json(CollatorsResult::new(
         params.chain_key.to_string(),
         para_id,
         session_index,
+        stats,
         data,
-        params.show_stats,
+        params.show_block_numbers,
+        params.show_missed_slots,
     ))
 }

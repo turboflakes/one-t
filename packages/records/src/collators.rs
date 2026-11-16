@@ -91,20 +91,54 @@ impl CollatorSummary {
     pub fn is_empty(&self) -> bool {
         self.os == 0
     }
+
+    /// Add the counters of another summary, kind is not aggregated
+    pub fn add(&mut self, other: &CollatorSummary) {
+        self.os += other.os;
+        self.eb += other.eb;
+        self.pb += other.pb;
+        self.pt += other.pt;
+        self.ms += other.ms;
+    }
 }
 
-/// Block and slot numbers of a collator, serialized to the validators response
+/// Counters of the collators of a parachain in a session
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct CollatorStats {
-    // produced block numbers
-    pub pbn: Vec<BlockNumber>,
-    // missed slot numbers
-    pub msl: Vec<Slot>,
+pub struct CollatorSessionStats {
+    // first and last parachain block tracked in the session
+    #[serde(default)]
+    pub sbix: BlockNumber,
+    #[serde(default)]
+    pub ebix: BlockNumber,
+    // number of collators with slots closed in the session
+    pub nc: u32,
+    // owned slots
+    pub os: u32,
+    // expected blocks
+    pub eb: u32,
+    // produced blocks
+    pub pb: u32,
+    // era points
+    #[serde(default)]
+    pub pt: u32,
+    // missed slots
+    pub ms: u32,
 }
 
-impl CollatorStats {
+impl CollatorSessionStats {
     pub fn is_empty(&self) -> bool {
-        self.pbn.is_empty() && self.msl.is_empty()
+        self.nc == 0 && self.sbix == 0
+    }
+
+    /// Add the counters of a collator record
+    pub fn add(&mut self, record: &CollatorRecord) {
+        let summary = record.summary();
+        self.nc += 1;
+        self.os += summary.os;
+        self.eb += summary.eb;
+        self.pb += summary.pb;
+        self.pt += summary.pt;
+        self.ms += summary.ms;
     }
 }
 
@@ -125,13 +159,6 @@ impl CollatorRecord {
         CollatorSummary {
             kind: None,
             ..self.summary()
-        }
-    }
-
-    pub fn stats(&self) -> CollatorStats {
-        CollatorStats {
-            pbn: self.produced_block_numbers.clone(),
-            msl: self.missed_slots.clone(),
         }
     }
 
@@ -456,17 +483,13 @@ mod tests {
     }
 
     #[test]
-    fn summary_and_stats_use_abbreviations() {
+    fn summary_uses_abbreviations() {
         let mut r = CollatorRecord::new("a".to_string(), CollatorKind::Validator);
         r.add_slot(4, &[1, 2], 2, 20);
         r.add_slot(5, &[], 2, 20);
         assert_eq!(
             serde_json::to_string(&r.summary()).unwrap(),
             r#"{"kind":"V","os":2,"eb":4,"pb":2,"pt":40,"ms":1}"#
-        );
-        assert_eq!(
-            serde_json::to_string(&r.stats()).unwrap(),
-            r#"{"pbn":[1,2],"msl":[5]}"#
         );
     }
 
@@ -479,6 +502,46 @@ mod tests {
             r#"{"os":1,"eb":2,"pb":2,"pt":40,"ms":0}"#
         );
         assert!(r.summary().kind.is_some());
+    }
+
+    #[test]
+    fn summaries_are_added_without_kind() {
+        let mut a = CollatorRecord::new("a".to_string(), CollatorKind::Validator);
+        a.add_slot(4, &[1, 2], 2, 20);
+        let mut b = CollatorRecord::new("a".to_string(), CollatorKind::Validator);
+        b.add_slot(5, &[], 2, 10);
+        let mut total = CollatorSummary::default();
+        assert!(total.is_empty());
+        total.add(&a.summary_without_kind());
+        total.add(&b.summary_without_kind());
+        assert_eq!(
+            serde_json::to_string(&total).unwrap(),
+            r#"{"os":2,"eb":4,"pb":2,"pt":40,"ms":1}"#
+        );
+    }
+
+    #[test]
+    fn session_stats_sum_collators() {
+        let mut a = CollatorRecord::new("a".to_string(), CollatorKind::Validator);
+        a.add_slot(4, &[1, 2], 2, 20);
+        let mut b = CollatorRecord::new("b".to_string(), CollatorKind::Invulnerable);
+        b.add_slot(5, &[], 2, 20);
+        let mut stats = CollatorSessionStats::default();
+        assert!(stats.is_empty());
+        stats.add(&a);
+        stats.add(&b);
+        assert_eq!(
+            stats,
+            CollatorSessionStats {
+                nc: 2,
+                os: 2,
+                eb: 4,
+                pb: 2,
+                pt: 40,
+                ms: 1,
+                ..Default::default()
+            }
+        );
     }
 
     #[test]
