@@ -181,6 +181,58 @@ impl SupportedParasRuntime {
             | Self::AssetHubWestend => config.substrate_asset_hub_ws_url,
         }
     }
+
+    /// Parachain id as configured
+    pub fn para_id(&self) -> u32 {
+        let config = CONFIG.clone();
+        match &self {
+            Self::PeoplePolkadot | Self::PeopleKusama | Self::PeoplePaseo | Self::PeopleWestend => {
+                config.people_para_id
+            }
+            Self::AssetHubPolkadot
+            | Self::AssetHubPaseo
+            | Self::AssetHubKusama
+            | Self::AssetHubWestend => config.asset_hub_para_id,
+        }
+    }
+
+    /// Target number of blocks this parachain is expected to author per relay chain slot
+    /// (`BLOCK_PROCESSING_VELOCITY` from the runtime source in milli units).
+    #[allow(unreachable_patterns)]
+    pub fn block_processing_velocity(&self) -> u64 {
+        match &self {
+            Self::AssetHubPolkadot
+            | Self::AssetHubKusama
+            | Self::AssetHubPaseo
+            | Self::AssetHubWestend
+            | Self::PeoplePolkadot
+            | Self::PeoplePaseo
+            | Self::PeopleWestend => 3000,
+            Self::PeopleKusama => 1000,
+            _ => panic!("Unsupported chain"),
+        }
+    }
+
+    /// Number of blocks each session is expected to take
+    /// (`Period`/`PERIOD` = `6 * HOURS` in the runtime source).
+    ///
+    /// `HOURS` is a block count, and its base differs per runtime: People Polkadot and
+    /// People Paseo take it from `parachains_common` (12s blocks, 300/hour), all others
+    /// from a 6s-block base (600/hour). It is *not* scaled by `block_processing_velocity`,
+    /// so the real session duration is `duration_bn * slot_duration_ms`.
+    #[allow(unreachable_patterns)]
+    pub fn duration_bn(&self) -> u64 {
+        match &self {
+            Self::PeoplePolkadot | Self::PeoplePaseo => 6 * 300,
+            Self::AssetHubPolkadot
+            | Self::AssetHubKusama
+            | Self::AssetHubPaseo
+            | Self::AssetHubWestend
+            | Self::PeopleKusama
+            | Self::PeopleWestend => 6 * 600,
+            _ => panic!("Unsupported chain"),
+        }
+    }
 }
 
 impl std::fmt::Display for SupportedParasRuntime {

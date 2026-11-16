@@ -19,6 +19,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+pub mod collators;
+
+use collators::{CollatorRecord, ParaSlots};
 use log::info;
 use onet_config::CONFIG;
 use serde::{Deserialize, Serialize};
@@ -99,6 +102,8 @@ pub struct EpochKey(pub EpochIndex);
 pub struct RecordKey(EpochKey, AuthorityIndex);
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct AddressKey(EpochKey, SS58);
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct CollatorKey(ParaId, EpochKey, SS58);
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct BlockKey(EpochKey, BlockKind);
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -285,6 +290,9 @@ pub struct Records {
     para_group: HashMap<ParaId, GroupIndex>,
     groups: HashMap<GroupIndex, Vec<AuthorityIndex>>,
     authority_discovery_keys: HashMap<PublicKey, AuthorityIndex>,
+    // Note: collator records are keyed by parachain, parachain session and collator address
+    collator_records: HashMap<CollatorKey, CollatorRecord>,
+    para_slots: HashMap<ParaId, ParaSlots>,
 }
 
 impl Records {
@@ -317,7 +325,64 @@ impl Records {
             para_group: HashMap::new(),
             groups: HashMap::new(),
             authority_discovery_keys: HashMap::new(),
+            collator_records: HashMap::new(),
+            para_slots: HashMap::new(),
         }
+    }
+
+    pub fn para_slots(&self, para_id: ParaId) -> Option<&ParaSlots> {
+        self.para_slots.get(&para_id)
+    }
+
+    pub fn para_slots_mut(&mut self, para_id: ParaId) -> &mut ParaSlots {
+        self.para_slots.entry(para_id).or_default()
+    }
+
+    /// Track a parachain block and add the slots it closes to the collator records
+    pub fn track_para_block(
+        &mut self,
+        para_id: ParaId,
+        number: BlockNumber,
+        slot: collators::Slot,
+    ) {
+        for closed in self.para_slots_mut(para_id).on_block(number, slot) {
+            let Some((account, kind)) = closed.owner else {
+                continue;
+            };
+            let address = account.to_string();
+            self.collator_records
+                .entry(CollatorKey(
+                    para_id,
+                    EpochKey(closed.session),
+                    address.clone(),
+                ))
+                .or_insert_with(|| CollatorRecord::new(address, kind))
+                .add_slot(closed.slot, &closed.blocks, closed.expected_blocks);
+        }
+    }
+
+    pub fn get_collator_record(
+        &self,
+        para_id: ParaId,
+        session: EpochIndex,
+        address: &str,
+    ) -> Option<&CollatorRecord> {
+        self.collator_records.get(&CollatorKey(
+            para_id,
+            EpochKey(session),
+            address.to_string(),
+        ))
+    }
+
+    pub fn get_collator_records(
+        &self,
+        para_id: ParaId,
+        session: EpochIndex,
+    ) -> impl Iterator<Item = &CollatorRecord> {
+        self.collator_records
+            .iter()
+            .filter(move |(k, _)| k.0 == para_id && k.1 == EpochKey(session))
+            .map(|(_, r)| r)
     }
 
     pub fn current_era(&self) -> EraIndex {
