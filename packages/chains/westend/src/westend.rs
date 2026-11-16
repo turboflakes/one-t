@@ -270,8 +270,9 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     let mut latest_block_number_processed: Option<u64> = Some(start_block_number);
     let mut is_loading = true;
 
-    // AH Subscribe head
-    try_run_subscribe_best_asset_hub().await?;
+    // AH and People Subscribe head
+    try_run_subscribe_best_para(SupportedParasRuntime::AssetHubWestend).await?;
+    try_run_subscribe_best_para(SupportedParasRuntime::PeopleWestend).await?;
 
     // RC Subscribe head
     // NOTE: the reason why we subscribe head and not finalized_head,
@@ -429,21 +430,26 @@ pub async fn process_finalized_block(
 /// Set while the AH best block task is running, so restarts of the main subscription
 /// don't spawn duplicates of it.
 static AH_BEST_BLOCK_TASK_RUNNING: AtomicBool = AtomicBool::new(false);
+static PEOPLE_BEST_BLOCK_TASK_RUNNING: AtomicBool = AtomicBool::new(false);
 
-pub async fn try_run_subscribe_best_asset_hub() -> Result<(), OnetError> {
+pub async fn try_run_subscribe_best_para(runtime: SupportedParasRuntime) -> Result<(), OnetError> {
     let config = CONFIG.clone();
     if !config.cache_writer_enabled {
         return Ok(());
     }
 
-    if AH_BEST_BLOCK_TASK_RUNNING.swap(true, Ordering::SeqCst) {
+    let is_running = match runtime {
+        SupportedParasRuntime::PeopleWestend => &PEOPLE_BEST_BLOCK_TASK_RUNNING,
+        _ => &AH_BEST_BLOCK_TASK_RUNNING,
+    };
+    if is_running.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
 
     async_std::task::spawn(async move {
         loop {
-            if let Err(e) = subscribe_best_asset_hub().await {
-                error!("subscribe_best_asset_hub error: {:?}", e);
+            if let Err(e) = subscribe_best_para(runtime).await {
+                error!("subscribe_best_para {} error: {:?}", runtime, e);
             }
             async_std::task::sleep(std::time::Duration::from_secs(config.error_interval)).await;
         }
@@ -452,16 +458,22 @@ pub async fn try_run_subscribe_best_asset_hub() -> Result<(), OnetError> {
     Ok(())
 }
 
-pub async fn subscribe_best_asset_hub() -> Result<(), OnetError> {
+pub async fn subscribe_best_para(runtime: SupportedParasRuntime) -> Result<(), OnetError> {
     let onet = Onet::shared().await;
-    let ah_api = onet.asset_hub_client();
+    let chain_key = para_chain_key(runtime);
+    let api = match runtime {
+        SupportedParasRuntime::PeopleWestend => onet.people_client(),
+        _ => onet.asset_hub_client(),
+    };
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
-    let mut blocks_sub = ah_api.stream_best_blocks().await?;
+    let mut blocks_sub = api.stream_best_blocks().await?;
     while let Some(Ok(best_block)) = blocks_sub.next().await {
-        info!("AH Block #{:?} best received", best_block.number());
-        let block_number = best_block.number();
-        let chain_key = ChainKey::AH;
-        cache_best_block(&mut cache, chain_key, block_number).await?;
+        info!(
+            "{} Block #{:?} best received",
+            chain_key.to_string().to_uppercase(),
+            best_block.number()
+        );
+        cache_best_block(&mut cache, chain_key.clone(), best_block.number()).await?;
     }
     Err(OnetError::SubscriptionFinished)
 }
@@ -647,18 +659,6 @@ async fn process_asset_hub_events(
             // Note: Network public report is based on the previous era index and parent hash
             try_run_network_report(ev.era_index, records, is_loading).await?;
         }
-        // else if let Some(ev) = event.decode_fields_as::<PagedElectionProceeded>().transpose()? {
-        //     info!("AH Event {:?}", ev);
-        // } else if let Some(ev) = event.decode_fields_as::<SessionReportReceived>().transpose()? {
-        //     info!("AH Event {:?}", ev);
-        // } else if let Some(ev) = event.decode_fields_as::<OffenceReceived>().transpose()? {
-        //     info!("AH Event {:?}", ev);
-        // }
-        // TODO: Handle multi_block events
-        //  if pallet == "MultiBlock"
-        // || pallet == "MultiBlockVerifier"
-        // || pallet == "MultiBlockSigned"
-        // || pallet == "MultiBlockUnsigned"
     }
 
     records.set_asset_hub_block_number(ah_block_number, rc_parent_number);
@@ -694,7 +694,13 @@ async fn track_people_block(
                 parent_hash,
                 records,
             )
-            .await
+            .await;
+            if let Err(e) = cache_para_finalized_block(onet, runtime, block_number).await {
+                error!(
+                    "Failed to cache {} finalized block {}: {:?}",
+                    runtime, block_number, e
+                );
+            }
         }
         Err(e) => {
             error!(
@@ -725,43 +731,74 @@ async fn track_para_block(
     parent_hash: H256,
     records: &mut Records,
 ) {
-    let para_id = runtime.para_id();
-    let chain_key = para_chain_key(runtime);
-    let cache_enabled = CONFIG.cache_writer_enabled;
-    let result = async {
-        // Note: the cache is only needed to resume after a restart and to serve the api
-        let mut cache = if cache_enabled {
-            Some(onet.cache.get().await.map_err(CacheError::RedisPoolError)?)
-        } else {
-            None
-        };
-        // Resume from the cache after a restart
-        if let (Some(cache), true) = (cache.as_mut(), records.para_slots(para_id).is_none()) {
-            rehydrate_collator_records(cache, chain_key.clone(), para_id, records).await?;
-        }
-        process_para_block(
-            chain,
-            onet.asset_hub(),
-            runtime,
-            block_number,
-            block_hash,
-            parent_hash,
-            records,
-        )
-        .await?;
-        if let Some(cache) = cache.as_mut() {
-            cache_collator_records(cache, chain_key, para_id, records).await?;
-        }
-        Ok::<(), OnetError>(())
-    }
-    .await;
-    if let Err(e) = result {
+    if let Err(e) = try_track_para_block(
+        onet,
+        chain,
+        runtime,
+        block_number,
+        block_hash,
+        parent_hash,
+        records,
+    )
+    .await
+    {
         error!(
             "Failed to track {} block {}: {:?}",
             runtime, block_number, e
         );
-        records.para_slots_mut(para_id).break_continuity();
+        records.para_slots_mut(runtime.para_id()).break_continuity();
     }
+}
+
+async fn try_track_para_block(
+    onet: &Onet,
+    chain: &ChainClient,
+    runtime: SupportedParasRuntime,
+    block_number: BlockNumber,
+    block_hash: H256,
+    parent_hash: H256,
+    records: &mut Records,
+) -> Result<(), OnetError> {
+    let para_id = runtime.para_id();
+    let chain_key = para_chain_key(runtime);
+    // Note: the cache is only needed to resume after a restart and to serve the api
+    let mut cache = if CONFIG.cache_writer_enabled {
+        Some(onet.cache.get().await.map_err(CacheError::RedisPoolError)?)
+    } else {
+        None
+    };
+    // Resume from the cache after a restart
+    if let (Some(cache), true) = (cache.as_mut(), records.para_slots(para_id).is_none()) {
+        rehydrate_collator_records(cache, chain_key.clone(), para_id, records).await?;
+    }
+    process_para_block(
+        chain,
+        onet.asset_hub(),
+        runtime,
+        block_number,
+        block_hash,
+        parent_hash,
+        records,
+    )
+    .await?;
+    if let Some(cache) = cache.as_mut() {
+        cache_collator_records(cache, chain_key, para_id, records).await?;
+    }
+    Ok(())
+}
+
+/// Cache the parachain finalized block, the block included by the relay chain
+async fn cache_para_finalized_block(
+    onet: &Onet,
+    runtime: SupportedParasRuntime,
+    block_number: BlockNumber,
+) -> Result<(), OnetError> {
+    if !CONFIG.cache_writer_enabled {
+        return Ok(());
+    }
+    let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
+    cache_finalized_block(&mut cache, para_chain_key(runtime), block_number).await?;
+    Ok(())
 }
 
 /// Process session rotated at AH SessionRotated event
