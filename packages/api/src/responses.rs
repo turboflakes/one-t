@@ -1209,10 +1209,11 @@ mod collator_tests {
             cix: Some(17),
             owner: Some("a".to_string()),
             pb: 5,
+            pt: 100,
         });
         assert!(serde_json::to_string(&result)
             .unwrap()
-            .contains(r#""live":{"slot":123,"cix":17,"owner":"a","pb":5}"#));
+            .contains(r#""live":{"slot":123,"cix":17,"owner":"a","pb":5,"pt":100}"#));
     }
 
     #[test]

@@ -58,6 +58,9 @@ pub struct CollationIndex {
     pub slot: Option<Slot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pb: Option<u32>,
+    // points earned so far in that slot
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pt: Option<u32>,
 }
 
 /// Slot a parachain is currently in, as of the last block followed
@@ -70,6 +73,9 @@ pub struct LiveSlot {
     pub owner: Option<SS58>,
     // blocks produced in the slot so far
     pub pb: u32,
+    // points earned in the slot so far
+    #[serde(default)]
+    pub pt: u32,
 }
 
 impl CollationIndex {
@@ -79,6 +85,7 @@ impl CollationIndex {
             cix,
             slot: None,
             pb: None,
+            pt: None,
         }
     }
 
@@ -87,6 +94,7 @@ impl CollationIndex {
         if live.cix == Some(self.cix) {
             self.slot = Some(live.slot);
             self.pb = Some(live.pb);
+            self.pt = Some(live.pt);
         }
     }
 
@@ -413,6 +421,7 @@ impl ParaSlots {
             cix,
             owner: open.owner.map(|owner| owner.to_string()),
             pb: open.blocks.len() as u32,
+            pt: open.blocks.len() as u32 * self.points_per_block,
         })
     }
 
@@ -534,6 +543,7 @@ mod tests {
     fn tracker() -> ParaSlots {
         let mut t = ParaSlots::default();
         t.set_blocks_per_slot(3);
+        t.set_points_per_block(20);
         t.set_session(10);
         t.set_collators(vec![
             (acc(0), CollatorKind::Invulnerable),
@@ -611,7 +621,8 @@ mod tests {
                 slot: 4,
                 cix: Some(1),
                 owner: Some(acc(1).to_string()),
-                pb: 1
+                pb: 1,
+                pt: 20
             })
         );
         t.on_block(2, 4);
@@ -623,7 +634,8 @@ mod tests {
                 slot: 5,
                 cix: Some(2),
                 owner: Some(acc(2).to_string()),
-                pb: 1
+                pb: 1,
+                pt: 20
             })
         );
 
@@ -633,8 +645,11 @@ mod tests {
         let mut other = CollationIndex::new(1000, 1);
         owner.set_live(&live);
         other.set_live(&live);
-        assert_eq!((owner.slot, owner.pb), (Some(5), Some(1)));
-        assert_eq!((other.slot, other.pb), (None, None));
+        assert_eq!(
+            (owner.slot, owner.pb, owner.pt),
+            (Some(5), Some(1), Some(20))
+        );
+        assert_eq!((other.slot, other.pb, other.pt), (None, None, None));
     }
 
     #[test]
