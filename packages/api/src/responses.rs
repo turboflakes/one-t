@@ -22,6 +22,9 @@
 use onet_cache::types::ChainKey;
 use onet_pools::{Pool, PoolCounter, PoolNominees, PoolNomineesStats, PoolState, PoolStats, Roles};
 use onet_records::{
+    collators::{
+        CollationIndex, CollatorRecord, CollatorSessionStats, CollatorSummary, LiveSlot, Slot,
+    },
     AuthorityIndex, AuthorityRecord, BlockNumber, DiscoveryRecord, EpochIndex, EraIndex,
     NetworkSessionStats, ParaId, ParaStats, ParachainRecord, ProfilePrediction, SessionStats,
     ValidatorProfileRecord, Validity,
@@ -182,6 +185,9 @@ pub struct SessionResult {
     stats: SessionStats,
     #[serde(skip_serializing_if = "NetworkSessionStats::is_empty")]
     netstats: NetworkSessionStats,
+    // collation stats by parachain id
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    collation: BTreeMap<ParaId, CollatorSessionStats>,
     is_syncing: bool,
 }
 
@@ -202,6 +208,14 @@ impl From<CacheMap> for SessionResult {
             .to_string();
         let netstats: NetworkSessionStats =
             serde_json::from_str(&netstats_serialized).unwrap_or_default();
+
+        // collation
+        let collation_serialized = data
+            .get("collation")
+            .unwrap_or(&"{}".to_string())
+            .to_string();
+        let collation: BTreeMap<ParaId, CollatorSessionStats> =
+            serde_json::from_str(&collation_serialized).unwrap_or_default();
 
         SessionResult {
             eix: data
@@ -241,6 +255,7 @@ impl From<CacheMap> for SessionResult {
                 .unwrap_or_default(),
             stats,
             netstats,
+            collation,
         }
     }
 }
@@ -265,6 +280,7 @@ impl<'de> Deserialize<'de> for SessionResult {
             IsCurrent,
             Stats,
             Netstats,
+            Collation,
             IsSyncing,
         }
 
@@ -289,6 +305,7 @@ impl<'de> Deserialize<'de> for SessionResult {
                 let mut is_current: Option<bool> = None;
                 let mut stats: Option<SessionStats> = None;
                 let mut netstats: Option<NetworkSessionStats> = None;
+                let mut collation: Option<BTreeMap<ParaId, CollatorSessionStats>> = None;
                 let mut is_syncing: Option<bool> = None;
 
                 while let Some(key) = map.next_key()? {
@@ -341,6 +358,12 @@ impl<'de> Deserialize<'de> for SessionResult {
                             }
                             netstats = Some(map.next_value()?);
                         }
+                        Field::Collation => {
+                            if collation.is_some() {
+                                return Err(serde::de::Error::duplicate_field("collation"));
+                            }
+                            collation = Some(map.next_value()?);
+                        }
                         Field::IsSyncing => {
                             if is_syncing.is_some() {
                                 return Err(serde::de::Error::duplicate_field("is_syncing"));
@@ -358,9 +381,11 @@ impl<'de> Deserialize<'de> for SessionResult {
                 let stats = stats.unwrap_or_default();
                 let netstats = netstats.unwrap_or_default();
                 let is_syncing = is_syncing.unwrap_or_default();
-                Ok(SessionResult::new(
+                let mut result = SessionResult::new(
                     six, eix, sbix, ebix, esix, is_current, stats, netstats, is_syncing,
-                ))
+                );
+                result.collation = collation.unwrap_or_default();
+                Ok(result)
             }
         }
 
@@ -373,6 +398,7 @@ impl<'de> Deserialize<'de> for SessionResult {
             "is_current",
             "stats",
             "netstats",
+            "collation",
             "is_syncing",
         ];
         deserializer.deserialize_struct("SessionResult", FIELDS, SessionResultVisitor)
@@ -401,6 +427,7 @@ impl SessionResult {
             is_current,
             stats,
             netstats,
+            collation: BTreeMap::new(),
             is_syncing,
         }
     }
@@ -428,16 +455,27 @@ pub struct ValidatorResult {
     pub preds: Vec<ProfilePrediction>,
     #[serde(skip_serializing_if = "EpochIndex::is_empty")]
     pub session: EpochIndex,
+    // the validator is authority
     pub is_auth: bool,
-    pub is_para: bool,
     #[serde(skip_serializing_if = "AuthorityRecord::is_empty")]
     pub auth: AuthorityRecord,
+    // the validator is expected to participate in backing parachains
+    pub is_para: bool,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub para: BTreeMap<String, Value>,
     #[serde(skip_serializing_if = "ParaStats::is_empty")]
     pub para_summary: ParaStats,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub para_stats: BTreeMap<ParaId, ParaStats>,
+    // the validator is part of the draw of collators of some system chains
+    pub is_collator: bool,
+    // position of the validator in the collators of each parachain it is drawn for
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub collation: Vec<CollationIndex>,
+    #[serde(skip_serializing_if = "CollatorSummary::is_empty")]
+    pub collation_summary: CollatorSummary,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub collation_stats: BTreeMap<ParaId, CollatorSummary>,
     // P2P data
     #[serde(skip_serializing_if = "DiscoveryRecord::is_empty")]
     pub discovery: DiscoveryRecord,
@@ -466,11 +504,15 @@ impl<'de> Deserialize<'de> for ValidatorResult {
             Preds,
             Session,
             IsAuth,
-            IsPara,
             Auth,
+            IsPara,
             Para,
             ParaSummary,
             ParaStats,
+            IsCollator,
+            Collation,
+            CollationSummary,
+            CollationStats,
             Discovery,
             PoolCounter,
             Ranking,
@@ -494,11 +536,15 @@ impl<'de> Deserialize<'de> for ValidatorResult {
                 let mut preds: Option<Vec<ProfilePrediction>> = None;
                 let mut session: Option<EpochIndex> = None;
                 let mut is_auth: Option<bool> = None;
-                let mut is_para: Option<bool> = None;
                 let mut auth: Option<AuthorityRecord> = None;
+                let mut is_para: Option<bool> = None;
                 let mut para: Option<BTreeMap<String, Value>> = None;
                 let mut para_summary: Option<ParaStats> = None;
                 let mut para_stats: Option<BTreeMap<ParaId, ParaStats>> = None;
+                let mut is_collator: Option<bool> = None;
+                let mut collation: Option<Vec<CollationIndex>> = None;
+                let mut collation_summary: Option<CollatorSummary> = None;
+                let mut collation_stats: Option<BTreeMap<ParaId, CollatorSummary>> = None;
                 let mut discovery: Option<DiscoveryRecord> = None;
                 let mut pool_counter: Option<PoolCounter> = None;
                 let mut ranking: Option<RankingStats> = None;
@@ -541,6 +587,18 @@ impl<'de> Deserialize<'de> for ValidatorResult {
                             }
                             is_para = Some(map.next_value()?);
                         }
+                        Field::IsCollator => {
+                            if is_collator.is_some() {
+                                return Err(serde::de::Error::duplicate_field("is_collator"));
+                            }
+                            is_collator = Some(map.next_value()?);
+                        }
+                        Field::Collation => {
+                            if collation.is_some() {
+                                return Err(serde::de::Error::duplicate_field("collation"));
+                            }
+                            collation = Some(map.next_value()?);
+                        }
                         Field::Auth => {
                             if auth.is_some() {
                                 return Err(serde::de::Error::duplicate_field("auth"));
@@ -564,6 +622,18 @@ impl<'de> Deserialize<'de> for ValidatorResult {
                                 return Err(serde::de::Error::duplicate_field("para_stats"));
                             }
                             para_stats = Some(map.next_value()?);
+                        }
+                        Field::CollationSummary => {
+                            if collation_summary.is_some() {
+                                return Err(serde::de::Error::duplicate_field("collation_summary"));
+                            }
+                            collation_summary = Some(map.next_value()?);
+                        }
+                        Field::CollationStats => {
+                            if collation_stats.is_some() {
+                                return Err(serde::de::Error::duplicate_field("collation_stats"));
+                            }
+                            collation_stats = Some(map.next_value()?);
                         }
                         Field::Discovery => {
                             if discovery.is_some() {
@@ -590,10 +660,14 @@ impl<'de> Deserialize<'de> for ValidatorResult {
                 let session = session.unwrap_or_default();
                 let is_auth = is_auth.unwrap_or_default();
                 let is_para = is_para.unwrap_or_default();
+                let is_collator = is_collator.unwrap_or_default();
+                let collation = collation.unwrap_or_default();
                 let auth = auth.unwrap_or_default();
                 let para = para.unwrap_or_default();
                 let para_summary = para_summary.unwrap_or_default();
                 let para_stats = para_stats.unwrap_or_default();
+                let collation_summary = collation_summary.unwrap_or_default();
+                let collation_stats = collation_stats.unwrap_or_default();
                 let discovery = discovery.unwrap_or_default();
                 let pool_counter = pool_counter.unwrap_or_default();
                 let ranking = ranking.unwrap_or_default();
@@ -603,10 +677,14 @@ impl<'de> Deserialize<'de> for ValidatorResult {
                     session,
                     is_auth,
                     is_para,
+                    is_collator,
+                    collation,
                     auth,
                     para,
                     para_summary,
                     para_stats,
+                    collation_summary,
+                    collation_stats,
                     discovery,
                     pool_counter,
                     ranking,
@@ -623,10 +701,14 @@ impl<'de> Deserialize<'de> for ValidatorResult {
             "session",
             "is_auth",
             "is_para",
+            "is_collator",
+            "collation",
             "auth",
             "para",
             "para_summary",
             "para_stats",
+            "collation_summary",
+            "collation_stats",
             "discovery",
             "pool_counter",
             "ranking",
@@ -643,10 +725,14 @@ impl ValidatorResult {
         session: EpochIndex,
         is_auth: bool,
         is_para: bool,
+        is_collator: bool,
+        collation: Vec<CollationIndex>,
         auth: AuthorityRecord,
         para: BTreeMap<String, Value>,
         para_summary: ParaStats,
         para_stats: BTreeMap<ParaId, ParaStats>,
+        collation_summary: CollatorSummary,
+        collation_stats: BTreeMap<ParaId, CollatorSummary>,
         discovery: DiscoveryRecord,
         pool_counter: PoolCounter,
         ranking: RankingStats,
@@ -658,10 +744,14 @@ impl ValidatorResult {
             session,
             is_auth,
             is_para,
+            is_collator,
+            collation,
             auth,
             para,
             para_summary,
             para_stats,
+            collation_summary,
+            collation_stats,
             discovery,
             pool_counter,
             ranking,
@@ -707,6 +797,20 @@ impl From<CacheMap> for ValidatorResult {
         let para_stats: BTreeMap<ParaId, ParaStats> =
             serde_json::from_str(&serialized).unwrap_or_default();
 
+        // collator summary and stats by parachain
+        let serialized = data
+            .get("collation_summary")
+            .unwrap_or(&"{}".to_string())
+            .to_string();
+        let collation_summary: CollatorSummary =
+            serde_json::from_str(&serialized).unwrap_or_default();
+        let serialized = data
+            .get("collation_stats")
+            .unwrap_or(&"{}".to_string())
+            .to_string();
+        let collation_stats: BTreeMap<ParaId, CollatorSummary> =
+            serde_json::from_str(&serialized).unwrap_or_default();
+
         // discovery
         let serialized = data
             .get("discovery")
@@ -720,9 +824,14 @@ impl From<CacheMap> for ValidatorResult {
         let serialized = data.get("profile").unwrap_or(&"{}".to_string()).to_string();
         let profile: ValidatorProfileResult = serialized.into();
 
+        // collation index by parachain, set once the validator is part of the draw
+        let serialized = data
+            .get("collation")
+            .unwrap_or(&"[]".to_string())
+            .to_string();
+        let collation: Vec<CollationIndex> = serde_json::from_str(&serialized).unwrap_or_default();
+
         ValidatorResult {
-            is_auth: !auth.is_empty(),
-            is_para: !para.is_empty(),
             address: data.get("address").unwrap_or(&"".to_string()).to_string(),
             profile,
             session: data
@@ -730,10 +839,17 @@ impl From<CacheMap> for ValidatorResult {
                 .unwrap_or(&zero)
                 .parse::<EpochIndex>()
                 .unwrap_or_default(),
+
+            is_auth: !auth.is_empty(),
             auth,
+            is_para: !para.is_empty(),
             para,
             para_summary,
             para_stats,
+            is_collator: !collation.is_empty(),
+            collation,
+            collation_summary,
+            collation_stats,
             discovery,
             ..Default::default()
         }
@@ -747,6 +863,67 @@ pub struct ValidatorsResult {
     pub data: Vec<ValidatorResult>,
 }
 
+#[derive(Debug, Serialize, Default)]
+pub struct CollatorResult {
+    pub address: String,
+    // position of the collator in the parachain session collators
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cix: Option<u32>,
+    #[serde(flatten)]
+    pub summary: CollatorSummary,
+    // produced block numbers, only if requested
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pbn: Option<Vec<BlockNumber>>,
+    // missed slot numbers, only if requested (empty if none was missed)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub msl: Option<Vec<Slot>>,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct CollatorsResult {
+    pub chain_key: String,
+    pub para_id: ParaId,
+    pub session: EpochIndex,
+    // slot the parachain is in right now, only for the current session
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live: Option<LiveSlot>,
+    #[serde(skip_serializing_if = "CollatorSessionStats::is_empty")]
+    pub stats: CollatorSessionStats,
+    pub data: Vec<CollatorResult>,
+}
+
+impl CollatorsResult {
+    pub fn new(
+        chain_key: String,
+        para_id: ParaId,
+        session: EpochIndex,
+        stats: CollatorSessionStats,
+        records: Vec<CollatorRecord>,
+        show_block_numbers: bool,
+        show_missed_slots: bool,
+    ) -> Self {
+        let mut data: Vec<CollatorResult> = records
+            .iter()
+            .map(|r| CollatorResult {
+                address: r.address().clone(),
+                cix: r.cix(),
+                summary: r.summary(),
+                pbn: show_block_numbers.then(|| r.produced_block_numbers().to_vec()),
+                msl: show_missed_slots.then(|| r.missed_slots().to_vec()),
+            })
+            .collect();
+        data.sort_by(|a, b| a.address.cmp(&b.address));
+        Self {
+            chain_key,
+            para_id,
+            session,
+            live: None,
+            stats,
+            data,
+        }
+    }
+}
+
 // Validator RankingStats
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct RankingStats {
@@ -754,15 +931,25 @@ pub struct RankingStats {
     pub mvr: f64,
     pub avg_para_points: u32,
     pub para_epochs: u32,
+    // missed collation ratio over the sessions, only set if the score takes collation into account
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcr: Option<f64>,
 }
 
 impl RankingStats {
-    pub fn with(score: u32, mvr: f64, avg_para_points: u32, para_epochs: u32) -> Self {
+    pub fn with(
+        score: u32,
+        mvr: f64,
+        avg_para_points: u32,
+        para_epochs: u32,
+        mcr: Option<f64>,
+    ) -> Self {
         Self {
             score,
             mvr,
             avg_para_points,
             para_epochs,
+            mcr,
         }
     }
 }
@@ -828,6 +1015,9 @@ pub struct ValidatorGradeResult {
     pub missed_votes_total: u32,
     pub bitfields_availability_total: u32,
     pub bitfields_unavailability_total: u32,
+    pub collation_slots_inclusion: f64,
+    pub collation_produced_blocks_total: u32,
+    pub collation_missed_blocks_total: u32,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sessions: Vec<u32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -922,4 +1112,116 @@ pub struct CohortValidatorsChangedResult {
     pub cohort: String,
     pub session: EpochIndex,
     pub updated_counter: u32,
+}
+
+#[cfg(test)]
+mod collator_tests {
+    use super::*;
+
+    #[test]
+    fn validator_is_collator_when_it_is_in_the_draw() {
+        let mut data = CacheMap::new();
+        data.insert(String::from("address"), String::from("a"));
+        let validator: ValidatorResult = data.clone().into();
+        assert!(!validator.is_collator);
+        assert!(validator.collation.is_empty());
+        assert!(!serde_json::to_string(&validator)
+            .unwrap()
+            .contains(r#""collation""#));
+
+        // the position in each parachain is read from the authority data
+        data.insert(
+            String::from("collation"),
+            String::from(r#"[{"pid":1000,"cix":7},{"pid":1004,"cix":3}]"#),
+        );
+        let validator: ValidatorResult = data.into();
+        assert!(validator.is_collator);
+        assert_eq!(validator.collation.len(), 2);
+
+        // round trip, as used by the validators query cache
+        let serialized = serde_json::to_string(&validator).unwrap();
+        assert!(serialized.contains(r#""is_collator":true"#));
+        assert!(serialized.contains(r#""collation":[{"pid":1000,"cix":7},{"pid":1004,"cix":3}]"#));
+        let parsed: ValidatorResult = serde_json::from_str(&serialized).unwrap();
+        assert!(parsed.is_collator);
+        assert_eq!(parsed.collation, validator.collation);
+    }
+
+    #[test]
+    fn session_result_has_collation_by_para_id() {
+        let mut data = CacheMap::new();
+        data.insert(String::from("session"), String::from("57754"));
+        data.insert(
+            String::from("collation"),
+            String::from(
+                r#"{"1000":{"sbix":19471000,"ebix":19471600,"nc":22,"os":150,"eb":1800,"pb":1796,"pt":35920,"ms":1}}"#,
+            ),
+        );
+        let result: SessionResult = data.into();
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(serialized.contains(
+            r#""collation":{"1000":{"sbix":19471000,"ebix":19471600,"nc":22,"os":150,"eb":1800,"pb":1796,"pt":35920,"ms":1}}"#
+        ));
+        // round trip, as used by the sessions query cache
+        let parsed: SessionResult = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), serialized);
+
+        let empty: SessionResult = CacheMap::new().into();
+        assert!(!serde_json::to_string(&empty).unwrap().contains("collation"));
+    }
+
+    #[test]
+    fn collator_result_shows_block_numbers_and_missed_slots_on_request() {
+        use onet_records::collators::CollatorKind;
+        let mut r = CollatorRecord::new("a".to_string(), CollatorKind::Validator);
+        r.add_slot(4, &[1, 2], 2, 20);
+        let new = |records, blocks, slots| {
+            CollatorsResult::new(
+                "ah".into(),
+                1000,
+                7,
+                Default::default(),
+                records,
+                blocks,
+                slots,
+            )
+        };
+        let off = serde_json::to_string(&new(vec![r.clone()], false, false)).unwrap();
+        assert!(!off.contains("pbn") && !off.contains("msl"));
+        let on = serde_json::to_string(&new(vec![r], true, true)).unwrap();
+        assert!(on.contains(r#""pbn":[1,2]"#) && on.contains(r#""msl":[]"#));
+    }
+
+    #[test]
+    fn collators_result_shows_the_live_slot_only_when_set() {
+        let mut result = CollatorsResult::new(
+            "ah".into(),
+            1000,
+            7,
+            Default::default(),
+            Vec::new(),
+            false,
+            false,
+        );
+        assert!(!serde_json::to_string(&result).unwrap().contains("live"));
+        result.live = Some(LiveSlot {
+            slot: 123,
+            cix: Some(17),
+            owner: Some("a".to_string()),
+            pb: 5,
+        });
+        assert!(serde_json::to_string(&result)
+            .unwrap()
+            .contains(r#""live":{"slot":123,"cix":17,"owner":"a","pb":5}"#));
+    }
+
+    #[test]
+    fn collation_stats_is_keyed_by_para_id() {
+        let mut collation_stats: BTreeMap<ParaId, CollatorSummary> = BTreeMap::new();
+        collation_stats.insert(1000, CollatorSummary::default());
+        let serialized = serde_json::to_string(&collation_stats).unwrap();
+        assert!(serialized.starts_with("{\"1000\":"));
+        let parsed: BTreeMap<ParaId, CollatorSummary> = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(parsed, collation_stats);
+    }
 }

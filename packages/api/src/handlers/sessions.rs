@@ -38,6 +38,7 @@ use onet_cache::{
 use onet_config::CONFIG;
 use onet_records::EpochIndex;
 use redis::aio::MultiplexedConnection as Connection;
+use std::collections::BTreeMap;
 
 /// Get a sessions filtered by query params
 pub async fn get_sessions(
@@ -85,45 +86,14 @@ pub async fn get_sessions(
         if session_index > end_session {
             i = None;
         } else {
-            let mut session_data: CacheMap = redis::cmd("HGETALL")
-                .arg(CacheKey::SessionByIndex(Index::Num(session_index.into())))
-                .query_async(&mut conn as &mut Connection)
-                .await
-                .map_err(CacheError::RedisCMDError)?;
-
-            if session_data.is_empty() || !session_data.contains_key("session") {
-                session_data.insert(String::from("session"), session_index.to_string());
-            }
-
-            if params.show_stats {
-                if let Ok(serialized_data) = redis::cmd("GET")
-                    .arg(CacheKey::SessionByIndexStats(Index::Num(
-                        session_index.into(),
-                    )))
-                    .query_async::<String>(&mut conn as &mut Connection)
-                    .await
-                {
-                    session_data.insert(String::from("stats"), serialized_data);
-                } else {
-                    session_data.insert(String::from("is_syncing"), (true).to_string());
-                    cache_query = false;
-                }
-            }
-
-            if params.show_netstats {
-                if let Ok(serialized_data) = redis::cmd("GET")
-                    .arg(CacheKey::NetworkStatsBySession(Index::Num(
-                        session_index.into(),
-                    )))
-                    .query_async::<String>(&mut conn as &mut Connection)
-                    .await
-                {
-                    session_data.insert(String::from("netstats"), serialized_data);
-                } else {
-                    session_data.insert(String::from("is_syncing"), (true).to_string());
-                    cache_query = false;
-                }
-            }
+            let (session_data, is_complete) = get_session_data(
+                &mut conn as &mut Connection,
+                session_index,
+                params.show_stats,
+                params.show_netstats,
+            )
+            .await?;
+            cache_query = cache_query && is_complete;
 
             data.push(session_data.into());
 
@@ -150,9 +120,95 @@ pub async fn get_sessions(
     respond_json(data.into())
 }
 
+/// Get the session data with the requested stats.
+/// The second element is false if any of the requested stats is not yet cached.
+async fn get_session_data(
+    conn: &mut Connection,
+    session_index: EpochIndex,
+    show_stats: bool,
+    show_netstats: bool,
+) -> Result<(CacheMap, bool), ApiError> {
+    let mut is_complete = true;
+    let mut session_data: CacheMap = redis::cmd("HGETALL")
+        .arg(CacheKey::SessionByIndex(Index::Num(session_index.into())))
+        .query_async(conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
+    if session_data.is_empty() || !session_data.contains_key("session") {
+        session_data.insert(String::from("session"), session_index.to_string());
+    }
+
+    if show_stats {
+        let mut stats = redis::cmd("GET")
+            .arg(CacheKey::SessionByIndexStats(Index::Num(
+                session_index.into(),
+            )))
+            .query_async::<Option<String>>(conn)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+
+        // Note: the stats of the running session are only cached by block
+        if stats.is_none() {
+            if let Some(block) = session_data
+                .get("current_block")
+                .and_then(|b| b.parse::<u64>().ok())
+            {
+                stats = redis::cmd("GET")
+                    .arg(CacheKey::BlockByIndexStats(Index::Num(block)))
+                    .query_async::<Option<String>>(conn)
+                    .await
+                    .map_err(CacheError::RedisCMDError)?;
+            }
+        }
+
+        if let Some(stats) = stats {
+            session_data.insert(String::from("stats"), stats);
+        } else {
+            session_data.insert(String::from("is_syncing"), (true).to_string());
+            is_complete = false;
+        }
+
+        // Note: collation stats by parachain id, not having them does not mean syncing
+        let collation: CacheMap = redis::cmd("HGETALL")
+            .arg(CacheKey::CollatorStatsByEpoch(session_index))
+            .query_async(conn)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
+        if !collation.is_empty() {
+            let by_para: BTreeMap<String, serde_json::Value> = collation
+                .iter()
+                .filter_map(|(para_id, stats)| {
+                    Some((para_id.clone(), serde_json::from_str(stats).ok()?))
+                })
+                .collect();
+            session_data.insert(String::from("collation"), serde_json::to_string(&by_para)?);
+        }
+    }
+
+    if show_netstats {
+        if let Some(netstats) = redis::cmd("GET")
+            .arg(CacheKey::NetworkStatsBySession(Index::Num(
+                session_index.into(),
+            )))
+            .query_async::<Option<String>>(conn)
+            .await
+            .map_err(CacheError::RedisCMDError)?
+        {
+            session_data.insert(String::from("netstats"), netstats);
+        } else {
+            session_data.insert(String::from("is_syncing"), (true).to_string());
+            is_complete = false;
+        }
+    }
+
+    Ok((session_data, is_complete))
+}
+
 /// Get current session details
 pub async fn get_session_by_index(
     index: Path<String>,
+    params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<SessionResult>, ApiError> {
     let mut conn = get_conn(&cache).await?;
@@ -186,6 +242,24 @@ pub async fn get_session_by_index(
     if let Some(session) = data.get("session") {
         if current == *session {
             data.insert(String::from("is_current"), (true).to_string());
+        }
+    }
+
+    // add the requested stats, including the ones of the running session
+    if params.show_stats || params.show_netstats {
+        if let Ok(session_index) = requested.parse::<EpochIndex>() {
+            let (extra, _) = get_session_data(
+                &mut conn as &mut Connection,
+                session_index,
+                params.show_stats,
+                params.show_netstats,
+            )
+            .await?;
+            for key in ["stats", "collation", "netstats", "is_syncing"] {
+                if let Some(value) = extra.get(key) {
+                    data.insert(key.to_string(), value.clone());
+                }
+            }
         }
     }
 

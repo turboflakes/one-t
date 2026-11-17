@@ -48,12 +48,14 @@ impl std::fmt::Display for Index {
     }
 }
 
-#[derive(Default, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Default, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum ChainKey {
     #[default]
     RC,
     AH,
+    #[serde(rename = "pp")]
+    PEOPLE,
 }
 
 impl std::fmt::Display for ChainKey {
@@ -61,6 +63,7 @@ impl std::fmt::Display for ChainKey {
         match self {
             Self::RC => write!(f, "rc"),
             Self::AH => write!(f, "ah"),
+            Self::PEOPLE => write!(f, "pp"),
         }
     }
 }
@@ -72,6 +75,7 @@ impl FromStr for ChainKey {
         match s {
             "rc" => Ok(ChainKey::RC),
             "ah" => Ok(ChainKey::AH),
+            "pp" => Ok(ChainKey::PEOPLE),
             _ => Err(format!("Unknown chain key: {}", s)),
         }
     }
@@ -165,6 +169,16 @@ pub enum CacheKey {
     ValidatorAccountsBySession(EpochIndex),
     WaitingValidatorAccountsBySession(EpochIndex),
     ValidatorProfileByAccount(AccountId32),
+    // Collators (keyed by the parachain and its session, or the relay chain session)
+    CollatorRecord(ChainKey, EpochIndex, AccountId32),
+    CollatorKeysBySession(ChainKey, EpochIndex),
+    CollatorEpochRecord(ChainKey, EpochIndex, AccountId32),
+    CollatorKeysByEpoch(ChainKey, EpochIndex),
+    CollatorCurrentSession(ChainKey),
+    CollatorStatsBySession(ChainKey, EpochIndex),
+    CollatorStatsByEpoch(EpochIndex),
+    CollatorLastBlock(ChainKey),
+    CollatorLiveSlot(ChainKey),
     // Events
     Event(ChainKey, Index),
     // NominationPools
@@ -249,6 +263,25 @@ impl std::fmt::Display for CacheKey {
             Self::ValidatorProfileByAccount(account) => {
                 write!(f, "vpa:{}", account)
             }
+            Self::CollatorRecord(chain, session_index, account) => {
+                write!(f, "col:{}:{}:{}", chain, session_index, account)
+            }
+            Self::CollatorKeysBySession(chain, session_index) => {
+                write!(f, "cks:{}:{}", chain, session_index)
+            }
+            Self::CollatorEpochRecord(chain, epoch_index, account) => {
+                write!(f, "cole:{}:{}:{}", chain, epoch_index, account)
+            }
+            Self::CollatorKeysByEpoch(chain, epoch_index) => {
+                write!(f, "cke:{}:{}", chain, epoch_index)
+            }
+            Self::CollatorCurrentSession(chain) => write!(f, "cs:{}", chain),
+            Self::CollatorStatsBySession(chain, session_index) => {
+                write!(f, "css:{}:{}", chain, session_index)
+            }
+            Self::CollatorStatsByEpoch(epoch_index) => write!(f, "cse:{}", epoch_index),
+            Self::CollatorLastBlock(chain) => write!(f, "cl:{}", chain),
+            Self::CollatorLiveSlot(chain) => write!(f, "cls:{}", chain),
             Self::Event(chain, block_index) => {
                 write!(f, "ev:{}:{}", chain, block_index)
             }
@@ -311,5 +344,64 @@ impl redis::ToRedisArgs for CacheKey {
         W: ?Sized + redis::RedisWrite,
     {
         out.write_arg(self.to_string().as_bytes())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chain_key_serde_uses_abbreviations() {
+        assert_eq!(serde_json::to_string(&ChainKey::PEOPLE).unwrap(), "\"pp\"");
+        assert_eq!(
+            serde_json::from_str::<ChainKey>("\"pp\"").unwrap(),
+            ChainKey::PEOPLE
+        );
+        assert_eq!(
+            serde_json::from_str::<ChainKey>("\"ah\"").unwrap(),
+            ChainKey::AH
+        );
+        assert!(serde_json::from_str::<ChainKey>("\"people\"").is_err());
+    }
+
+    #[test]
+    fn collator_cache_keys() {
+        let account = AccountId32([0; 32]);
+        assert_eq!(ChainKey::PEOPLE.to_string(), "pp");
+        assert_eq!("pp".parse::<ChainKey>(), Ok(ChainKey::PEOPLE));
+        assert_eq!(
+            CacheKey::CollatorRecord(ChainKey::AH, 7, account).to_string(),
+            format!("col:ah:7:{}", account)
+        );
+        assert_eq!(
+            CacheKey::CollatorEpochRecord(ChainKey::PEOPLE, 9, account).to_string(),
+            format!("cole:pp:9:{}", account)
+        );
+        assert_eq!(
+            CacheKey::CollatorKeysBySession(ChainKey::AH, 7).to_string(),
+            "cks:ah:7"
+        );
+        assert_eq!(
+            CacheKey::CollatorKeysByEpoch(ChainKey::AH, 9).to_string(),
+            "cke:ah:9"
+        );
+        assert_eq!(
+            CacheKey::CollatorCurrentSession(ChainKey::PEOPLE).to_string(),
+            "cs:pp"
+        );
+        assert_eq!(
+            CacheKey::CollatorStatsBySession(ChainKey::PEOPLE, 7).to_string(),
+            "css:pp:7"
+        );
+        assert_eq!(CacheKey::CollatorStatsByEpoch(9).to_string(), "cse:9");
+        assert_eq!(
+            CacheKey::CollatorLastBlock(ChainKey::AH).to_string(),
+            "cl:ah"
+        );
+        assert_eq!(
+            CacheKey::CollatorLiveSlot(ChainKey::PEOPLE).to_string(),
+            "cls:pp"
+        );
     }
 }

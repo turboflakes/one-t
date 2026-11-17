@@ -424,7 +424,7 @@ impl From<RawDataRank> for Report {
                         validator.missed_votes,
                         validator.bitfields_availability,
                         validator.bitfields_unavailability,
-                        grade(mvr, 1.0_f64-bar),
+                        grade(mvr, 1.0_f64-bar, None),
                         (mvr * 10000.0).round() / 10000.0,
                         (bar * 10000.0).round() / 10000.0,
                         validator.avg_para_points,
@@ -554,7 +554,7 @@ impl From<RawDataGroup> for Report {
                             para_record.total_explicit_votes(),
                             para_record.total_missed_votes(),
                             para_record.total_unavailability(),
-                            grade(mvr, 1.0f64 - bar).leading_spaces(3),
+                            grade(mvr, 1.0f64 - bar, None).leading_spaces(3),
                             (mvr * 10000.0).round() / 10000.0,
                             (bar * 10000.0).round() / 10000.0,
                             authority_record.para_points(),
@@ -748,7 +748,7 @@ impl From<RawDataPara> for Report {
                             report.add_raw_text(format!(
                                 "🎓 Session {} Grade: <b>{}</b>",
                                 data.meta.current_session_index,
-                                grade(mvr, bur)
+                                grade(mvr, bur, None)
                             ));
                         }
                     }
@@ -822,7 +822,7 @@ impl From<RawDataPara> for Report {
                                 para_record.total_explicit_votes(),
                                 para_record.total_missed_votes(),
                                 para_record.total_unavailability(),
-                                grade(mvr, 1.0_f64-bar).leading_spaces(2),
+                                grade(mvr, 1.0_f64-bar, None).leading_spaces(2),
                                 (mvr * 10000.0).round() / 10000.0,
                                 (bar * 10000.0).round() / 10000.0,
                                 authority_record.para_points(),
@@ -867,7 +867,7 @@ impl From<RawDataPara> for Report {
                                 peer.2.total_explicit_votes(),
                                 peer.2.total_missed_votes(),
                                 peer.2.total_unavailability(),
-                                grade(mvr, 1.0_f64-bar).leading_spaces(2),
+                                grade(mvr, 1.0_f64-bar, None).leading_spaces(2),
                                 (mvr * 10000.0).round() / 10000.0,
                                 (bar * 10000.0).round() / 10000.0,
                                 peer.1.para_points(),
@@ -1470,6 +1470,7 @@ fn flagged_and_exceptional_validators_report<'a>(
                 && grade(
                     v.missed_ratio.unwrap(),
                     1.0_f64 - v.bitfields_availability_ratio.unwrap(),
+                    None,
                 ) == Grade::Ap
         })
         .count();
@@ -1480,6 +1481,7 @@ fn flagged_and_exceptional_validators_report<'a>(
                 && grade(
                     v.missed_ratio.unwrap(),
                     1.0_f64 - v.bitfields_availability_ratio.unwrap(),
+                    None,
                 ) == Grade::F
         })
         .count();
@@ -1495,6 +1497,7 @@ fn flagged_and_exceptional_validators_report<'a>(
                 && grade(
                     v.missed_ratio.unwrap(),
                     1.0_f64 - v.bitfields_availability_ratio.unwrap(),
+                    None,
                 ) == Grade::Ap
         })
         .count();
@@ -1505,6 +1508,7 @@ fn flagged_and_exceptional_validators_report<'a>(
                 && grade(
                     v.missed_ratio.unwrap(),
                     1.0_f64 - v.bitfields_availability_ratio.unwrap(),
+                    None,
                 ) == Grade::F
         })
         .count();
@@ -1520,6 +1524,7 @@ fn flagged_and_exceptional_validators_report<'a>(
                 && grade(
                     v.missed_ratio.unwrap(),
                     1.0_f64 - v.bitfields_availability_ratio.unwrap(),
+                    None,
                 ) == Grade::Ap
         })
         .count();
@@ -1530,6 +1535,7 @@ fn flagged_and_exceptional_validators_report<'a>(
                 && grade(
                     v.missed_ratio.unwrap(),
                     1.0_f64 - v.bitfields_availability_ratio.unwrap(),
+                    None,
                 ) == Grade::F
         })
         .count();

@@ -21,6 +21,7 @@
 
 use crate::error::ApiError;
 use crate::{
+    handlers::collators::{attach_collation_live, get_collators_result},
     responses::{
         AuthorityKey, AuthorityKeyCache, BlockResult, BlocksResult, CacheMap, ParachainsResult,
         SessionResult, ValidatorResult, ValidatorsResult,
@@ -53,6 +54,7 @@ pub enum Topic {
     Validator(SS58),
     ParaAuthorities(EpochIndex, Verbosity),
     Parachains(EpochIndex),
+    Collators(ChainKey),
 }
 
 impl std::fmt::Display for Topic {
@@ -67,6 +69,7 @@ impl std::fmt::Display for Topic {
             Self::Validator(account) => write!(f, "v:{}", account),
             Self::ParaAuthorities(index, verbosity) => write!(f, "pas:{}:{}", index, verbosity),
             Self::Parachains(index) => write!(f, "parachains:{}", index),
+            Self::Collators(chain_key) => write!(f, "collators:{}", chain_key),
         }
     }
 }
@@ -165,6 +168,9 @@ impl Channel {
             }
             Topic::Parachains(index) => {
                 Self::handle_parachains(&mut conn, client_id, *index, act).await?
+            }
+            Topic::Collators(chain_key) => {
+                Self::handle_collators(&mut conn, &config, client_id, chain_key, act).await?
             }
             _ => return Ok(()),
         }
@@ -570,9 +576,19 @@ impl Channel {
                                         String::from("session"),
                                         current_session.to_string(),
                                     );
+                                    let mut result = ValidatorResult::from(data);
+                                    // Note: the slot is not cached, a failure only omits it
+                                    if let Err(e) = attach_collation_live(
+                                        conn,
+                                        std::slice::from_mut(&mut result),
+                                    )
+                                    .await
+                                    {
+                                        warn!("Collation live slot not attached: {:?}", e);
+                                    }
                                     let resp = WsResponseMessage {
                                         r#type: String::from("validator"),
-                                        result: ValidatorResult::from(data),
+                                        result,
                                     };
                                     let serialized = serde_json::to_string(&resp).unwrap();
                                     act.publish_message(&serialized, 0);
@@ -658,6 +674,10 @@ impl Channel {
                                     data.push(auth.into());
                                 }
                             }
+                            // Note: the slot is not cached, a failure only omits it
+                            if let Err(e) = attach_collation_live(conn, &mut data).await {
+                                warn!("Collation live slot not attached: {:?}", e);
+                            }
                             let resp = WsResponseMessage {
                                 r#type: String::from("validators"),
                                 result: ValidatorsResult {
@@ -673,6 +693,55 @@ impl Channel {
             }
         }
 
+        Ok(())
+    }
+
+    /// Send the collators of the current session of a parachain, when a new block was followed
+    async fn handle_collators(
+        conn: &mut Connection,
+        config: &Config,
+        client_id: ClientId,
+        chain_key: &ChainKey,
+        act: &Channel,
+    ) -> Result<(), ApiError> {
+        // Note: the last block followed is written together with the collators
+        let cache_key = CacheKey::CollatorLastBlock(chain_key.clone());
+        let Some(last_block) = redis::cmd("GET")
+            .arg(cache_key.to_string())
+            .query_async::<Option<BlockNumber>>(conn)
+            .await
+            .map_err(onet_cache::error::CacheError::RedisCMDError)?
+        else {
+            return Ok(());
+        };
+        let pushed_block = redis::cmd("GET")
+            .arg(CacheKey::PushedBlockByClientIdV2(
+                cache_key.to_string(),
+                client_id,
+            ))
+            .query_async::<Option<BlockNumber>>(conn)
+            .await
+            .map_err(onet_cache::error::CacheError::RedisCMDError)?;
+        // nothing new since the last push to this client
+        if pushed_block == Some(last_block) {
+            return Ok(());
+        }
+
+        let result =
+            get_collators_result(conn, chain_key, &Index::Current, true, false, false).await?;
+        let resp = WsResponseMessage {
+            r#type: String::from("collators"),
+            result,
+        };
+        let serialized = serde_json::to_string(&resp).unwrap();
+        // Note: only this client is waiting for this block
+        act.reply_message(client_id, &serialized);
+
+        if let Err(e) =
+            cache_latest_pushed_block_v2(conn, config, &client_id, cache_key, last_block).await
+        {
+            warn!("Cache PushedBlock failed with error: {:?}", e);
+        }
         Ok(())
     }
 

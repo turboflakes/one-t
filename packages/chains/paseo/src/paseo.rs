@@ -187,10 +187,7 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     let config = CONFIG.clone();
     let rc_api = onet.relay_client().clone();
     let rc_rpc = onet.relay_rpc().clone();
-    let ah_api = onet
-        .asset_hub_client()
-        .as_ref()
-        .expect("AH API to be available");
+    let ah_api = onet.asset_hub_client();
 
     let stashes: Vec<String> = config.pools_featured_nominees;
     info!(
@@ -351,6 +348,8 @@ pub async fn process_best_block(
     match chain_key {
         ChainKey::RC => records.set_relay_chain_best_block_number(block_number),
         ChainKey::AH => records.set_asset_hub_best_block_number(block_number),
+        // Note: people best block is not tracked in records
+        ChainKey::PEOPLE => {}
     };
 
     // if api enabled cache best block
@@ -448,10 +447,7 @@ pub async fn try_run_subscribe_best_asset_hub() -> Result<(), OnetError> {
 
 pub async fn subscribe_best_asset_hub() -> Result<(), OnetError> {
     let onet = Onet::shared().await;
-    let ah_api = onet
-        .asset_hub_client()
-        .as_ref()
-        .expect("AH API to be available");
+    let ah_api = onet.asset_hub_client();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
     let mut blocks_sub = ah_api.stream_best_blocks().await?;
     while let Some(Ok(best_block)) = blocks_sub.next().await {
@@ -476,16 +472,8 @@ async fn setup_processing_context(
 ) -> Result<BlockProcessingContext, OnetError> {
     let rc_api = onet.relay_client().clone();
     let rc_rpc = onet.relay_rpc().clone();
-    let ah_api = onet
-        .asset_hub_client()
-        .as_ref()
-        .expect("AH API to be available")
-        .clone();
-    let ah_rpc = onet
-        .asset_hub_rpc()
-        .as_ref()
-        .expect("AH RPC to be available")
-        .clone();
+    let ah_api = onet.asset_hub_client().clone();
+    let ah_rpc = onet.asset_hub_rpc().clone();
 
     Ok(BlockProcessingContext {
         rc_api,
@@ -1642,10 +1630,7 @@ pub async fn run_network_report(
     let config = CONFIG.clone();
     let rc_api = onet.relay_client().clone();
     let rc_rpc = onet.relay_rpc().clone();
-    let ah_api = onet
-        .asset_hub_client()
-        .as_ref()
-        .expect("AH API to be available");
+    let ah_api = onet.asset_hub_client();
 
     let network = Network::load(onet.rpc()).await?;
 
@@ -2278,10 +2263,7 @@ pub async fn cache_nomination_pools(
     let config = CONFIG.clone();
     let start = Instant::now();
     let onet = Onet::shared().await;
-    let ah_api = onet
-        .asset_hub_client()
-        .as_ref()
-        .expect("AH API to be available");
+    let ah_api = onet.asset_hub_client();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
     let at_people = onet.people_client().at_current_block().await?;
     let at = ah_api.at_block(ah_block_hash).await?;
@@ -2364,10 +2346,7 @@ pub async fn cache_nomination_pools_stats(
     let config = CONFIG.clone();
     let start = Instant::now();
     let onet = Onet::shared().await;
-    let ah_api = onet
-        .asset_hub_client()
-        .as_ref()
-        .expect("AH API to be available");
+    let ah_api = onet.asset_hub_client();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
     let at = ah_api.at_block(ah_block_hash).await?;
 
@@ -2432,10 +2411,7 @@ pub async fn cache_nomination_pools_nominees(
     let config = CONFIG.clone();
     let start = Instant::now();
     let onet = Onet::shared().await;
-    let ah_api = onet
-        .asset_hub_client()
-        .as_ref()
-        .expect("AH API to be available");
+    let ah_api = onet.asset_hub_client();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
     let at = ah_api.at_block(ah_block_hash).await?;
 
@@ -2679,10 +2655,7 @@ pub async fn try_run_init_cache_records_at_new_session(
         return Ok(());
     }
 
-    let ah_api = onet
-        .asset_hub_client()
-        .as_ref()
-        .expect("AH API to be available");
+    let ah_api = onet.asset_hub_client();
 
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
     let at = ah_api.at_block(ah_block_hash).await?;
@@ -2744,10 +2717,7 @@ pub async fn cache_session_stats_records(
     let config = CONFIG.clone();
     let onet = Onet::shared().await;
     let rc_api = onet.client().clone();
-    let ah_api = onet
-        .asset_hub_client()
-        .as_ref()
-        .expect("AH API to be available");
+    let ah_api = onet.asset_hub_client();
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
 
     // Load network details
@@ -3257,7 +3227,7 @@ pub(crate) async fn fetch_asset_hub_block_info(
 
 /// Try to fetch asset hub block info from a specified block hash, wait if not available
 /// Note: Cap retries up to 100 times ~= 10minutes
-async fn try_fetch_asset_hub_block_info(
+async fn try_fetch_block_info(
     rpc: &LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>,
     hash: H256,
 ) -> Result<(BlockNumber, H256), OnetError> {
@@ -3351,15 +3321,8 @@ pub(crate) async fn fetch_asset_hub_block_hash_from_relay_chain(
 
     // 1. Fetch the included asset hub block hash from the specified relay chain block number
     if let Some(hash) = fetch_asset_hub_included_block_hash(&rc_api, rc_block_hash).await? {
-        let ah_api = onet
-            .asset_hub_client()
-            .as_ref()
-            .expect("AH API to be available");
-        let ah_rpc = onet
-            .asset_hub_rpc()
-            .as_ref()
-            .expect("AH RPC to be available")
-            .clone();
+        let ah_api = onet.asset_hub_client();
+        let ah_rpc = onet.asset_hub_rpc().clone();
         // 2. Verify if the RC parent_block_number included in AH block is equal to the rc_block_number being queried
         // If not fetch the next AH block and try again
         let mut ah_next_block_hash = hash;
@@ -3374,7 +3337,7 @@ pub(crate) async fn fetch_asset_hub_block_hash_from_relay_chain(
             ah_block_number_opt = if let Some(n) = ah_block_number_opt {
                 Some(n + 1)
             } else {
-                let (n, _) = try_fetch_asset_hub_block_info(&ah_rpc, ah_next_block_hash).await?;
+                let (n, _) = try_fetch_block_info(&ah_rpc, ah_next_block_hash).await?;
                 Some(n + 1)
             };
             let ah_block_number = ah_block_number_opt.unwrap();

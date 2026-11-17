@@ -1,6 +1,6 @@
 use crate::westend::{
-    cache_session_stats_records, fetch_asset_hub_block_hash_from_relay_chain,
-    fetch_asset_hub_block_info, try_fetch_relay_chain_block_hash,
+    cache_session_stats_records, fetch_asset_hub_block_hash_from_relay_chain, fetch_block_info,
+    try_fetch_relay_chain_block_hash,
 };
 use log::{info, warn};
 use onet_cache::{
@@ -21,11 +21,7 @@ use std::collections::HashMap;
 pub async fn backfill_session_stats(session_indices: Vec<EpochIndex>) -> Result<(), OnetError> {
     let onet = Onet::shared().await;
     let rc_rpc = onet.relay_rpc().clone();
-    let ah_rpc = onet
-        .asset_hub_rpc()
-        .as_ref()
-        .expect("AH RPC to be available")
-        .clone();
+    let ah_rpc = onet.asset_hub_rpc().clone();
 
     for session_index in session_indices {
         let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
@@ -49,7 +45,7 @@ pub async fn backfill_session_stats(session_indices: Vec<EpochIndex>) -> Result<
         let ah_block_hash =
             fetch_asset_hub_block_hash_from_relay_chain(&onet, rc_block_number, rc_block_hash)
                 .await?;
-        let (_, ah_parent_block_hash) = fetch_asset_hub_block_info(&ah_rpc, ah_block_hash).await?;
+        let (_, ah_parent_block_hash) = fetch_block_info(&ah_rpc, ah_block_hash).await?;
 
         info!(
             "Backfilling session {session_index} (RC block #{rc_block_number}, RC hash {rc_block_hash:?}, AH hash {ah_block_hash:?})"

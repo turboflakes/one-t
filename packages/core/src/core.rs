@@ -85,81 +85,26 @@ async fn build_rpc_reconnecting_client(url: &str) -> Result<RpcClient, OnetError
         .map_err(|err| OnetError::RpcError(err.into()))
 }
 
+/// Client and legacy rpc of a chain (relay or para), both sharing the same connection
+#[derive(Debug, Clone)]
+pub struct ChainClient {
+    pub client: OnlineClient<PolkadotConfig>,
+    pub rpc: LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>,
+}
+
 async fn create_para_client_from_supported_runtime(
     runtime: SupportedRuntime,
     para_type: SupportedParasRuntimeType,
-) -> Result<Option<OnlineClient<PolkadotConfig>>, OnetError> {
-    // Check runtime availability and get RPC URL based on client type
-    let (is_available, rpc_url) = match para_type {
-        SupportedParasRuntimeType::People => (
-            runtime.is_people_runtime_available(),
-            runtime.people_runtime().default_rpc_url(),
-        ),
-        SupportedParasRuntimeType::AssetHub => (
-            runtime.is_asset_hub_runtime_available(),
-            runtime.asset_hub_runtime().default_rpc_url(),
-        ),
+) -> Result<ChainClient, OnetError> {
+    let rpc_url = match para_type {
+        SupportedParasRuntimeType::People => runtime.people_runtime().default_rpc_url(),
+        SupportedParasRuntimeType::AssetHub => runtime.asset_hub_runtime().default_rpc_url(),
     };
 
-    // Early return if runtime is not available
-    if !is_available {
-        return Ok(None);
-    }
-
-    // Create and return client
     let rpc_client = build_rpc_reconnecting_client(&rpc_url).await?;
+    let rpc = LegacyRpcMethods::<RpcConfigFor<PolkadotConfig>>::new(rpc_client.clone().into());
     let client = create_substrate_client_from_rpc_client(rpc_client).await?;
-    Ok(Some(client))
-}
-
-async fn create_para_legacy_rpc_from_supported_runtime(
-    runtime: SupportedRuntime,
-    para_type: SupportedParasRuntimeType,
-) -> Result<Option<LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>>, OnetError> {
-    // Check runtime availability and get RPC URL based on client type
-    let (is_available, rpc_url) = match para_type {
-        SupportedParasRuntimeType::People => (
-            runtime.is_people_runtime_available(),
-            runtime.people_runtime().default_rpc_url(),
-        ),
-        SupportedParasRuntimeType::AssetHub => (
-            runtime.is_asset_hub_runtime_available(),
-            runtime.asset_hub_runtime().default_rpc_url(),
-        ),
-    };
-
-    // Early return if runtime is not available
-    if !is_available {
-        return Ok(None);
-    }
-
-    // Create and return client
-    let rpc_client = build_rpc_reconnecting_client(&rpc_url).await?;
-    let legacy_rpc =
-        LegacyRpcMethods::<RpcConfigFor<PolkadotConfig>>::new(rpc_client.clone().into());
-    Ok(Some(legacy_rpc))
-}
-
-/// Convenience wrapper for creating a People runtime client
-async fn create_people_client_from_supported_runtime(
-    runtime: SupportedRuntime,
-) -> Result<Option<OnlineClient<PolkadotConfig>>, OnetError> {
-    create_para_client_from_supported_runtime(runtime, SupportedParasRuntimeType::People).await
-}
-
-/// Convenience wrapper for creating an Asset Hub runtime client
-async fn create_asset_hub_client_from_supported_runtime(
-    runtime: SupportedRuntime,
-) -> Result<Option<OnlineClient<PolkadotConfig>>, OnetError> {
-    create_para_client_from_supported_runtime(runtime, SupportedParasRuntimeType::AssetHub).await
-}
-
-/// Convenience wrapper for creating an Asset Hub legacy rpc client
-async fn create_asset_hub_legacy_rpc_from_supported_runtime(
-    runtime: SupportedRuntime,
-) -> Result<Option<LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>>, OnetError> {
-    create_para_legacy_rpc_from_supported_runtime(runtime, SupportedParasRuntimeType::AssetHub)
-        .await
+    Ok(ChainClient { client, rpc })
 }
 
 async fn create_substrate_client_from_rpc_client(
@@ -182,11 +127,9 @@ struct NodeConnection {
 /// Result type for substrate client creation
 #[derive(Debug)]
 pub struct SubstrateClients {
-    pub relay_client: OnlineClient<PolkadotConfig>,
-    pub relay_rpc: LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>,
-    pub people_client: Option<OnlineClient<PolkadotConfig>>,
-    pub asset_hub_client: Option<OnlineClient<PolkadotConfig>>,
-    pub asset_hub_rpc: Option<LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>>,
+    pub relay: ChainClient,
+    pub people: ChainClient,
+    pub asset_hub: ChainClient,
     pub runtime: SupportedRuntime,
 }
 
@@ -210,17 +153,20 @@ pub async fn create_or_await_substrate_node_clients(config: Config) -> Substrate
 
 async fn attempt_connection(config: &Config) -> Result<SubstrateClients, OnetError> {
     let rpc_client = create_substrate_rpc_client_from_config(config.clone()).await?;
-    let relay_rpc =
-        LegacyRpcMethods::<RpcConfigFor<PolkadotConfig>>::new(rpc_client.clone().into());
+    let rpc = LegacyRpcMethods::<RpcConfigFor<PolkadotConfig>>::new(rpc_client.clone().into());
 
-    let node_connection = fetch_node_connection_details(&relay_rpc).await?;
+    let node_connection = fetch_node_connection_details(&rpc).await?;
     configure_chain_settings(&node_connection);
 
-    let relay_client = create_substrate_client_from_rpc_client(rpc_client).await?;
+    let client = create_substrate_client_from_rpc_client(rpc_client).await?;
+    let relay = ChainClient { client, rpc };
     let runtime = SupportedRuntime::from(get_chain_token_symbol(&node_connection.properties));
-    let people_client = create_people_client_from_supported_runtime(runtime).await?;
-    let asset_hub_client = create_asset_hub_client_from_supported_runtime(runtime).await?;
-    let asset_hub_rpc = create_asset_hub_legacy_rpc_from_supported_runtime(runtime).await?;
+    let people =
+        create_para_client_from_supported_runtime(runtime, SupportedParasRuntimeType::People)
+            .await?;
+    let asset_hub =
+        create_para_client_from_supported_runtime(runtime, SupportedParasRuntimeType::AssetHub)
+            .await?;
 
     info!(
         "Connected to {} network using {} * Substrate node {} v{}",
@@ -231,11 +177,9 @@ async fn attempt_connection(config: &Config) -> Result<SubstrateClients, OnetErr
     );
 
     Ok(SubstrateClients {
-        relay_client,
-        relay_rpc,
-        people_client,
-        asset_hub_client,
-        asset_hub_rpc,
+        relay,
+        people,
+        asset_hub,
         runtime,
     })
 }
@@ -280,94 +224,12 @@ async fn handle_connection_error(error: &OnetError, ws_url: &str) {
     thread::sleep(Duration::from_secs(RECONNECTION_DELAY_SECS));
 }
 
-// DEPRECATED
-// pub async fn create_or_await_substrate_node_client(
-//     config: Config,
-// ) -> (
-//     OnlineClient<PolkadotConfig>,
-//     LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>,
-//     Option<OnlineClient<PolkadotConfig>>,
-//     SupportedRuntime,
-// ) {
-//     loop {
-//         match create_substrate_rpc_client_from_config(config.clone()).await {
-//             Ok(rpc_client) => {
-//                 let legacy_rpc = LegacyRpcMethods::<RpcConfigFor<PolkadotConfig>>::new(rpc_client.clone().into());
-//                 let chain = legacy_rpc.system_chain().await.unwrap_or_default();
-//                 let name = legacy_rpc.system_name().await.unwrap_or_default();
-//                 let version = legacy_rpc.system_version().await.unwrap_or_default();
-//                 let properties = legacy_rpc.system_properties().await.unwrap_or_default();
-
-//                 // Display SS58 addresses based on the connected chain
-//                 let chain_prefix: ChainPrefix =
-//                     if let Some(ss58_format) = properties.get("ss58Format") {
-//                         ss58_format.as_u64().unwrap_or_default().try_into().unwrap()
-//                     } else {
-//                         0
-//                     };
-
-//                 crypto::set_default_ss58_version(crypto::Ss58AddressFormat::custom(chain_prefix));
-
-//                 let chain_token_symbol: ChainTokenSymbol =
-//                     if let Some(token_symbol) = properties.get("tokenSymbol") {
-//                         use serde_json::Value::String;
-//                         match token_symbol {
-//                             String(token_symbol) => token_symbol.to_string(),
-//                             _ => unreachable!("Token symbol with wrong type"),
-//                         }
-//                     } else {
-//                         String::from("")
-//                     };
-
-//                 info!(
-//                     "Connected to {} network using {} * Substrate node {} v{}",
-//                     chain, config.substrate_ws_url, name, version
-//                 );
-
-//                 match create_substrate_client_from_rpc_client(rpc_client.clone().into()).await {
-//                     Ok(relay_client) => {
-//                         // Create people chain client depending on the runtime selected
-//                         let runtime = SupportedRuntime::from(chain_token_symbol);
-//                         match create_people_client_from_supported_runtime(runtime).await {
-//                             Ok(people_client_option) => {
-//                                 break (relay_client, legacy_rpc, people_client_option, runtime);
-//                             }
-
-//                             Err(e) => {
-//                                 error!("{}", e);
-//                                 info!("Awaiting for connection using {}", config.substrate_ws_url);
-//                                 thread::sleep(time::Duration::from_secs(6));
-//                             }
-//                         }
-//                     }
-//                     Err(e) => {
-//                         error!("{}", e);
-//                         info!("Awaiting for connection using {}", config.substrate_ws_url);
-//                         thread::sleep(time::Duration::from_secs(6));
-//                     }
-//                 }
-//             }
-//             Err(e) => {
-//                 error!("{}", e);
-//                 info!("Awaiting for connection using {}", config.substrate_ws_url);
-//                 thread::sleep(time::Duration::from_secs(6));
-//             }
-//         }
-//     }
-// }
-
 pub struct Onet {
     config: Config,
     runtime: SupportedRuntime,
-    client: OnlineClient<PolkadotConfig>,
-    rpc: LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>,
-    // Note: people_client is optional to easily enable/disable identity logic from people's chain
-    // or relay chain
-    people_client_option: Option<OnlineClient<PolkadotConfig>>,
-    // Note: asset_hub_client is optional to easily enable/disable staking logic from asset hub chain
-    // or relay chain
-    asset_hub_client_option: Option<OnlineClient<PolkadotConfig>>,
-    asset_hub_rpc_option: Option<LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>>,
+    relay: ChainClient,
+    people: ChainClient,
+    asset_hub: ChainClient,
     matrix: Matrix,
     pub cache: RedisPool,
 }
@@ -408,11 +270,9 @@ impl Onet {
         Onet {
             config,
             runtime: clients.runtime,
-            client: clients.relay_client,
-            rpc: clients.relay_rpc,
-            people_client_option: clients.people_client,
-            asset_hub_client_option: clients.asset_hub_client,
-            asset_hub_rpc_option: clients.asset_hub_rpc,
+            relay: clients.relay,
+            people: clients.people,
+            asset_hub: clients.asset_hub,
             matrix,
             cache: create_or_await_pool(CONFIG.clone()),
         }
@@ -443,32 +303,48 @@ impl Onet {
 
     // DEPRECATE, use relay_client
     pub fn client(&self) -> &OnlineClient<PolkadotConfig> {
-        &self.client
+        &self.relay.client
     }
 
     // DEPRECATE, use relay_rpc
     pub fn rpc(&self) -> &LegacyRpcMethods<RpcConfigFor<PolkadotConfig>> {
-        &self.rpc
+        &self.relay.rpc
+    }
+
+    pub fn relay(&self) -> &ChainClient {
+        &self.relay
     }
 
     pub fn relay_rpc(&self) -> &LegacyRpcMethods<RpcConfigFor<PolkadotConfig>> {
-        &self.rpc
+        &self.relay.rpc
     }
 
     pub fn relay_client(&self) -> &OnlineClient<PolkadotConfig> {
-        &self.client
+        &self.relay.client
+    }
+
+    pub fn people(&self) -> &ChainClient {
+        &self.people
     }
 
     pub fn people_client(&self) -> &OnlineClient<PolkadotConfig> {
-        self.people_client_option.as_ref().unwrap_or(&self.client)
+        &self.people.client
     }
 
-    pub fn asset_hub_client(&self) -> &Option<OnlineClient<PolkadotConfig>> {
-        &self.asset_hub_client_option
+    pub fn people_rpc(&self) -> &LegacyRpcMethods<RpcConfigFor<PolkadotConfig>> {
+        &self.people.rpc
     }
 
-    pub fn asset_hub_rpc(&self) -> &Option<LegacyRpcMethods<RpcConfigFor<PolkadotConfig>>> {
-        &self.asset_hub_rpc_option
+    pub fn asset_hub(&self) -> &ChainClient {
+        &self.asset_hub
+    }
+
+    pub fn asset_hub_client(&self) -> &OnlineClient<PolkadotConfig> {
+        &self.asset_hub.client
+    }
+
+    pub fn asset_hub_rpc(&self) -> &LegacyRpcMethods<RpcConfigFor<PolkadotConfig>> {
+        &self.asset_hub.rpc
     }
 
     /// Returns the matrix configuration

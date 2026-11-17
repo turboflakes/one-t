@@ -21,11 +21,7 @@ use std::collections::HashMap;
 pub async fn backfill_session_stats(session_indices: Vec<EpochIndex>) -> Result<(), OnetError> {
     let onet = Onet::shared().await;
     let rc_rpc = onet.relay_rpc().clone();
-    let ah_rpc = onet
-        .asset_hub_rpc()
-        .as_ref()
-        .expect("AH RPC to be available")
-        .clone();
+    let ah_rpc = onet.asset_hub_rpc().clone();
 
     for session_index in session_indices {
         let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
