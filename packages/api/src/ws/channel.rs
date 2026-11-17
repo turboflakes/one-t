@@ -21,6 +21,7 @@
 
 use crate::error::ApiError;
 use crate::{
+    handlers::collators::attach_collation_live,
     responses::{
         AuthorityKey, AuthorityKeyCache, BlockResult, BlocksResult, CacheMap, ParachainsResult,
         SessionResult, ValidatorResult, ValidatorsResult,
@@ -570,9 +571,19 @@ impl Channel {
                                         String::from("session"),
                                         current_session.to_string(),
                                     );
+                                    let mut result = ValidatorResult::from(data);
+                                    // Note: the slot is not cached, a failure only omits it
+                                    if let Err(e) = attach_collation_live(
+                                        conn,
+                                        std::slice::from_mut(&mut result),
+                                    )
+                                    .await
+                                    {
+                                        warn!("Collation live slot not attached: {:?}", e);
+                                    }
                                     let resp = WsResponseMessage {
                                         r#type: String::from("validator"),
-                                        result: ValidatorResult::from(data),
+                                        result,
                                     };
                                     let serialized = serde_json::to_string(&resp).unwrap();
                                     act.publish_message(&serialized, 0);
@@ -657,6 +668,10 @@ impl Channel {
                                     // }
                                     data.push(auth.into());
                                 }
+                            }
+                            // Note: the slot is not cached, a failure only omits it
+                            if let Err(e) = attach_collation_live(conn, &mut data).await {
+                                warn!("Collation live slot not attached: {:?}", e);
                             }
                             let resp = WsResponseMessage {
                                 r#type: String::from("validators"),

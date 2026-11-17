@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 use crate::error::ApiError;
+use crate::handlers::collators::attach_collation_live;
 use crate::handlers::predictions::{attach_validators_predictions, get_validator_predictions};
 use crate::{
     helpers::respond_json,
@@ -44,13 +45,19 @@ use onet_config::CONFIG;
 use onet_dn::dn::try_fetch_stashes_from_remote_url;
 use onet_pools::{PoolId, PoolNominees};
 use onet_records::{
-    collation_grade, collators::CollatorSummary, grade, BitfieldsRecord, DiscoveryRecord,
-    EpochIndex, Grade, Subset, ValidatorProfileRecord,
+    collation_grade,
+    collators::{CollationIndex, CollatorSummary},
+    grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset, ValidatorProfileRecord,
 };
 use redis::aio::MultiplexedConnection as Connection;
 use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
-use std::{collections::BTreeMap, convert::TryInto, iter::FromIterator, str::FromStr};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    convert::TryInto,
+    iter::FromIterator,
+    str::FromStr,
+};
 use subxt::utils::AccountId32;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
@@ -132,7 +139,7 @@ pub struct Params {
     // nominees_only indicates validators that are present on nomination pools as nominees, dafault false
     #[serde(default)]
     nominees_only: bool,
-    // collators_only indicates validators that also collated (owned collation slots) in the requested sessions, default false
+    // collators_only indicates validators drawn as collators of a parachain in the requested sessions, default false
     #[serde(default)]
     collators_only: bool,
     // fetch_peers indicates whether peers should be also retrieved and included in the response, default false
@@ -234,20 +241,17 @@ where
     }
 }
 
-/// Whether the validator of the authority key had collation slots expected in the session
-async fn has_collation(key: &str, conn: &mut Connection) -> Result<bool, ApiError> {
-    let summary = redis::cmd("HGET")
-        .arg(CacheKey::AuthorityRecordVerbose(
-            key.to_string(),
-            Verbosity::Summary,
-        ))
-        .arg("collation_summary")
+/// Whether the validator of the authority key is part of the draw of collators of a parachain
+async fn is_collator(key: &str, conn: &mut Connection) -> Result<bool, ApiError> {
+    let collation = redis::cmd("HGET")
+        .arg(key)
+        .arg("collation")
         .query_async::<Option<String>>(conn)
         .await
         .map_err(CacheError::RedisCMDError)?
-        .and_then(|s| serde_json::from_str::<CollatorSummary>(&s).ok())
+        .and_then(|s| serde_json::from_str::<Vec<CollationIndex>>(&s).ok())
         .unwrap_or_default();
-    Ok(summary.eb > 0)
+    Ok(!collation.is_empty())
 }
 
 /// Get active validators
@@ -287,7 +291,7 @@ async fn get_session_authorities(
 
     let mut data: Vec<ValidatorResult> = Vec::new();
     for key in authority_keys.iter() {
-        if collators_only && !has_collation(key, &mut conn).await? {
+        if collators_only && !is_collator(key, &mut conn).await? {
             continue;
         }
         let mut auth: CacheMap = redis::cmd("HGETALL")
@@ -650,8 +654,10 @@ pub async fn get_validators(
 ) -> Result<Json<ValidatorsResult>, ApiError> {
     let show_preds = params.show_preds;
     let mut result = get_validators_by_params(req, params, cache.clone()).await?;
+    let mut conn = get_conn(&cache).await?;
+    // Note: attached here so cached queries, like the ranking, do not keep the slot
+    attach_collation_live(&mut conn as &mut Connection, &mut result.data).await?;
     if show_preds {
-        let mut conn = get_conn(&cache).await?;
         attach_validators_predictions(&mut conn as &mut Connection, &mut result.data).await?;
     }
     Ok(result)
@@ -801,7 +807,7 @@ async fn get_validators_by_params(
                     .map_err(CacheError::RedisCMDError)?;
 
                 for key in authority_keys.iter() {
-                    if params.collators_only && !has_collation(key, &mut conn).await? {
+                    if params.collators_only && !is_collator(key, &mut conn).await? {
                         continue;
                     }
                     let val = get_validator_by_authority_key(
@@ -839,7 +845,7 @@ async fn get_validators_by_params(
     // where MCR = 1 - (PRODUCED_BLOCKS/EXPECTED_BLOCKS) summed over the sessions.
     // Validators without collation keep SCORE_1.
     //
-    // collators_only=true keeps only the validators that were expected to collate (eb > 0).
+    // collators_only=true keeps only the validators drawn as collators of a parachain (is_collator).
     //
     //
     if params.from != 0 && params.from < params.to && params.ranking == Ranking::Performance {
@@ -863,6 +869,8 @@ async fn get_validators_by_params(
             let mut validators: BTreeMap<String, ValidatorResult> = BTreeMap::new();
             // collation of each validator summed over the sessions
             let mut collation: BTreeMap<String, CollatorSummary> = BTreeMap::new();
+            // validators drawn as collators in any of the sessions
+            let mut collators: BTreeSet<String> = BTreeSet::new();
             let mut total_epochs: u32 = 0;
             let mut i = Some(start_session);
             while let Some(session_index) = i {
@@ -911,6 +919,9 @@ async fn get_validators_by_params(
                                 },
                             )
                             .or_insert((Subset::NotDefined, 0, 0, 0, 0, 0, 0, 0, 0));
+                        if val.is_collator {
+                            collators.insert(val.address.clone());
+                        }
                         collation
                             .entry(val.address.clone())
                             .or_default()
@@ -988,8 +999,7 @@ async fn get_validators_by_params(
             let mut i = 0;
             while i < aggregator_vec.len() {
                 let (address, (subset, para_epochs, _, _, _, _, _, _, _)) = &mut aggregator_vec[i];
-                let not_a_collator = params.collators_only
-                    && collation.get(address).map(|c| c.eb).unwrap_or_default() == 0;
+                let not_a_collator = params.collators_only && !collators.contains(address.as_str());
                 if (*subset != params.subset && params.subset != Subset::NotDefined)
                     || *para_epochs < min_para_epochs
                     || not_a_collator
@@ -1196,6 +1206,12 @@ pub async fn get_validator_by_stash(
         params.show_discovery,
         false,
         cache,
+    )
+    .await?;
+
+    attach_collation_live(
+        &mut conn as &mut Connection,
+        std::slice::from_mut(&mut data),
     )
     .await?;
 

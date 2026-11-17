@@ -178,6 +178,7 @@ pub enum CacheKey {
     CollatorStatsBySession(ChainKey, EpochIndex),
     CollatorStatsByEpoch(EpochIndex),
     CollatorLastBlock(ChainKey),
+    CollatorLiveSlot(ChainKey),
     // Events
     Event(ChainKey, Index),
     // NominationPools
@@ -280,6 +281,7 @@ impl std::fmt::Display for CacheKey {
             }
             Self::CollatorStatsByEpoch(epoch_index) => write!(f, "cse:{}", epoch_index),
             Self::CollatorLastBlock(chain) => write!(f, "cl:{}", chain),
+            Self::CollatorLiveSlot(chain) => write!(f, "cls:{}", chain),
             Self::Event(chain, block_index) => {
                 write!(f, "ev:{}:{}", chain, block_index)
             }
@@ -396,6 +398,10 @@ mod tests {
         assert_eq!(
             CacheKey::CollatorLastBlock(ChainKey::AH).to_string(),
             "cl:ah"
+        );
+        assert_eq!(
+            CacheKey::CollatorLiveSlot(ChainKey::PEOPLE).to_string(),
+            "cls:pp"
         );
     }
 }

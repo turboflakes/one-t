@@ -30,8 +30,8 @@ use crate::types::{CacheKey, ChainKey, Verbosity};
 use log::{info, warn};
 use onet_config::{Config, CONFIG};
 use onet_records::{
-    collators::{CollatorRecord, CollatorSessionStats, CollatorSummary},
-    BlockNumber, EpochIndex, ParaId, Records,
+    collators::{CollationIndex, CollatorRecord, CollatorSessionStats, CollatorSummary},
+    AuthorityIndex, BlockNumber, EpochIndex, ParaId, Records,
 };
 use redis::aio::MultiplexedConnection as Connection;
 use std::{
@@ -42,8 +42,10 @@ use std::{
 use subxt::utils::AccountId32;
 
 const RECORD_FIELD: &str = "record";
+// field of the authority data with the collation index by parachain
+const COLLATION_FIELD: &str = "collation";
 
-/// Cache the collator records changed since the last call
+/// Cache the collator records changed since the last call and the draw of validators as collators
 pub async fn cache_collator_records(
     cache: &mut Connection,
     chain_key: ChainKey,
@@ -54,6 +56,10 @@ pub async fn cache_collator_records(
     if !config.cache_writer_enabled {
         return Ok(());
     }
+
+    cache_collator_live_slot(cache, chain_key.clone(), para_id, records).await?;
+    // Note: the draw does not depend on closed slots, so it is cached even if there are no records
+    cache_collator_draw(cache, para_id, records).await?;
 
     let dirty = records.dirty_collators(para_id);
     if dirty.is_empty() {
@@ -152,10 +158,142 @@ pub async fn cache_collator_records(
         ) else {
             continue;
         };
+        // Note: collators that did not own any slot yet have nothing to add to the authority
+        if record.owned_slots() == 0 {
+            continue;
+        }
         let authority_key = CacheKey::AuthorityRecord(records.current_era(), *epoch, authority_idx);
         cache_authority_collator_data(cache, &config, &authority_key, para_id, record).await?;
     }
 
+    Ok(())
+}
+
+/// Seconds the slot a parachain is in is kept, it is written with every block
+const LIVE_SLOT_EXPIRE: u64 = 60;
+
+/// Cache the slot a parachain is currently in, to tell which validator is collating right now
+async fn cache_collator_live_slot(
+    cache: &mut Connection,
+    chain_key: ChainKey,
+    para_id: ParaId,
+    records: &Records,
+) -> Result<(), CacheError> {
+    let Some(live) = records.para_slots(para_id).and_then(|t| t.live_slot()) else {
+        return Ok(());
+    };
+    let key = CacheKey::CollatorLiveSlot(chain_key);
+    redis::cmd("SET")
+        .arg(&key)
+        .arg(serde_json::to_string(&live)?)
+        .arg("EX")
+        .arg(LIVE_SLOT_EXPIRE)
+        .query_async::<()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    Ok(())
+}
+
+/// Cache the position of the validators drawn as collators of a parachain in the main authority
+/// data of the current relay session, so it is known before they own any slot.
+/// Note: it is only written when the parachain session or the relay session change
+async fn cache_collator_draw(
+    cache: &mut Connection,
+    para_id: ParaId,
+    records: &mut Records,
+) -> Result<(), CacheError> {
+    let config = CONFIG.clone();
+    if !config.cache_writer_enabled {
+        return Ok(());
+    }
+    let Some(session) = records.para_slots(para_id).and_then(|t| t.session()) else {
+        return Ok(());
+    };
+    let epoch = records.current_epoch();
+    // Note: the draw only changes with the parachain session, and it is written into the
+    // authorities of the relay session, so there is nothing to do until one of them changes.
+    // This is checked first since finding the authorities of hundreds of collators is not free.
+    let cached = records.cached_collator_draw(para_id);
+    if cached.is_some_and(|(cached_session, cached_epoch, _)| {
+        *cached_session == session && *cached_epoch == epoch
+    }) {
+        return Ok(());
+    }
+    // Note: wait for the authorities of the relay session, otherwise nobody would be found
+    if !records.has_authorities() {
+        return Ok(());
+    }
+    let draw = records.collator_draw(para_id);
+    let authorities: BTreeSet<AuthorityIndex> = draw.iter().map(|(index, _)| *index).collect();
+
+    // Note: validators that left the draw in the same relay session have to be removed
+    let left: BTreeSet<AuthorityIndex> = match cached {
+        Some((_, cached_epoch, cached)) if *cached_epoch == epoch => {
+            cached.difference(&authorities).copied().collect()
+        }
+        _ => BTreeSet::new(),
+    };
+
+    for (authority_index, cix) in draw.iter() {
+        set_authority_collation(
+            cache,
+            &config,
+            records,
+            *authority_index,
+            para_id,
+            Some(*cix),
+        )
+        .await?;
+    }
+    for authority_index in left {
+        set_authority_collation(cache, &config, records, authority_index, para_id, None).await?;
+    }
+
+    records.set_cached_collator_draw(para_id, session, epoch, authorities);
+    Ok(())
+}
+
+/// Set, or remove with `None`, the collation index of a parachain in the authority data.
+/// Note: the field holds one entry per parachain, so the current ones are read and merged
+async fn set_authority_collation(
+    cache: &mut Connection,
+    config: &Config,
+    records: &Records,
+    authority_index: AuthorityIndex,
+    para_id: ParaId,
+    cix: Option<u32>,
+) -> Result<(), CacheError> {
+    let key = CacheKey::AuthorityRecord(
+        records.current_era(),
+        records.current_epoch(),
+        authority_index,
+    );
+    let mut list: Vec<CollationIndex> = redis::cmd("HGET")
+        .arg(&key)
+        .arg(COLLATION_FIELD)
+        .query_async::<Option<String>>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    CollationIndex::set(&mut list, para_id, cix);
+
+    let mut pipe = redis::pipe();
+    pipe.atomic();
+    if list.is_empty() {
+        pipe.cmd("HDEL").arg(&key).arg(COLLATION_FIELD);
+    } else {
+        pipe.cmd("HSET")
+            .arg(&key)
+            .arg(COLLATION_FIELD)
+            .arg(serde_json::to_string(&list)?)
+            .cmd("EXPIRE")
+            .arg(&key)
+            .arg(config.cache_writer_prunning);
+    }
+    pipe.query_async::<()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
     Ok(())
 }
 

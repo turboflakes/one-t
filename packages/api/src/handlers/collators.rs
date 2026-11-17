@@ -20,7 +20,10 @@
 // SOFTWARE.
 
 use crate::error::ApiError;
-use crate::{helpers::respond_json, responses::CollatorsResult};
+use crate::{
+    helpers::respond_json,
+    responses::{CollatorsResult, ValidatorResult},
+};
 use actix_web::web::{Data, Json, Query};
 use log::warn;
 use onet_cache::{
@@ -30,11 +33,12 @@ use onet_cache::{
 };
 use onet_config::CONFIG;
 use onet_records::{
-    collators::{CollatorRecord, CollatorSessionStats},
-    EpochIndex,
+    collators::{CollatorRecord, CollatorSessionStats, LiveSlot},
+    EpochIndex, ParaId,
 };
 use redis::aio::MultiplexedConnection as Connection;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 pub struct Params {
@@ -76,15 +80,16 @@ pub async fn get_collators(
 
     let mut conn = get_conn(&cache).await?;
 
+    let current_session: Option<EpochIndex> = redis::cmd("GET")
+        .arg(CacheKey::CollatorCurrentSession(params.chain_key.clone()))
+        .query_async::<Option<EpochIndex>>(&mut conn as &mut Connection)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+
     let session_index: EpochIndex = match &params.session {
         Index::Num(index) => *index as EpochIndex,
         Index::Str(index) if index != "current" => index.parse::<EpochIndex>().unwrap_or_default(),
-        _ => redis::cmd("GET")
-            .arg(CacheKey::CollatorCurrentSession(params.chain_key.clone()))
-            .query_async::<Option<EpochIndex>>(&mut conn as &mut Connection)
-            .await
-            .map_err(CacheError::RedisCMDError)?
-            .unwrap_or_default(),
+        _ => current_session.unwrap_or_default(),
     };
 
     let record_keys: Vec<String> = redis::cmd("SMEMBERS")
@@ -133,7 +138,7 @@ pub async fn get_collators(
         CollatorSessionStats::default()
     };
 
-    respond_json(CollatorsResult::new(
+    let mut result = CollatorsResult::new(
         params.chain_key.to_string(),
         para_id,
         session_index,
@@ -141,5 +146,52 @@ pub async fn get_collators(
         data,
         params.show_block_numbers,
         params.show_missed_slots,
-    ))
+    );
+
+    // Note: the slot the parachain is in only makes sense for its current session
+    if current_session == Some(session_index) {
+        result.live = redis::cmd("GET")
+            .arg(CacheKey::CollatorLiveSlot(params.chain_key.clone()))
+            .query_async::<Option<String>>(&mut conn as &mut Connection)
+            .await
+            .map_err(CacheError::RedisCMDError)?
+            .and_then(|s| serde_json::from_str(&s).ok());
+    }
+
+    respond_json(result)
+}
+
+/// Set the slot and the blocks produced so far on the validators that are collating right now.
+/// Note: the slot a parachain is in changes with every block, so it is not cached with the validators
+pub async fn attach_collation_live(
+    conn: &mut Connection,
+    validators: &mut [ValidatorResult],
+) -> Result<(), ApiError> {
+    if validators.iter().all(|v| v.collation.is_empty()) {
+        return Ok(());
+    }
+    let config = CONFIG.clone();
+    let mut live: BTreeMap<ParaId, LiveSlot> = BTreeMap::new();
+    for (chain_key, para_id) in [
+        (ChainKey::AH, config.asset_hub_para_id),
+        (ChainKey::PEOPLE, config.people_para_id),
+    ] {
+        let slot = redis::cmd("GET")
+            .arg(CacheKey::CollatorLiveSlot(chain_key))
+            .query_async::<Option<String>>(conn)
+            .await
+            .map_err(CacheError::RedisCMDError)?
+            .and_then(|s| serde_json::from_str::<LiveSlot>(&s).ok());
+        if let Some(slot) = slot {
+            live.insert(para_id, slot);
+        }
+    }
+    for validator in validators.iter_mut() {
+        for entry in validator.collation.iter_mut() {
+            if let Some(slot) = live.get(&entry.para_id) {
+                entry.set_live(slot);
+            }
+        }
+    }
+    Ok(())
 }

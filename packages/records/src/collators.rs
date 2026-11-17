@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::{BlockNumber, EpochIndex, SS58};
+use crate::{BlockNumber, EpochIndex, ParaId, SS58};
 use log::warn;
 use serde::{Deserialize, Serialize};
 use subxt::utils::AccountId32;
@@ -43,11 +43,71 @@ pub enum CollatorKind {
     Unknown,
 }
 
+/// Position of a validator in the collators of a parachain, once it is part of the draw
+/// Note: the slots owned by the collator are the ones where `slot % collators == cix`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollationIndex {
+    // Note: alias to read the values cached before the rename
+    #[serde(rename = "pid", alias = "para_id")]
+    pub para_id: ParaId,
+    // position of the validator in the parachain session validators (aura authorities)
+    pub cix: u32,
+    // slot the validator is collating right now and the blocks produced so far in it,
+    // these are not cached with the draw, they are set by the api from `LiveSlot`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<Slot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pb: Option<u32>,
+}
+
+/// Slot a parachain is currently in, as of the last block followed
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LiveSlot {
+    pub slot: Slot,
+    // position of the slot owner in the collators of the session and its address
+    pub cix: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<SS58>,
+    // blocks produced in the slot so far
+    pub pb: u32,
+}
+
+impl CollationIndex {
+    pub fn new(para_id: ParaId, cix: u32) -> Self {
+        Self {
+            para_id,
+            cix,
+            slot: None,
+            pb: None,
+        }
+    }
+
+    /// Whether the validator owns the slot a parachain is currently in
+    pub fn set_live(&mut self, live: &LiveSlot) {
+        if live.cix == Some(self.cix) {
+            self.slot = Some(live.slot);
+            self.pb = Some(live.pb);
+        }
+    }
+
+    /// Set, or remove with `None`, the index of a parachain keeping the list ordered by parachain
+    pub fn set(list: &mut Vec<CollationIndex>, para_id: ParaId, cix: Option<u32>) {
+        list.retain(|c| c.para_id != para_id);
+        if let Some(cix) = cix {
+            list.push(CollationIndex::new(para_id, cix));
+        }
+        list.sort_by_key(|c| c.para_id);
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CollatorRecord {
     // collator address and kind
     address: SS58,
     kind: Option<CollatorKind>,
+    // position of the collator in the parachain session collators (aura authorities)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cix: Option<u32>,
     // slots owned by the collator and closed in the session
     #[serde(rename = "os")]
     owned_slots: u32,
@@ -187,6 +247,15 @@ impl CollatorRecord {
         self.kind
     }
 
+    pub fn cix(&self) -> Option<u32> {
+        self.cix
+    }
+
+    /// Set the position of the collator in the session, it is the one of the last slot added
+    pub fn set_cix(&mut self, cix: Option<u32>) {
+        self.cix = cix;
+    }
+
     /// Add a closed slot to the record
     pub fn add_slot(
         &mut self,
@@ -241,6 +310,8 @@ pub struct ClosedSlot {
     pub session: EpochIndex,
     pub slot: Slot,
     pub owner: Option<(AccountId32, CollatorKind)>,
+    // position of the owner in the collators of the session
+    pub owner_index: Option<u32>,
     pub blocks: Vec<BlockNumber>,
     pub expected_blocks: u32,
     // era points per block in force when the slot was closed
@@ -326,6 +397,23 @@ impl ParaSlots {
     /// Forget the open slot, used when blocks could not be followed continuously.
     pub fn break_continuity(&mut self) {
         self.open_slot = None;
+    }
+
+    /// Slot the parachain is currently in, the one of the last block followed
+    pub fn live_slot(&self) -> Option<LiveSlot> {
+        let open = self.open_slot.as_ref()?;
+        let cix = open.owner.and_then(|owner| {
+            self.collators
+                .iter()
+                .position(|(c, _)| *c == owner)
+                .map(|i| i as u32)
+        });
+        Some(LiveSlot {
+            slot: open.slot,
+            cix,
+            owner: open.owner.map(|owner| owner.to_string()),
+            pb: open.blocks.len() as u32,
+        })
     }
 
     /// Owner of a slot according to the current set of collators.
@@ -417,10 +505,17 @@ impl ParaSlots {
         owner: Option<(AccountId32, CollatorKind)>,
         blocks: Vec<BlockNumber>,
     ) -> Option<ClosedSlot> {
+        let owner_index = owner.as_ref().and_then(|(account, _)| {
+            self.collators
+                .iter()
+                .position(|(c, _)| c == account)
+                .map(|i| i as u32)
+        });
         Some(ClosedSlot {
             session: self.session?,
             slot,
             owner,
+            owner_index,
             blocks,
             expected_blocks: self.blocks_per_slot as u32,
             points_per_block: self.points_per_block,
@@ -475,11 +570,71 @@ mod tests {
         let closed = t.on_block(4, 7);
         assert_eq!(closed.len(), 3);
         assert_eq!(closed[0].blocks, vec![2, 3]);
+        assert_eq!(closed[1].owner_index, Some(2));
         assert_eq!(closed[1].slot, 5);
         assert_eq!(closed[1].owner, Some((acc(2), CollatorKind::Validator)));
         assert!(closed[1].blocks.is_empty());
         assert_eq!(closed[2].slot, 6);
         assert_eq!(closed[2].owner, Some((acc(0), CollatorKind::Invulnerable)));
+    }
+
+    #[test]
+    fn collation_index_is_set_by_para_id() {
+        let mut list = Vec::new();
+        CollationIndex::set(&mut list, 1004, Some(3));
+        CollationIndex::set(&mut list, 1000, Some(7));
+        assert_eq!(
+            serde_json::to_string(&list).unwrap(),
+            r#"[{"pid":1000,"cix":7},{"pid":1004,"cix":3}]"#
+        );
+        // the index changes after a reshuffle
+        CollationIndex::set(&mut list, 1000, Some(1));
+        assert_eq!(list[0], CollationIndex::new(1000, 1));
+        // values cached before the rename are still read
+        let old: Vec<CollationIndex> =
+            serde_json::from_str(r#"[{"para_id":1000,"cix":2}]"#).unwrap();
+        assert_eq!(old, vec![CollationIndex::new(1000, 2)]);
+        // and is removed when the validator leaves the draw
+        CollationIndex::set(&mut list, 1004, None);
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn live_slot_is_the_open_slot_and_its_owner() {
+        let mut t = tracker();
+        assert_eq!(t.live_slot(), None);
+        t.on_block(1, 4);
+        // slot 4 belongs to the collator at index 1
+        assert_eq!(
+            t.live_slot(),
+            Some(LiveSlot {
+                slot: 4,
+                cix: Some(1),
+                owner: Some(acc(1).to_string()),
+                pb: 1
+            })
+        );
+        t.on_block(2, 4);
+        assert_eq!(t.live_slot().unwrap().pb, 2);
+        t.on_block(3, 5);
+        assert_eq!(
+            t.live_slot(),
+            Some(LiveSlot {
+                slot: 5,
+                cix: Some(2),
+                owner: Some(acc(2).to_string()),
+                pb: 1
+            })
+        );
+
+        // only the validator that owns the slot gets it
+        let live = t.live_slot().unwrap();
+        let mut owner = CollationIndex::new(1000, 2);
+        let mut other = CollationIndex::new(1000, 1);
+        owner.set_live(&live);
+        other.set_live(&live);
+        assert_eq!((owner.slot, owner.pb), (Some(5), Some(1)));
+        assert_eq!((other.slot, other.pb), (None, None));
     }
 
     #[test]
