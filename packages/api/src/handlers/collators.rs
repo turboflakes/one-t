@@ -79,14 +79,35 @@ pub async fn get_collators(
     }
 
     let mut conn = get_conn(&cache).await?;
+    let result = get_collators_result(
+        &mut conn as &mut Connection,
+        &params.chain_key,
+        &params.session,
+        params.show_stats,
+        params.show_block_numbers,
+        params.show_missed_slots,
+    )
+    .await?;
 
+    respond_json(result)
+}
+
+/// Get the collators of a parachain session, the current one if `session` is current
+pub async fn get_collators_result(
+    conn: &mut Connection,
+    chain_key: &ChainKey,
+    session: &Index,
+    show_stats: bool,
+    show_block_numbers: bool,
+    show_missed_slots: bool,
+) -> Result<CollatorsResult, ApiError> {
     let current_session: Option<EpochIndex> = redis::cmd("GET")
-        .arg(CacheKey::CollatorCurrentSession(params.chain_key.clone()))
-        .query_async::<Option<EpochIndex>>(&mut conn as &mut Connection)
+        .arg(CacheKey::CollatorCurrentSession(chain_key.clone()))
+        .query_async::<Option<EpochIndex>>(&mut *conn)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
-    let session_index: EpochIndex = match &params.session {
+    let session_index: EpochIndex = match session {
         Index::Num(index) => *index as EpochIndex,
         Index::Str(index) if index != "current" => index.parse::<EpochIndex>().unwrap_or_default(),
         _ => current_session.unwrap_or_default(),
@@ -94,10 +115,10 @@ pub async fn get_collators(
 
     let record_keys: Vec<String> = redis::cmd("SMEMBERS")
         .arg(CacheKey::CollatorKeysBySession(
-            params.chain_key.clone(),
+            chain_key.clone(),
             session_index,
         ))
-        .query_async(&mut conn as &mut Connection)
+        .query_async(&mut *conn)
         .await
         .map_err(CacheError::RedisCMDError)?;
 
@@ -106,7 +127,7 @@ pub async fn get_collators(
         let serialized: Option<String> = redis::cmd("HGET")
             .arg(&key)
             .arg("record")
-            .query_async(&mut conn as &mut Connection)
+            .query_async(&mut *conn)
             .await
             .map_err(CacheError::RedisCMDError)?;
         match serialized.map(|s| serde_json::from_str::<CollatorRecord>(&s)) {
@@ -117,19 +138,19 @@ pub async fn get_collators(
     }
 
     let config = CONFIG.clone();
-    let para_id = match params.chain_key {
+    let para_id = match chain_key {
         ChainKey::PEOPLE => config.people_para_id,
         _ => config.asset_hub_para_id,
     };
 
     // Note: session stats are only retrieved when requested
-    let stats: CollatorSessionStats = if params.show_stats {
+    let stats: CollatorSessionStats = if show_stats {
         redis::cmd("GET")
             .arg(CacheKey::CollatorStatsBySession(
-                params.chain_key.clone(),
+                chain_key.clone(),
                 session_index,
             ))
-            .query_async::<Option<String>>(&mut conn as &mut Connection)
+            .query_async::<Option<String>>(&mut *conn)
             .await
             .map_err(CacheError::RedisCMDError)?
             .and_then(|s| serde_json::from_str(&s).ok())
@@ -139,26 +160,26 @@ pub async fn get_collators(
     };
 
     let mut result = CollatorsResult::new(
-        params.chain_key.to_string(),
+        chain_key.to_string(),
         para_id,
         session_index,
         stats,
         data,
-        params.show_block_numbers,
-        params.show_missed_slots,
+        show_block_numbers,
+        show_missed_slots,
     );
 
     // Note: the slot the parachain is in only makes sense for its current session
     if current_session == Some(session_index) {
         result.live = redis::cmd("GET")
-            .arg(CacheKey::CollatorLiveSlot(params.chain_key.clone()))
-            .query_async::<Option<String>>(&mut conn as &mut Connection)
+            .arg(CacheKey::CollatorLiveSlot(chain_key.clone()))
+            .query_async::<Option<String>>(&mut *conn)
             .await
             .map_err(CacheError::RedisCMDError)?
             .and_then(|s| serde_json::from_str(&s).ok());
     }
 
-    respond_json(result)
+    Ok(result)
 }
 
 /// Set the slot and the blocks produced so far on the validators that are collating right now.

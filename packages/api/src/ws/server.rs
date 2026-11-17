@@ -44,12 +44,14 @@ pub enum Methods {
     SubscribeParaAuthoritiesStats,
     SubscribeParaAuthoritiesSummary,
     SubscribeParachains,
+    SubscribeCollators,
     UnsubscribeBlock,
     UnsubscribeSession,
     UnsubscribeValidator,
     UnsubscribeParaAuthoritiesStats,
     UnsubscribeParaAuthoritiesSummary,
     UnsubscribeParachains,
+    UnsubscribeCollators,
     #[default]
     NotSupported,
 }
@@ -279,5 +281,33 @@ impl Handler<Remove> for Server {
         if self.channels.remove(&msg.topic).is_some() {
             info!("channel {} removed from server", msg.topic);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ws::channel::Topic;
+    use onet_cache::types::ChainKey;
+
+    #[test]
+    fn collators_methods_and_topic() {
+        let req: WsRequestMessage =
+            serde_json::from_str(r#"{"method":"subscribe_collators","params":["ah","pp"]}"#)
+                .unwrap();
+        assert!(matches!(req.method, Methods::SubscribeCollators));
+        assert_eq!(req.params, vec!["ah", "pp"]);
+        let req: WsRequestMessage =
+            serde_json::from_str(r#"{"method":"unsubscribe_collators","params":["pp"]}"#).unwrap();
+        assert!(matches!(req.method, Methods::UnsubscribeCollators));
+
+        assert_eq!(
+            Topic::Collators(ChainKey::PEOPLE).to_string(),
+            "collators:pp"
+        );
+        assert_ne!(
+            Topic::Collators(ChainKey::AH),
+            Topic::Collators(ChainKey::PEOPLE)
+        );
     }
 }

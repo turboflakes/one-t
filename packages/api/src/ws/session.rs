@@ -11,7 +11,7 @@ use crate::ws::{
 use actix::prelude::*;
 use actix_web_actors::ws;
 use log::{debug, warn};
-use onet_cache::types::Verbosity;
+use onet_cache::types::{ChainKey, Verbosity};
 use onet_records::{BlockNumber, EpochIndex};
 use subxt::utils::AccountId32;
 
@@ -216,6 +216,18 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                             }
                         }
                     }
+                    Methods::SubscribeCollators => {
+                        for chain_key in req.params.iter() {
+                            if let Ok(chain_key @ (ChainKey::AH | ChainKey::PEOPLE)) =
+                                ChainKey::from_str(chain_key)
+                            {
+                                self.server_addr.do_send(server::Subscribe {
+                                    id: self.id,
+                                    topic: Topic::Collators(chain_key),
+                                });
+                            }
+                        }
+                    }
                     Methods::UnsubscribeBlock => match req.params[0].as_str() {
                         "best" => self.server_addr.do_send(server::Unsubscribe {
                             id: self.id,
@@ -280,6 +292,16 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                 self.server_addr.do_send(server::Unsubscribe {
                                     id: self.id,
                                     topic: Topic::Parachains(*index),
+                                });
+                            }
+                        }
+                    }
+                    Methods::UnsubscribeCollators => {
+                        for chain_key in req.params.iter() {
+                            if let Ok(chain_key) = ChainKey::from_str(chain_key) {
+                                self.server_addr.do_send(server::Unsubscribe {
+                                    id: self.id,
+                                    topic: Topic::Collators(chain_key),
                                 });
                             }
                         }
