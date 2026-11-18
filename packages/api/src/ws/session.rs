@@ -153,19 +153,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                             id: self.id,
                             topic: Topic::BestBlock,
                         }),
-                        "finalized" => {
-                            if let Ok(previous_sessions) = req.params[1].as_str().parse::<u8>() {
-                                self.server_addr.do_send(server::Subscribe {
-                                    id: self.id,
-                                    topic: Topic::FinalizedBlock(previous_sessions),
-                                })
-                            } else {
-                                self.server_addr.do_send(server::Subscribe {
-                                    id: self.id,
-                                    topic: Topic::FinalizedBlock(0),
-                                })
-                            }
-                        }
+                        "finalized" => self.server_addr.do_send(server::Subscribe {
+                            id: self.id,
+                            topic: finalized_topic(&req.params),
+                        }),
                         _ => (),
                     },
                     Methods::SubscribeSession => {
@@ -233,19 +224,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                             id: self.id,
                             topic: Topic::BestBlock,
                         }),
-                        "finalized" => {
-                            if let Ok(previous_sessions) = req.params[1].as_str().parse::<u8>() {
-                                self.server_addr.do_send(server::Unsubscribe {
-                                    id: self.id,
-                                    topic: Topic::FinalizedBlock(previous_sessions),
-                                })
-                            } else {
-                                self.server_addr.do_send(server::Unsubscribe {
-                                    id: self.id,
-                                    topic: Topic::FinalizedBlock(0),
-                                })
-                            }
-                        }
+                        "finalized" => self.server_addr.do_send(server::Unsubscribe {
+                            id: self.id,
+                            topic: finalized_topic(&req.params),
+                        }),
                         _ => (),
                     },
                     Methods::UnsubscribeSession => {
@@ -319,5 +301,38 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
             }
             ws::Message::Nop => (),
         }
+    }
+}
+
+/// Topic of the finalized blocks from the params `["finalized", previous_sessions, chain_key]`.
+/// Note: `previous_sessions` is 0 if not valid and, if `chain_key` is not given, all chains are followed.
+fn finalized_topic(params: &[String]) -> Topic {
+    let previous_sessions = params
+        .get(1)
+        .and_then(|p| p.parse::<u8>().ok())
+        .unwrap_or_default();
+    let chain_key = params.get(2).and_then(|c| ChainKey::from_str(c).ok());
+    Topic::FinalizedBlock(previous_sessions, chain_key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn params(p: &[&str]) -> Vec<String> {
+        p.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn finalized_topic_follows_all_chains_unless_one_is_given() {
+        let topic = finalized_topic(&params(&["finalized", "2"]));
+        assert_eq!(topic.to_string(), "finalized_block:2");
+        let topic = finalized_topic(&params(&["finalized"]));
+        assert_eq!(topic.to_string(), "finalized_block:0");
+        let topic = finalized_topic(&params(&["finalized", "0", "pp"]));
+        assert_eq!(topic.to_string(), "finalized_block:0:pp");
+        // not a chain
+        let topic = finalized_topic(&params(&["finalized", "1", "xx"]));
+        assert_eq!(topic.to_string(), "finalized_block:1");
     }
 }

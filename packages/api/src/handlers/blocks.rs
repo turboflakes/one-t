@@ -54,29 +54,20 @@ fn default_index() -> Index {
     Index::Current
 }
 
-/// Current session of a chain: relay session for rc, parachain session for ah and pp.
-async fn get_current_session(
+/// Collation stats of the current parachain session of a chain (ah, pp), serialized.
+/// Note: as of now, collation is not tracked per block.
+pub(crate) async fn get_collation_stats_by_chain(
     conn: &mut Connection,
     chain_key: &ChainKey,
-) -> Result<Option<EpochIndex>, ApiError> {
-    let key = match chain_key {
-        ChainKey::RC => CacheKey::SessionByIndex(Index::Current),
-        _ => CacheKey::CollatorCurrentSession(chain_key.clone()),
-    };
-    Ok(redis::cmd("GET")
-        .arg(key)
+) -> Result<Option<String>, ApiError> {
+    let Some(session) = redis::cmd("GET")
+        .arg(CacheKey::CollatorCurrentSession(chain_key.clone()))
         .query_async::<Option<EpochIndex>>(&mut *conn)
         .await
-        .map_err(CacheError::RedisCMDError)?)
-}
-
-/// Collation stats of a parachain session of a chain (ah, pp), serialized.
-/// Note: as of now, collation is not tracked per block.
-async fn get_collation_stats_by_chain(
-    conn: &mut Connection,
-    chain_key: &ChainKey,
-    session: EpochIndex,
-) -> Result<Option<String>, ApiError> {
+        .map_err(CacheError::RedisCMDError)?
+    else {
+        return Ok(None);
+    };
     Ok(redis::cmd("GET")
         .arg(CacheKey::CollatorStatsBySession(chain_key.clone(), session))
         .query_async::<Option<String>>(&mut *conn)
@@ -175,12 +166,7 @@ pub async fn get_finalized_block(
                     .await
                     .unwrap_or_default()
             } else {
-                match get_current_session(&mut conn, &chain_key).await? {
-                    Some(session) => {
-                        get_collation_stats_by_chain(&mut conn, &chain_key, session).await?
-                    }
-                    None => None,
-                }
+                get_collation_stats_by_chain(&mut conn, &chain_key).await?
             };
             if let Some(stats) = stats {
                 data.insert(String::from("stats"), stats);

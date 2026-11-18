@@ -21,6 +21,7 @@
 
 use crate::error::ApiError;
 use crate::{
+    handlers::blocks::get_collation_stats_by_chain,
     handlers::collators::{attach_collation_live, get_collators_result},
     responses::{
         AuthorityKey, AuthorityKeyCache, BlockResult, BlocksResult, CacheMap, ParachainsResult,
@@ -47,7 +48,8 @@ const BLOCK_INTERVAL: Duration = Duration::from_secs(6);
 
 #[derive(Clone, Eq, Hash, PartialEq, Debug)]
 pub enum Topic {
-    FinalizedBlock(u8),
+    // number of previous sessions and optionally the only chain to follow, all chains if none
+    FinalizedBlock(u8, Option<ChainKey>),
     BestBlock,
     Block(BlockNumber),
     NewSession,
@@ -60,8 +62,11 @@ pub enum Topic {
 impl std::fmt::Display for Topic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::FinalizedBlock(previous_sessions) => {
+            Self::FinalizedBlock(previous_sessions, None) => {
                 write!(f, "finalized_block:{}", previous_sessions)
+            }
+            Self::FinalizedBlock(previous_sessions, Some(chain_key)) => {
+                write!(f, "finalized_block:{}:{}", previous_sessions, chain_key)
             }
             Self::BestBlock => write!(f, "best_block"),
             Self::Block(block_number) => write!(f, "block:{}", block_number),
@@ -146,12 +151,13 @@ impl Channel {
         let mut conn = get_conn(cache).await?;
 
         match &topic {
-            Topic::FinalizedBlock(number_previous_sessions) => {
+            Topic::FinalizedBlock(number_previous_sessions, chain_key) => {
                 Self::handle_finalized_blocks(
                     &mut conn,
                     &config,
                     client_id,
                     *number_previous_sessions,
+                    chain_key.as_ref(),
                     act,
                 )
                 .await?
@@ -182,20 +188,30 @@ impl Channel {
         config: &Config,
         client_id: ClientId,
         number_previous_sessions: u8,
+        only_chain_key: Option<&ChainKey>,
         act: &Channel,
     ) -> Result<(), ApiError> {
-        // Process Relay Chain finalized blocks
-        Self::process_relay_chain_finalized_blocks(
-            conn,
-            config,
-            client_id,
-            number_previous_sessions,
-            act,
-        )
-        .await?;
+        let follows = |chain_key: &ChainKey| only_chain_key.is_none_or(|only| only == chain_key);
 
-        // Process Asset Hub finalized blocks
-        Self::process_asset_hub_finalized_blocks(conn, config, client_id, act).await?;
+        // Process Relay Chain finalized blocks
+        if follows(&ChainKey::RC) {
+            Self::process_relay_chain_finalized_blocks(
+                conn,
+                config,
+                client_id,
+                number_previous_sessions,
+                act,
+            )
+            .await?;
+        }
+
+        // Process Asset Hub and People finalized blocks
+        for chain_key in [ChainKey::AH, ChainKey::PEOPLE] {
+            if follows(&chain_key) {
+                Self::process_parachain_finalized_blocks(conn, config, client_id, chain_key, act)
+                    .await?;
+            }
+        }
 
         Ok(())
     }
@@ -338,13 +354,13 @@ impl Channel {
         Ok(())
     }
 
-    async fn process_asset_hub_finalized_blocks(
+    async fn process_parachain_finalized_blocks(
         conn: &mut Connection,
         config: &Config,
         client_id: ClientId,
+        chain_key: ChainKey,
         act: &Channel,
     ) -> Result<(), ApiError> {
-        let chain_key = ChainKey::AH;
         let cache_key = CacheKey::FinalizedBlock(chain_key.clone());
         if let Ok(Some(block_number)) = redis::cmd("GET")
             .arg(CacheKey::FinalizedBlock(chain_key.clone()))
@@ -365,6 +381,14 @@ impl Channel {
                     block_data.insert(String::from("chain_key"), chain_key.to_string());
                     block_data.insert(String::from("block_number"), block_number.to_string());
                     block_data.insert(String::from("is_finalized"), (true).to_string());
+                    // collation stats of the current parachain session
+                    match get_collation_stats_by_chain(conn, &chain_key).await {
+                        Ok(Some(stats)) => {
+                            block_data.insert(String::from("stats"), stats);
+                        }
+                        Ok(None) => {}
+                        Err(e) => warn!("Collation stats of {chain_key} not available: {e:?}"),
+                    }
 
                     let resp = WsResponseMessage {
                         r#type: String::from("block"),
@@ -931,7 +955,7 @@ impl Handler<Unsubscribe> for Channel {
         if self.sessions.remove(&msg.id).is_some() {
             info!("session {} unsubscribed from channel {}", id, self.topic);
             // delete unsubscribed clientes from cache
-            if let Topic::FinalizedBlock(_) = self.topic {
+            if let Topic::FinalizedBlock(..) = self.topic {
                 let future = async {
                     if let Ok(mut conn) = get_conn(&self.cache).await {
                         if let Err(e) = redis::cmd("DEL")
