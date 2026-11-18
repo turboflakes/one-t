@@ -121,6 +121,27 @@ pub async fn get_sessions(
     respond_json(data.into())
 }
 
+/// Get the collation stats of a (relay) session by parachain id, serialized.
+/// None if there are no collation stats for the session.
+pub async fn get_collation_stats(
+    conn: &mut Connection,
+    session_index: EpochIndex,
+) -> Result<Option<String>, ApiError> {
+    let collation: CacheMap = redis::cmd("HGETALL")
+        .arg(CacheKey::CollatorStatsByEpoch(session_index))
+        .query_async(conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    if collation.is_empty() {
+        return Ok(None);
+    }
+    let by_para: BTreeMap<String, serde_json::Value> = collation
+        .iter()
+        .filter_map(|(para_id, stats)| Some((para_id.clone(), serde_json::from_str(stats).ok()?)))
+        .collect();
+    Ok(Some(serde_json::to_string(&by_para)?))
+}
+
 /// Get the session data with the requested stats.
 /// The second element is false if any of the requested stats is not yet cached.
 async fn get_session_data(
@@ -173,23 +194,9 @@ async fn get_session_data(
     }
 
     if show_collation {
-        // Note: collation stats by parachain id, not having them does not mean syncing
-        let collation: CacheMap = redis::cmd("HGETALL")
-            .arg(CacheKey::CollatorStatsByEpoch(session_index))
-            .query_async(conn)
-            .await
-            .map_err(CacheError::RedisCMDError)?;
-        if !collation.is_empty() {
-            let by_para: BTreeMap<String, serde_json::Value> = collation
-                .iter()
-                .filter_map(|(para_id, stats)| {
-                    Some((para_id.clone(), serde_json::from_str(stats).ok()?))
-                })
-                .collect();
-            session_data.insert(
-                String::from("collation_stats"),
-                serde_json::to_string(&by_para)?,
-            );
+        // Note: not having them does not mean syncing
+        if let Some(collation_stats) = get_collation_stats(conn, session_index).await? {
+            session_data.insert(String::from("collation_stats"), collation_stats);
         }
     }
 

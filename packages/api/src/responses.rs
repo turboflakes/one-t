@@ -130,22 +130,45 @@ pub struct BlockResult {
     // is_finalized
     #[serde(skip_serializing_if = "default")]
     is_finalized: bool,
-    // session stats
-    #[serde(skip_serializing_if = "SessionStats::is_empty")]
-    stats: SessionStats,
+    // stats depend on the chain_key: network session stats for rc, collation session stats for ah and pp
+    #[serde(default, skip_serializing_if = "BlockStats::is_empty")]
+    stats: BlockStats,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum BlockStats {
+    Network(SessionStats),
+    Collation(CollatorSessionStats),
+}
+
+impl Default for BlockStats {
+    fn default() -> Self {
+        BlockStats::Network(SessionStats::default())
+    }
+}
+
+impl BlockStats {
+    fn is_empty(&self) -> bool {
+        match self {
+            BlockStats::Network(s) => s.is_empty(),
+            BlockStats::Collation(s) => s.is_empty(),
+        }
+    }
 }
 
 impl From<CacheMap> for BlockResult {
     fn from(data: CacheMap) -> Self {
         let zero = "0".to_string();
         let serialized = data.get("stats").unwrap_or(&"{}".to_string()).to_string();
-        let stats: SessionStats = serde_json::from_str(&serialized).unwrap_or_default();
+        let stats: BlockStats = serde_json::from_str(&serialized).unwrap_or_default();
+        let chain_key = data
+            .get("chain_key")
+            .unwrap_or(&"{}".to_string())
+            .parse::<ChainKey>()
+            .unwrap_or_default();
         BlockResult {
-            chain_key: data
-                .get("chain_key")
-                .unwrap_or(&"{}".to_string())
-                .parse::<ChainKey>()
-                .unwrap_or_default(),
+            chain_key,
             block_number: data
                 .get("block_number")
                 .unwrap_or(&zero)
@@ -1168,6 +1191,35 @@ mod collator_tests {
 
         let empty: SessionResult = CacheMap::new().into();
         assert!(!serde_json::to_string(&empty).unwrap().contains("collation"));
+    }
+
+    #[test]
+    fn block_stats_depend_on_the_chain() {
+        let mut data = CacheMap::new();
+        data.insert(String::from("chain_key"), String::from("ah"));
+        data.insert(String::from("block_number"), String::from("19519312"));
+        let without = serde_json::to_string(&BlockResult::from(data.clone())).unwrap();
+        assert!(!without.contains("stats"));
+        data.insert(
+            String::from("stats"),
+            String::from(
+                r#"{"sbix":1,"ebix":2,"nc":22,"os":150,"eb":1800,"pb":1796,"pt":35920,"ms":1}"#,
+            ),
+        );
+        let ah = serde_json::to_string(&BlockResult::from(data)).unwrap();
+        assert!(ah.contains(r#""stats":{"sbix":1,"ebix":2,"nc":22"#));
+
+        let mut data = CacheMap::new();
+        data.insert(String::from("chain_key"), String::from("rc"));
+        data.insert(String::from("block_number"), String::from("33799906"));
+        data.insert(
+            String::from("stats"),
+            String::from(
+                r#"{"na":20,"npa":20,"pt":1,"ab":1,"ca":1,"ev":0,"iv":1,"mv":0,"di":0,"ba":1,"bu":0}"#,
+            ),
+        );
+        let rc = serde_json::to_string(&BlockResult::from(data)).unwrap();
+        assert!(rc.contains(r#""stats":{"na":20,"npa":20"#));
     }
 
     #[test]
