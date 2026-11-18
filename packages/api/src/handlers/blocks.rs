@@ -40,9 +40,10 @@ use serde::Deserialize;
 pub struct Params {
     #[serde(default = "default_index")]
     session: Index,
-    // show_stats indicates whether session stats should be retrieved or not, default false
-    #[serde(default)]
-    show_stats: bool,
+    // stats indicates whether session stats should be retrieved or not, default false
+    // Note: `show_stats` is deprecated, use `stats`
+    #[serde(default, alias = "show_stats")]
+    stats: bool,
     #[serde(default)]
     chain_key: ChainKey,
 }
@@ -93,7 +94,7 @@ pub async fn get_blocks(
                 block_data.insert(String::from("block_number"), block_number.to_string());
                 block_data.insert(String::from("is_finalized"), (true).to_string());
 
-                if params.show_stats {
+                if params.stats {
                     if let Ok(stats) = redis::cmd("GET")
                         .arg(CacheKey::BlockByIndexStats(Index::Num(*block_number)))
                         .query_async::<String>(&mut conn as &mut Connection)
@@ -134,7 +135,7 @@ pub async fn get_finalized_block(
         data.insert(String::from("block_number"), block_number.to_string());
         data.insert(String::from("is_finalized"), (true).to_string());
 
-        if params.show_stats {
+        if params.stats {
             if let Ok(stats) = redis::cmd("GET")
                 .arg(CacheKey::BlockByIndexStats(Index::Num(block_number)))
                 .query_async::<String>(&mut conn as &mut Connection)

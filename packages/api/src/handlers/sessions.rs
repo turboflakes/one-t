@@ -67,7 +67,7 @@ pub async fn get_sessions(
     };
 
     // Try if query exists in cache
-    if params.from != 0 && params.from < params.to && params.show_netstats {
+    if params.from != 0 && params.from < params.to && params.netstats {
         // Check if query is already cached
         if let Ok(serialized_data) = redis::cmd("GET")
             .arg(CacheKey::QuerySessions(req.query_string().to_string()))
@@ -89,8 +89,9 @@ pub async fn get_sessions(
             let (session_data, is_complete) = get_session_data(
                 &mut conn as &mut Connection,
                 session_index,
-                params.show_stats,
-                params.show_netstats,
+                params.stats,
+                params.netstats,
+                params.collation_stats,
             )
             .await?;
             cache_query = cache_query && is_complete;
@@ -103,7 +104,7 @@ pub async fn get_sessions(
 
     // // TODO: cache only when new session sync is complete
     // Cache specific query
-    if params.from != 0 && params.from < params.to && params.show_netstats && cache_query {
+    if params.from != 0 && params.from < params.to && params.netstats && cache_query {
         // Serialize data and cache for one session
         // 1 hour kusama, 4 hours polkadot
         let serialized = serde_json::to_string(&data)?;
@@ -127,6 +128,7 @@ async fn get_session_data(
     session_index: EpochIndex,
     show_stats: bool,
     show_netstats: bool,
+    show_collation: bool,
 ) -> Result<(CacheMap, bool), ApiError> {
     let mut is_complete = true;
     let mut session_data: CacheMap = redis::cmd("HGETALL")
@@ -168,7 +170,9 @@ async fn get_session_data(
             session_data.insert(String::from("is_syncing"), (true).to_string());
             is_complete = false;
         }
+    }
 
+    if show_collation {
         // Note: collation stats by parachain id, not having them does not mean syncing
         let collation: CacheMap = redis::cmd("HGETALL")
             .arg(CacheKey::CollatorStatsByEpoch(session_index))
@@ -182,7 +186,10 @@ async fn get_session_data(
                     Some((para_id.clone(), serde_json::from_str(stats).ok()?))
                 })
                 .collect();
-            session_data.insert(String::from("collation"), serde_json::to_string(&by_para)?);
+            session_data.insert(
+                String::from("collation_stats"),
+                serde_json::to_string(&by_para)?,
+            );
         }
     }
 
@@ -246,16 +253,17 @@ pub async fn get_session_by_index(
     }
 
     // add the requested stats, including the ones of the running session
-    if params.show_stats || params.show_netstats {
+    if params.stats || params.netstats || params.collation_stats {
         if let Ok(session_index) = requested.parse::<EpochIndex>() {
             let (extra, _) = get_session_data(
                 &mut conn as &mut Connection,
                 session_index,
-                params.show_stats,
-                params.show_netstats,
+                params.stats,
+                params.netstats,
+                params.collation_stats,
             )
             .await?;
-            for key in ["stats", "collation", "netstats", "is_syncing"] {
+            for key in ["stats", "collation_stats", "netstats", "is_syncing"] {
                 if let Some(value) = extra.get(key) {
                     data.insert(key.to_string(), value.clone());
                 }

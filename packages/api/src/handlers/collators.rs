@@ -48,15 +48,18 @@ pub struct Params {
     // parachain session, default current
     #[serde(default = "default_index")]
     session: Index,
-    // show_stats indicates whether the session stats should be retrieved or not, default false
-    #[serde(default)]
-    show_stats: bool,
-    // show_block_numbers indicates whether the produced block numbers (pbn) of each collator should be retrieved or not, default false
-    #[serde(default)]
-    show_block_numbers: bool,
-    // show_missed_slots indicates whether the missed slots (msl) of each collator should be retrieved or not, default false
-    #[serde(default)]
-    show_missed_slots: bool,
+    // stats indicates whether the session stats should be retrieved or not, default false
+    // Note: `show_stats` is deprecated, use `stats`
+    #[serde(default, alias = "show_stats")]
+    stats: bool,
+    // block_numbers indicates whether the produced block numbers (pbn) of each collator should be retrieved or not, default false
+    // Note: `show_block_numbers` is deprecated, use `block_numbers`
+    #[serde(default, alias = "show_block_numbers")]
+    block_numbers: bool,
+    // missed_slots indicates whether the missed slots (msl) of each collator should be retrieved or not, default false
+    // Note: `show_missed_slots` is deprecated, use `missed_slots`
+    #[serde(default, alias = "show_missed_slots")]
+    missed_slots: bool,
 }
 
 fn default_chain() -> ChainKey {
@@ -83,9 +86,9 @@ pub async fn get_collators(
         &mut conn as &mut Connection,
         &params.chain_key,
         &params.session,
-        params.show_stats,
-        params.show_block_numbers,
-        params.show_missed_slots,
+        params.stats,
+        params.block_numbers,
+        params.missed_slots,
     )
     .await?;
 

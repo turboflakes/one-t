@@ -187,7 +187,7 @@ pub struct SessionResult {
     netstats: NetworkSessionStats,
     // collation stats by parachain id
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    collation: BTreeMap<ParaId, CollatorSessionStats>,
+    collation_stats: BTreeMap<ParaId, CollatorSessionStats>,
     is_syncing: bool,
 }
 
@@ -209,12 +209,12 @@ impl From<CacheMap> for SessionResult {
         let netstats: NetworkSessionStats =
             serde_json::from_str(&netstats_serialized).unwrap_or_default();
 
-        // collation
+        // collation stats
         let collation_serialized = data
-            .get("collation")
+            .get("collation_stats")
             .unwrap_or(&"{}".to_string())
             .to_string();
-        let collation: BTreeMap<ParaId, CollatorSessionStats> =
+        let collation_stats: BTreeMap<ParaId, CollatorSessionStats> =
             serde_json::from_str(&collation_serialized).unwrap_or_default();
 
         SessionResult {
@@ -255,7 +255,7 @@ impl From<CacheMap> for SessionResult {
                 .unwrap_or_default(),
             stats,
             netstats,
-            collation,
+            collation_stats,
         }
     }
 }
@@ -280,7 +280,7 @@ impl<'de> Deserialize<'de> for SessionResult {
             IsCurrent,
             Stats,
             Netstats,
-            Collation,
+            CollationStats,
             IsSyncing,
         }
 
@@ -305,7 +305,7 @@ impl<'de> Deserialize<'de> for SessionResult {
                 let mut is_current: Option<bool> = None;
                 let mut stats: Option<SessionStats> = None;
                 let mut netstats: Option<NetworkSessionStats> = None;
-                let mut collation: Option<BTreeMap<ParaId, CollatorSessionStats>> = None;
+                let mut collation_stats: Option<BTreeMap<ParaId, CollatorSessionStats>> = None;
                 let mut is_syncing: Option<bool> = None;
 
                 while let Some(key) = map.next_key()? {
@@ -358,11 +358,11 @@ impl<'de> Deserialize<'de> for SessionResult {
                             }
                             netstats = Some(map.next_value()?);
                         }
-                        Field::Collation => {
-                            if collation.is_some() {
-                                return Err(serde::de::Error::duplicate_field("collation"));
+                        Field::CollationStats => {
+                            if collation_stats.is_some() {
+                                return Err(serde::de::Error::duplicate_field("collation_stats"));
                             }
-                            collation = Some(map.next_value()?);
+                            collation_stats = Some(map.next_value()?);
                         }
                         Field::IsSyncing => {
                             if is_syncing.is_some() {
@@ -384,7 +384,7 @@ impl<'de> Deserialize<'de> for SessionResult {
                 let mut result = SessionResult::new(
                     six, eix, sbix, ebix, esix, is_current, stats, netstats, is_syncing,
                 );
-                result.collation = collation.unwrap_or_default();
+                result.collation_stats = collation_stats.unwrap_or_default();
                 Ok(result)
             }
         }
@@ -398,7 +398,7 @@ impl<'de> Deserialize<'de> for SessionResult {
             "is_current",
             "stats",
             "netstats",
-            "collation",
+            "collation_stats",
             "is_syncing",
         ];
         deserializer.deserialize_struct("SessionResult", FIELDS, SessionResultVisitor)
@@ -427,7 +427,7 @@ impl SessionResult {
             is_current,
             stats,
             netstats,
-            collation: BTreeMap::new(),
+            collation_stats: BTreeMap::new(),
             is_syncing,
         }
     }
@@ -1148,11 +1148,11 @@ mod collator_tests {
     }
 
     #[test]
-    fn session_result_has_collation_by_para_id() {
+    fn session_result_has_collation_stats_by_para_id() {
         let mut data = CacheMap::new();
         data.insert(String::from("session"), String::from("57754"));
         data.insert(
-            String::from("collation"),
+            String::from("collation_stats"),
             String::from(
                 r#"{"1000":{"sbix":19471000,"ebix":19471600,"nc":22,"os":150,"eb":1800,"pb":1796,"pt":35920,"ms":1}}"#,
             ),
@@ -1160,7 +1160,7 @@ mod collator_tests {
         let result: SessionResult = data.into();
         let serialized = serde_json::to_string(&result).unwrap();
         assert!(serialized.contains(
-            r#""collation":{"1000":{"sbix":19471000,"ebix":19471600,"nc":22,"os":150,"eb":1800,"pb":1796,"pt":35920,"ms":1}}"#
+            r#""collation_stats":{"1000":{"sbix":19471000,"ebix":19471600,"nc":22,"os":150,"eb":1800,"pb":1796,"pt":35920,"ms":1}}"#
         ));
         // round trip, as used by the sessions query cache
         let parsed: SessionResult = serde_json::from_str(&serialized).unwrap();

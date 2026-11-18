@@ -118,21 +118,26 @@ pub struct Params {
     report: Report,
     #[serde(default = "default_index")]
     session: Index,
-    // show_stats indicates whether parachain details should be retrieved or not, default false
-    #[serde(default)]
-    show_stats: bool,
-    // show_summary indicates whether parachain summary should be retrieved or not, default false
-    #[serde(default)]
-    show_summary: bool,
-    // show_discovery indicates whether p2p data should be retrieved or not, default false
-    #[serde(default)]
-    show_discovery: bool,
-    // show_profile indicates whether validator identity should be retrieved or not, default false
-    #[serde(default)]
-    show_profile: bool,
-    // show_preds indicates whether predictions should be attached to the validator or not, default false
-    #[serde(default)]
-    show_preds: bool,
+    // stats indicates whether parachain details should be retrieved or not, default false
+    // Note: `show_stats` is deprecated, use `stats`
+    #[serde(default, alias = "show_stats")]
+    stats: bool,
+    // summary indicates whether parachain summary should be retrieved or not, default false
+    // Note: `show_summary` is deprecated, use `summary`
+    #[serde(default, alias = "show_summary")]
+    summary: bool,
+    // discovery indicates whether p2p data should be retrieved or not, default false
+    // Note: `show_discovery` is deprecated, use `discovery`
+    #[serde(default, alias = "show_discovery")]
+    discovery: bool,
+    // profile indicates whether validator identity should be retrieved or not, default false
+    // Note: `show_profile` is deprecated, use `profile`
+    #[serde(default, alias = "show_profile")]
+    profile: bool,
+    // preds indicates whether predictions should be attached to the validator or not, default false
+    // Note: `show_preds` is deprecated, use `preds`
+    #[serde(default, alias = "show_preds")]
+    preds: bool,
     // show_sessions indicates whether the list of sessions involved in the grade calculation should be retrieved or not, default false
     #[serde(default)]
     show_sessions: bool,
@@ -652,7 +657,7 @@ pub async fn get_validators(
     params: Query<Params>,
     cache: Data<RedisPool>,
 ) -> Result<Json<ValidatorsResult>, ApiError> {
-    let show_preds = params.show_preds;
+    let show_preds = params.preds;
     let mut result = get_validators_by_params(req, params, cache.clone()).await?;
     let mut conn = get_conn(&cache).await?;
     // Note: attached here so cached queries, like the ranking, do not keep the slot
@@ -696,7 +701,7 @@ async fn get_validators_by_params(
     //
     if params.role == Role::Waiting {
         let res: ValidatorsResult =
-            get_waiting_validators_by_session(requested_session_index, params.show_profile, cache)
+            get_waiting_validators_by_session(requested_session_index, params.profile, cache)
                 .await?;
 
         return respond_json(res);
@@ -735,9 +740,9 @@ async fn get_validators_by_params(
                 let (validator_data, mut authority_key) = get_validator_by_stash_and_index(
                     stash,
                     session_index,
-                    params.show_stats,
-                    params.show_summary,
-                    params.show_discovery,
+                    params.stats,
+                    params.summary,
+                    params.discovery,
                     false,
                     cache.clone(),
                 )
@@ -756,10 +761,10 @@ async fn get_validators_by_params(
                                         authority_key.authority_index = index as u32;
                                         let peer_data = get_validator_by_authority_key(
                                             authority_key.clone(),
-                                            params.show_stats,
-                                            params.show_summary,
-                                            params.show_discovery,
-                                            params.show_profile,
+                                            params.stats,
+                                            params.summary,
+                                            params.discovery,
+                                            params.profile,
                                             false,
                                             cache.clone(),
                                         )
@@ -812,10 +817,10 @@ async fn get_validators_by_params(
                     }
                     let val = get_validator_by_authority_key(
                         (*key).clone().into(),
-                        params.show_stats,
-                        params.show_summary,
-                        params.show_discovery,
-                        params.show_profile,
+                        params.stats,
+                        params.summary,
+                        params.discovery,
+                        params.profile,
                         false,
                         cache.clone(),
                     )
@@ -886,7 +891,7 @@ async fn get_validators_by_params(
                     for key in authority_keys.iter() {
                         let val = get_validator_by_authority_key(
                             (*key).clone().into(),
-                            params.show_stats,
+                            params.stats,
                             true,
                             false,
                             true,
@@ -1123,10 +1128,10 @@ async fn get_validators_by_params(
 
                         if let Ok(mut v) = get_validator_by_authority_key(
                             authority_key,
-                            params.show_stats,
-                            params.show_summary,
-                            params.show_discovery,
-                            params.show_profile,
+                            params.stats,
+                            params.summary,
+                            params.discovery,
+                            params.profile,
                             false,
                             cache.clone(),
                         )
@@ -1153,10 +1158,10 @@ async fn get_validators_by_params(
     let res: ValidatorsResult = get_session_authorities(
         requested_session_index,
         params.role.clone(),
-        params.show_stats,
-        params.show_summary,
-        params.show_discovery,
-        params.show_profile,
+        params.stats,
+        params.summary,
+        params.discovery,
+        params.profile,
         params.collators_only,
         cache,
     )
@@ -1201,9 +1206,9 @@ pub async fn get_validator_by_stash(
     let (mut data, _) = get_validator_by_stash_and_index(
         stash,
         session_index,
-        params.show_stats,
-        params.show_summary,
-        params.show_discovery,
+        params.stats,
+        params.summary,
+        params.discovery,
         false,
         cache,
     )
@@ -1215,7 +1220,7 @@ pub async fn get_validator_by_stash(
     )
     .await?;
 
-    if params.show_preds {
+    if params.preds {
         data.preds = get_validator_predictions(&mut conn as &mut Connection, stash).await?;
     }
 
@@ -1281,10 +1286,10 @@ pub async fn get_peer_by_authority(
 
     let data = get_validator_by_authority_key(
         authority_key,
-        params.show_stats,
-        params.show_summary,
-        params.show_discovery,
-        params.show_profile,
+        params.stats,
+        params.summary,
+        params.discovery,
+        params.profile,
         false,
         cache,
     )
@@ -1454,7 +1459,7 @@ async fn calculate_validator_grade_by_stash(
             .map(collation_grade)
             .unwrap_or(Grade::NA)
             .to_string();
-        if params.show_summary {
+        if params.summary {
             return Ok(ValidatorGradeResult {
                 address: stash.to_string(),
                 grade: grade.clone(),
@@ -1516,7 +1521,7 @@ async fn calculate_validator_grade_by_stash(
 
     let bur = burs.iter().sum::<f64>() / para_epochs as f64;
 
-    if params.show_summary {
+    if params.summary {
         return Ok(ValidatorGradeResult {
             address: stash.to_string(),
             grade: grade(mvr, bur, collation.mcr).to_string(),
