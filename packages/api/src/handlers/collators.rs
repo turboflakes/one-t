@@ -174,7 +174,7 @@ pub async fn get_collators_result(
 
     // Note: the slot the parachain is in only makes sense for its current session
     if current_session == Some(session_index) {
-        result.live = redis::cmd("GET")
+        result.slot = redis::cmd("GET")
             .arg(CacheKey::CollatorLiveSlot(chain_key.clone()))
             .query_async::<Option<String>>(&mut *conn)
             .await

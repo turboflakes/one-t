@@ -907,9 +907,8 @@ pub struct CollatorsResult {
     pub chain_key: String,
     pub para_id: ParaId,
     pub session: EpochIndex,
-    // slot the parachain is in right now, only for the current session
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub live: Option<LiveSlot>,
+    pub slot: Option<LiveSlot>,
     #[serde(skip_serializing_if = "CollatorSessionStats::is_empty")]
     pub stats: CollatorSessionStats,
     pub data: Vec<CollatorResult>,
@@ -940,7 +939,7 @@ impl CollatorsResult {
             chain_key,
             para_id,
             session,
-            live: None,
+            slot: None,
             stats,
             data,
         }
@@ -1255,16 +1254,17 @@ mod collator_tests {
             false,
             false,
         );
-        assert!(!serde_json::to_string(&result).unwrap().contains("live"));
-        result.live = Some(LiveSlot {
+        assert!(!serde_json::to_string(&result).unwrap().contains("slot"));
+        result.slot = Some(LiveSlot {
             slot: 123,
             cix: Some(17),
             owner: Some("a".to_string()),
             pb: 5,
+            pt: 100,
         });
         assert!(serde_json::to_string(&result)
             .unwrap()
-            .contains(r#""live":{"slot":123,"cix":17,"owner":"a","pb":5}"#));
+            .contains(r#""slot":{"ix":123,"cix":17,"owner":"a","pb":5,"pt":100}"#));
     }
 
     #[test]
