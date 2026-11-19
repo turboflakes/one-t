@@ -23,7 +23,8 @@ use onet_cache::types::ChainKey;
 use onet_pools::{Pool, PoolCounter, PoolNominees, PoolNomineesStats, PoolState, PoolStats, Roles};
 use onet_records::{
     collators::{
-        CollationIndex, CollatorRecord, CollatorSessionStats, CollatorSummary, LiveSlot, Slot,
+        CollationIndex, CollatorInfra, CollatorRecord, CollatorSessionStats, CollatorSummary,
+        LiveSlot, Slot,
     },
     AuthorityIndex, AuthorityRecord, BlockNumber, DiscoveryRecord, EpochIndex, EraIndex,
     NetworkSessionStats, ParaId, ParaStats, ParachainRecord, ProfilePrediction, SessionStats,
@@ -429,6 +430,23 @@ impl<'de> Deserialize<'de> for SessionResult {
 }
 
 impl SessionResult {
+    pub fn six(&self) -> EpochIndex {
+        self.six
+    }
+
+    pub fn is_current(&self) -> bool {
+        self.is_current
+    }
+
+    /// Set the slot each parachain is in right now on its collation stats
+    pub fn set_live_slots(&mut self, live: &BTreeMap<ParaId, LiveSlot>) {
+        for (para_id, stats) in self.collation_stats.iter_mut() {
+            if let Some(slot) = live.get(para_id) {
+                stats.slot = Some(slot.clone());
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         six: EpochIndex,
@@ -911,10 +929,28 @@ pub struct CollatorsResult {
     pub slot: Option<LiveSlot>,
     #[serde(skip_serializing_if = "CollatorSessionStats::is_empty")]
     pub stats: CollatorSessionStats,
-    pub data: Vec<CollatorResult>,
+    // number of collators by kind, only set when requested
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub infra: Option<CollatorInfra>,
+    // collators, not set when only the infra is requested
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Vec<CollatorResult>>,
 }
 
 impl CollatorsResult {
+    /// Set the number of collators by kind, and drop the collators and the slot if `only` is set
+    pub fn set_infra(&mut self, only: bool) {
+        let mut infra = CollatorInfra::default();
+        for collator in self.data.iter().flatten() {
+            infra.add(collator.summary.kind);
+        }
+        self.infra = Some(infra);
+        if only {
+            self.data = None;
+            self.slot = None;
+        }
+    }
+
     pub fn new(
         chain_key: String,
         para_id: ParaId,
@@ -941,7 +977,8 @@ impl CollatorsResult {
             session,
             slot: None,
             stats,
-            data,
+            infra: None,
+            data: Some(data),
         }
     }
 }
@@ -1222,6 +1259,38 @@ mod collator_tests {
     }
 
     #[test]
+    fn session_collation_stats_show_the_open_slot() {
+        let mut data = CacheMap::new();
+        data.insert(String::from("session"), String::from("57804"));
+        data.insert(
+            String::from("collation_stats"),
+            String::from(
+                r#"{"1000":{"sbix":1,"ebix":2,"nc":30,"os":15,"eb":180,"pb":158,"pt":3160,"ms":1},"1004":{"sbix":1,"ebix":2,"nc":22,"os":15,"eb":180,"pb":174,"pt":1740,"ms":0}}"#,
+            ),
+        );
+        let mut result: SessionResult = data.into();
+        let mut live = BTreeMap::new();
+        live.insert(
+            1000,
+            LiveSlot {
+                slot: 74792625,
+                cix: Some(17),
+                owner: Some("a".to_string()),
+                pb: 3,
+                pt: 30,
+                bix: 19566017,
+            },
+        );
+        result.set_live_slots(&live);
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(serialized.contains(
+            r#""ms":1,"slot":{"ix":74792625,"cix":17,"owner":"a","pb":3,"pt":30,"bix":19566017}}"#
+        ));
+        // only the parachain with an open slot has it
+        assert_eq!(serialized.matches(r#""slot""#).count(), 1);
+    }
+
+    #[test]
     fn collator_result_shows_block_numbers_and_missed_slots_on_request() {
         use onet_records::collators::CollatorKind;
         let mut r = CollatorRecord::new("a".to_string(), CollatorKind::Validator);
@@ -1244,6 +1313,43 @@ mod collator_tests {
     }
 
     #[test]
+    fn collators_result_counts_collators_by_kind() {
+        use onet_records::collators::CollatorKind;
+        let records = vec![
+            CollatorRecord::new("a".to_string(), CollatorKind::Invulnerable),
+            CollatorRecord::new("b".to_string(), CollatorKind::Invulnerable),
+            CollatorRecord::new("c".to_string(), CollatorKind::Permissionless),
+            CollatorRecord::new("d".to_string(), CollatorKind::Validator),
+            CollatorRecord::new("e".to_string(), CollatorKind::Unknown),
+        ];
+        let new = || {
+            CollatorsResult::new(
+                "pp".into(),
+                1004,
+                7,
+                Default::default(),
+                records.clone(),
+                false,
+                false,
+            )
+        };
+        let plain = serde_json::to_string(&new()).unwrap();
+        assert!(plain.contains(r#""data":["#) && !plain.contains("infra"));
+        let mut result = new();
+        result.set_infra(false);
+        let with = serde_json::to_string(&result).unwrap();
+        assert!(with.contains(r#""infra":{"ni":2,"np":1,"nv":1}"#) && with.contains(r#""data":["#));
+        let mut result = new();
+        result.set_infra(true);
+        let only = serde_json::to_string(&result).unwrap();
+        assert!(only.contains(r#""infra":{"ni":2,"np":1,"nv":1}"#) && !only.contains("data"));
+        let mut result = new();
+        result.slot = Some(LiveSlot::default());
+        result.set_infra(true);
+        assert!(!serde_json::to_string(&result).unwrap().contains("slot"));
+    }
+
+    #[test]
     fn collators_result_shows_the_live_slot_only_when_set() {
         let mut result = CollatorsResult::new(
             "ah".into(),
@@ -1261,10 +1367,11 @@ mod collator_tests {
             owner: Some("a".to_string()),
             pb: 5,
             pt: 100,
+            bix: 19565900,
         });
         assert!(serde_json::to_string(&result)
             .unwrap()
-            .contains(r#""slot":{"ix":123,"cix":17,"owner":"a","pb":5,"pt":100}"#));
+            .contains(r#""slot":{"ix":123,"cix":17,"owner":"a","pb":5,"pt":100,"bix":19565900}"#));
     }
 
     #[test]

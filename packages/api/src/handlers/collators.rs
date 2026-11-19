@@ -60,6 +60,12 @@ pub struct Params {
     // Note: `show_missed_slots` is deprecated, use `missed_slots`
     #[serde(default, alias = "show_missed_slots")]
     missed_slots: bool,
+    // infra indicates whether the number of collators by kind should be retrieved or not, default false
+    #[serde(default)]
+    infra: bool,
+    // infra_only is the same as `infra` but the collators (`data`) are not retrieved, default false
+    #[serde(default)]
+    infra_only: bool,
 }
 
 fn default_chain() -> ChainKey {
@@ -82,7 +88,7 @@ pub async fn get_collators(
     }
 
     let mut conn = get_conn(&cache).await?;
-    let result = get_collators_result(
+    let mut result = get_collators_result(
         &mut conn as &mut Connection,
         &params.chain_key,
         &params.session,
@@ -91,6 +97,10 @@ pub async fn get_collators(
         params.missed_slots,
     )
     .await?;
+
+    if params.infra || params.infra_only {
+        result.set_infra(params.infra_only);
+    }
 
     respond_json(result)
 }
@@ -185,15 +195,9 @@ pub async fn get_collators_result(
     Ok(result)
 }
 
-/// Set the slot and the blocks produced so far on the validators that are collating right now.
-/// Note: the slot a parachain is in changes with every block, so it is not cached with the validators
-pub async fn attach_collation_live(
-    conn: &mut Connection,
-    validators: &mut [ValidatorResult],
-) -> Result<(), ApiError> {
-    if validators.iter().all(|v| v.collation.is_empty()) {
-        return Ok(());
-    }
+/// Slot each parachain is in right now, by parachain id.
+/// Note: the slot a parachain is in changes with every block, so it is not cached with the stats
+pub async fn get_live_slots(conn: &mut Connection) -> Result<BTreeMap<ParaId, LiveSlot>, ApiError> {
     let config = CONFIG.clone();
     let mut live: BTreeMap<ParaId, LiveSlot> = BTreeMap::new();
     for (chain_key, para_id) in [
@@ -202,7 +206,7 @@ pub async fn attach_collation_live(
     ] {
         let slot = redis::cmd("GET")
             .arg(CacheKey::CollatorLiveSlot(chain_key))
-            .query_async::<Option<String>>(conn)
+            .query_async::<Option<String>>(&mut *conn)
             .await
             .map_err(CacheError::RedisCMDError)?
             .and_then(|s| serde_json::from_str::<LiveSlot>(&s).ok());
@@ -210,6 +214,18 @@ pub async fn attach_collation_live(
             live.insert(para_id, slot);
         }
     }
+    Ok(live)
+}
+
+/// Set the slot and the blocks produced so far on the validators that are collating right now.
+pub async fn attach_collation_live(
+    conn: &mut Connection,
+    validators: &mut [ValidatorResult],
+) -> Result<(), ApiError> {
+    if validators.iter().all(|v| v.collation.is_empty()) {
+        return Ok(());
+    }
+    let live = get_live_slots(conn).await?;
     for validator in validators.iter_mut() {
         for entry in validator.collation.iter_mut() {
             if let Some(slot) = live.get(&entry.para_id) {

@@ -78,6 +78,9 @@ pub struct LiveSlot {
     // era points earned in the slot so far
     #[serde(default)]
     pub pt: u32,
+    // last parachain block followed, the one that is in the slot
+    #[serde(default)]
+    pub bix: BlockNumber,
 }
 
 impl CollationIndex {
@@ -181,6 +184,29 @@ impl CollatorSummary {
     }
 }
 
+/// Number of collators of a parachain session by kind
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollatorInfra {
+    // invulnerables
+    pub ni: u32,
+    // permissionless
+    pub np: u32,
+    // validators
+    pub nv: u32,
+}
+
+impl CollatorInfra {
+    /// Count a collator, kinds that are not known are not counted
+    pub fn add(&mut self, kind: Option<CollatorKind>) {
+        match kind {
+            Some(CollatorKind::Invulnerable) => self.ni += 1,
+            Some(CollatorKind::Permissionless) => self.np += 1,
+            Some(CollatorKind::Validator) => self.nv += 1,
+            _ => {}
+        }
+    }
+}
+
 /// Counters of the collators of a parachain in a session
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CollatorSessionStats {
@@ -202,6 +228,9 @@ pub struct CollatorSessionStats {
     pub pt: u32,
     // missed slots
     pub ms: u32,
+    // slot the parachain is in right now, only set by the api for the current session
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<LiveSlot>,
 }
 
 impl CollatorSessionStats {
@@ -424,6 +453,7 @@ impl ParaSlots {
             owner: open.owner.map(|owner| owner.to_string()),
             pb: open.blocks.len() as u32,
             pt: open.blocks.len() as u32 * self.points_per_block,
+            bix: self.last_block.unwrap_or_default(),
         })
     }
 
@@ -624,11 +654,13 @@ mod tests {
                 cix: Some(1),
                 owner: Some(acc(1).to_string()),
                 pb: 1,
-                pt: 20
+                pt: 20,
+                bix: 1
             })
         );
         t.on_block(2, 4);
         assert_eq!(t.live_slot().unwrap().pb, 2);
+        assert_eq!(t.live_slot().unwrap().bix, 2);
         t.on_block(3, 5);
         assert_eq!(
             t.live_slot(),
@@ -637,7 +669,8 @@ mod tests {
                 cix: Some(2),
                 owner: Some(acc(2).to_string()),
                 pb: 1,
-                pt: 20
+                pt: 20,
+                bix: 3
             })
         );
 
