@@ -151,7 +151,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                     Methods::SubscribeBlock => match req.params[0].as_str() {
                         "best" => self.server_addr.do_send(server::Subscribe {
                             id: self.id,
-                            topic: Topic::BestBlock,
+                            topic: best_topic(&req.params),
                         }),
                         "finalized" => self.server_addr.do_send(server::Subscribe {
                             id: self.id,
@@ -228,7 +228,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                     Methods::UnsubscribeBlock => match req.params[0].as_str() {
                         "best" => self.server_addr.do_send(server::Unsubscribe {
                             id: self.id,
-                            topic: Topic::BestBlock,
+                            topic: best_topic(&req.params),
                         }),
                         "finalized" => self.server_addr.do_send(server::Unsubscribe {
                             id: self.id,
@@ -316,6 +316,13 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
     }
 }
 
+/// Topic of the best blocks from the params `["best", previous_sessions, chain_key]`.
+/// Note: `previous_sessions` is not used by best blocks, it is kept so the params
+/// are the same as the finalized ones. If `chain_key` is not given, all chains are followed.
+fn best_topic(params: &[String]) -> Topic {
+    Topic::BestBlock(params.get(2).and_then(|c| ChainKey::from_str(c).ok()))
+}
+
 /// Topic of the finalized blocks from the params `["finalized", previous_sessions, chain_key]`.
 /// Note: `previous_sessions` is 0 if not valid and, if `chain_key` is not given, all chains are followed.
 fn finalized_topic(params: &[String]) -> Topic {
@@ -333,6 +340,19 @@ mod tests {
 
     fn params(p: &[&str]) -> Vec<String> {
         p.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn best_topic_follows_all_chains_unless_one_is_given() {
+        assert_eq!(best_topic(&params(&["best"])).to_string(), "best_block");
+        assert_eq!(
+            best_topic(&params(&["best", "0", "pp"])).to_string(),
+            "best_block:pp"
+        );
+        assert_eq!(
+            best_topic(&params(&["best", "0", "xx"])).to_string(),
+            "best_block"
+        );
     }
 
     #[test]

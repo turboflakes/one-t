@@ -51,7 +51,7 @@ const BLOCK_INTERVAL: Duration = Duration::from_secs(6);
 pub enum Topic {
     // number of previous sessions and optionally the only chain to follow, all chains if none
     FinalizedBlock(u8, Option<ChainKey>),
-    BestBlock,
+    BestBlock(Option<ChainKey>),
     Block(BlockNumber),
     NewSession,
     // current session, pushed at every new finalized block
@@ -71,7 +71,8 @@ impl std::fmt::Display for Topic {
             Self::FinalizedBlock(previous_sessions, Some(chain_key)) => {
                 write!(f, "finalized_block:{}:{}", previous_sessions, chain_key)
             }
-            Self::BestBlock => write!(f, "best_block"),
+            Self::BestBlock(None) => write!(f, "best_block"),
+            Self::BestBlock(Some(chain_key)) => write!(f, "best_block:{}", chain_key),
             Self::Block(block_number) => write!(f, "block:{}", block_number),
             Self::NewSession => write!(f, "new_session"),
             Self::CurrentSession => write!(f, "current_session"),
@@ -166,8 +167,8 @@ impl Channel {
                 )
                 .await?
             }
-            Topic::BestBlock => {
-                Self::handle_best_blocks(&mut conn, &config, client_id, act).await?
+            Topic::BestBlock(only_chain_key) => {
+                Self::handle_best_blocks(&mut conn, &config, client_id, only_chain_key, act).await?
             }
             Topic::NewSession => Self::handle_new_session(&mut conn, act).await?,
             Topic::CurrentSession => {
@@ -426,9 +427,13 @@ impl Channel {
         conn: &mut Connection,
         config: &Config,
         client_id: ClientId,
+        only_chain_key: &Option<ChainKey>,
         act: &Channel,
     ) -> Result<(), ApiError> {
-        for chain_key in [ChainKey::RC, ChainKey::AH] {
+        for chain_key in [ChainKey::RC, ChainKey::AH, ChainKey::PEOPLE] {
+            if only_chain_key.as_ref().is_some_and(|c| c != &chain_key) {
+                continue;
+            }
             let cache_key = CacheKey::BestBlock(chain_key.clone());
             if let Ok(Some(block_number)) = redis::cmd("GET")
                 .arg(CacheKey::BestBlock(chain_key.clone()))
