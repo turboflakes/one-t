@@ -21,9 +21,12 @@
 
 use crate::error::ApiError;
 use crate::{
-    handlers::{collators::get_live_slots, params::Params},
+    handlers::{
+        collators::{get_live_slot, get_live_slots},
+        params::Params,
+    },
     helpers::respond_json,
-    responses::{CacheMap, SessionResult, SessionsResult},
+    responses::{CacheMap, ParaSessionResult, SessionResponse, SessionResult, SessionsResult},
 };
 use actix_web::{
     web::{Data, Json, Path, Query},
@@ -33,10 +36,10 @@ use log::warn;
 use onet_cache::{
     error::CacheError,
     provider::{get_conn, RedisPool},
-    types::{CacheKey, Index},
+    types::{CacheKey, ChainKey, Index},
 };
 use onet_config::CONFIG;
-use onet_records::EpochIndex;
+use onet_records::{collators::CollatorSessionStats, EpochIndex};
 use redis::aio::MultiplexedConnection as Connection;
 use std::collections::BTreeMap;
 
@@ -48,6 +51,14 @@ pub async fn get_sessions(
 ) -> Result<Json<SessionsResult>, ApiError> {
     let config = CONFIG.clone();
     let mut conn = get_conn(&cache).await?;
+
+    if params.chain_key != ChainKey::RC {
+        return respond_json(
+            get_para_sessions(&mut conn as &mut Connection, &params)
+                .await?
+                .into(),
+        );
+    }
 
     let current_session: EpochIndex = redis::cmd("GET")
         .arg(CacheKey::SessionByIndex(Index::Current))
@@ -116,14 +127,6 @@ pub async fn get_sessions(
             .query_async::<String>(&mut conn as &mut Connection)
             .await
             .map_err(CacheError::RedisCMDError)?;
-    }
-
-    // Note: the slot is not cached, it is only set on the running session
-    if params.collation_stats {
-        let live = get_live_slots(&mut conn as &mut Connection).await?;
-        for session in data.iter_mut().filter(|s| s.six() == current_session) {
-            session.set_live_slots(&live);
-        }
     }
 
     // Note: the slot is not cached, it is only set on the running session
@@ -240,8 +243,13 @@ pub async fn get_session_by_index(
     index: Path<String>,
     params: Query<Params>,
     cache: Data<RedisPool>,
-) -> Result<Json<SessionResult>, ApiError> {
+) -> Result<Json<SessionResponse>, ApiError> {
     let mut conn = get_conn(&cache).await?;
+
+    if params.chain_key != ChainKey::RC {
+        let session = get_para_session(&mut conn as &mut Connection, &params, &index).await?;
+        return respond_json(SessionResponse::Para(session));
+    }
 
     let current: String = redis::cmd("GET")
         .arg(CacheKey::SessionByIndex(Index::Current))
@@ -299,5 +307,130 @@ pub async fn get_session_by_index(
     if params.collation_stats && result.is_current() {
         result.set_live_slots(&get_live_slots(&mut conn as &mut Connection).await?);
     }
-    respond_json(result)
+    respond_json(SessionResponse::Relay(result))
+}
+
+fn parachain_only(chain_key: &ChainKey) -> Result<(), ApiError> {
+    if *chain_key == ChainKey::RC {
+        return Err(ApiError::BadRequest(
+            "Parameter chain_key must be equal to one of the options: [rc, ah, pp]".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Current session of a parachain
+pub(crate) async fn get_para_current_session(
+    conn: &mut Connection,
+    chain_key: &ChainKey,
+) -> Result<Option<EpochIndex>, ApiError> {
+    Ok(redis::cmd("GET")
+        .arg(CacheKey::CollatorCurrentSession(chain_key.clone()))
+        .query_async::<Option<EpochIndex>>(conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?)
+}
+
+/// Stats of a parachain session, None if the session is not cached
+async fn get_para_session_stats(
+    conn: &mut Connection,
+    chain_key: &ChainKey,
+    session: EpochIndex,
+) -> Result<Option<CollatorSessionStats>, ApiError> {
+    Ok(redis::cmd("GET")
+        .arg(CacheKey::CollatorStatsBySession(chain_key.clone(), session))
+        .query_async::<Option<String>>(conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?
+        .and_then(|s| serde_json::from_str(&s).ok()))
+}
+
+pub(crate) async fn get_para_session_result(
+    conn: &mut Connection,
+    chain_key: &ChainKey,
+    session: EpochIndex,
+    current: Option<EpochIndex>,
+    with_stats: bool,
+    with_slot: bool,
+) -> Result<Option<ParaSessionResult>, ApiError> {
+    let Some(stats) = get_para_session_stats(conn, chain_key, session).await? else {
+        return Ok(None);
+    };
+    let is_current = current == Some(session);
+    let mut result = ParaSessionResult::new(session, &stats, is_current, with_stats);
+    // Note: the slot is not cached with the stats, it is only set on the running session
+    if with_slot && is_current {
+        result.slot = get_live_slot(conn, chain_key).await?;
+    }
+    Ok(Some(result))
+}
+
+async fn build_para_session(
+    conn: &mut Connection,
+    params: &Params,
+    session: EpochIndex,
+    current: Option<EpochIndex>,
+) -> Result<Option<ParaSessionResult>, ApiError> {
+    get_para_session_result(
+        conn,
+        &params.chain_key,
+        session,
+        current,
+        params.stats,
+        params.slot,
+    )
+    .await
+}
+
+/// Get the sessions of a parachain, `from` and `to`, `number_last_sessions` or the current one.
+/// Note: sessions that are not cached are not returned
+async fn get_para_sessions(
+    conn: &mut Connection,
+    params: &Params,
+) -> Result<Vec<ParaSessionResult>, ApiError> {
+    parachain_only(&params.chain_key)?;
+    let current = get_para_current_session(conn, &params.chain_key).await?;
+    let current_session = current.unwrap_or_default();
+
+    let (start, end) = if params.from != 0 && params.from < params.to {
+        (params.from, params.to)
+    } else if params.number_last_sessions != 0 {
+        (
+            current_session.saturating_sub(params.number_last_sessions),
+            current_session.saturating_sub(1),
+        )
+    } else {
+        (current_session, current_session)
+    };
+
+    let mut data = Vec::new();
+    for session in start..=end {
+        if let Some(result) = build_para_session(conn, params, session, current).await? {
+            data.push(result);
+        }
+    }
+    Ok(data)
+}
+
+/// Get a session of a parachain, `current` or its index
+async fn get_para_session(
+    conn: &mut Connection,
+    params: &Params,
+    index: &str,
+) -> Result<ParaSessionResult, ApiError> {
+    parachain_only(&params.chain_key)?;
+    let current = get_para_current_session(conn, &params.chain_key).await?;
+    let session = match index {
+        "current" => current.unwrap_or_default(),
+        index => index
+            .parse::<EpochIndex>()
+            .map_err(|_| ApiError::BadRequest(format!("Session {index} is not valid")))?,
+    };
+    build_para_session(conn, params, session, current)
+        .await?
+        .ok_or_else(|| {
+            let msg = format!("Session {session} details not found");
+            warn!("{}", msg);
+            ApiError::NotFound(msg)
+        })
 }

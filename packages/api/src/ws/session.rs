@@ -12,7 +12,7 @@ use actix::prelude::*;
 use actix_web_actors::ws;
 use log::{debug, warn};
 use onet_cache::types::{ChainKey, Verbosity};
-use onet_records::{BlockNumber, EpochIndex};
+use onet_records::{collators::CollatorKind, BlockNumber, EpochIndex};
 use subxt::utils::AccountId32;
 
 /// How often heartbeat pings are sent
@@ -164,11 +164,11 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                         match req.params.first().map(|p| p.as_str()) {
                             Some("new") => self.server_addr.do_send(server::Subscribe {
                                 id: self.id,
-                                topic: Topic::NewSession,
+                                topic: Topic::NewSession(session_chain(&req.params)),
                             }),
                             Some("current") => self.server_addr.do_send(server::Subscribe {
                                 id: self.id,
-                                topic: Topic::CurrentSession,
+                                topic: Topic::CurrentSession(session_chain(&req.params)),
                             }),
                             _ => (),
                         }
@@ -214,15 +214,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                         }
                     }
                     Methods::SubscribeCollators => {
-                        for chain_key in req.params.iter() {
-                            if let Ok(chain_key @ (ChainKey::AH | ChainKey::PEOPLE)) =
-                                ChainKey::from_str(chain_key)
-                            {
-                                self.server_addr.do_send(server::Subscribe {
-                                    id: self.id,
-                                    topic: Topic::Collators(chain_key),
-                                });
-                            }
+                        for topic in collators_topics(&req.params) {
+                            self.server_addr
+                                .do_send(server::Subscribe { id: self.id, topic });
                         }
                     }
                     Methods::UnsubscribeBlock => match req.params[0].as_str() {
@@ -241,11 +235,11 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                         match req.params.first().map(|p| p.as_str()) {
                             Some("new") => self.server_addr.do_send(server::Unsubscribe {
                                 id: self.id,
-                                topic: Topic::NewSession,
+                                topic: Topic::NewSession(session_chain(&req.params)),
                             }),
                             Some("current") => self.server_addr.do_send(server::Unsubscribe {
                                 id: self.id,
-                                topic: Topic::CurrentSession,
+                                topic: Topic::CurrentSession(session_chain(&req.params)),
                             }),
                             _ => (),
                         }
@@ -291,13 +285,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                         }
                     }
                     Methods::UnsubscribeCollators => {
-                        for chain_key in req.params.iter() {
-                            if let Ok(chain_key) = ChainKey::from_str(chain_key) {
-                                self.server_addr.do_send(server::Unsubscribe {
-                                    id: self.id,
-                                    topic: Topic::Collators(chain_key),
-                                });
-                            }
+                        for topic in collators_topics(&req.params) {
+                            self.server_addr
+                                .do_send(server::Unsubscribe { id: self.id, topic });
                         }
                     }
                     _ => warn!("Not Implemented: {:?}", req),
@@ -314,6 +304,27 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
             ws::Message::Nop => (),
         }
     }
+}
+
+/// Topics of the collators from the params `[chain_key, ..., kind]`, where chain_key is `ah` or `pp`.
+/// Note: the optional kind (`i`, `p`, `v` or `u`) applies to all chains given, and the
+/// collators sent are only the ones of that kind.
+fn collators_topics(params: &[String]) -> Vec<Topic> {
+    let kind = params.iter().find_map(|p| CollatorKind::from_code(p));
+    params
+        .iter()
+        .filter_map(|p| ChainKey::from_str(p).ok())
+        .filter(|c| matches!(c, ChainKey::AH | ChainKey::PEOPLE))
+        .map(|c| Topic::Collators(c, kind))
+        .collect()
+}
+
+/// Parachain of the session topics from the params `["new" | "current", chain_key]`, the relay chain if none.
+fn session_chain(params: &[String]) -> Option<ChainKey> {
+    params
+        .get(1)
+        .and_then(|c| ChainKey::from_str(c).ok())
+        .filter(|c| matches!(c, ChainKey::AH | ChainKey::PEOPLE))
 }
 
 /// Topic of the best blocks from the params `["best", previous_sessions, chain_key]`.
@@ -340,6 +351,36 @@ mod tests {
 
     fn params(p: &[&str]) -> Vec<String> {
         p.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn collators_topics_have_an_optional_kind() {
+        let topics = |p: &[&str]| -> Vec<String> {
+            collators_topics(&params(p))
+                .iter()
+                .map(|t| t.to_string())
+                .collect()
+        };
+        assert_eq!(topics(&["ah", "pp"]), ["collators:ah", "collators:pp"]);
+        assert_eq!(topics(&["pp", "I"]), ["collators:pp:i"]);
+        assert_eq!(
+            topics(&["ah", "pp", "V"]),
+            ["collators:ah:v", "collators:pp:v"]
+        );
+        // not collators chains
+        assert_eq!(topics(&["rc", "xx", "I"]), Vec::<String>::new());
+    }
+
+    #[test]
+    fn session_topics_follow_the_relay_chain_unless_a_parachain_is_given() {
+        assert_eq!(session_chain(&params(&["current"])), None);
+        assert_eq!(session_chain(&params(&["current", "rc"])), None);
+        assert_eq!(session_chain(&params(&["new", "xx"])), None);
+        assert_eq!(session_chain(&params(&["new", "ah"])), Some(ChainKey::AH));
+        assert_eq!(
+            Topic::CurrentSession(session_chain(&params(&["current", "pp"]))).to_string(),
+            "current_session:pp"
+        );
     }
 
     #[test]

@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::{BlockNumber, EpochIndex, ParaId, SS58};
+use crate::{BlockNumber, EpochIndex, EraIndex, ParaId, SS58};
 use log::warn;
 use serde::{Deserialize, Serialize};
 use subxt::utils::AccountId32;
@@ -32,15 +32,39 @@ const MAX_SLOT_GAP: u64 = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CollatorKind {
-    #[serde(rename = "I")]
+    // Note: the upper case aliases are to read the values cached before the kinds were lower case
+    #[serde(rename = "i", alias = "I")]
     Invulnerable,
-    #[serde(rename = "P")]
+    #[serde(rename = "p", alias = "P")]
     Permissionless,
-    #[serde(rename = "V")]
+    #[serde(rename = "v", alias = "V")]
     Validator,
     // session validator not found in invulnerables, candidates or drawn collators
-    #[serde(rename = "U")]
+    #[serde(rename = "u", alias = "U")]
     Unknown,
+}
+
+impl CollatorKind {
+    /// Letter of the kind, as it is serialized
+    pub fn code(&self) -> char {
+        match self {
+            Self::Invulnerable => 'i',
+            Self::Permissionless => 'p',
+            Self::Validator => 'v',
+            Self::Unknown => 'u',
+        }
+    }
+
+    /// Kind from its letter, upper or lower case
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code.to_ascii_lowercase().as_str() {
+            "i" => Some(Self::Invulnerable),
+            "p" => Some(Self::Permissionless),
+            "v" => Some(Self::Validator),
+            "u" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
 }
 
 /// Position of a validator in the collators of a parachain, once it is part of the draw
@@ -186,23 +210,31 @@ impl CollatorSummary {
 
 /// Number of collators of a parachain session by kind
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CollatorInfra {
+pub struct CollatorKindCounter {
     // invulnerables
-    pub ni: u32,
+    pub i: u32,
     // permissionless
-    pub np: u32,
+    pub p: u32,
     // validators
-    pub nv: u32,
+    pub v: u32,
+    // unknown, only shown if there are any
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub u: u32,
 }
 
-impl CollatorInfra {
-    /// Count a collator, kinds that are not known are not counted
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+impl CollatorKindCounter {
+    /// Count a collator, collators without a kind are not counted
     pub fn add(&mut self, kind: Option<CollatorKind>) {
         match kind {
-            Some(CollatorKind::Invulnerable) => self.ni += 1,
-            Some(CollatorKind::Permissionless) => self.np += 1,
-            Some(CollatorKind::Validator) => self.nv += 1,
-            _ => {}
+            Some(CollatorKind::Invulnerable) => self.i += 1,
+            Some(CollatorKind::Permissionless) => self.p += 1,
+            Some(CollatorKind::Validator) => self.v += 1,
+            Some(CollatorKind::Unknown) => self.u += 1,
+            None => {}
         }
     }
 }
@@ -210,6 +242,12 @@ impl CollatorInfra {
 /// Counters of the collators of a parachain in a session
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CollatorSessionStats {
+    // era of the parachain session, only set for parachain sessions
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eix: Option<EraIndex>,
+    // position of the parachain session in the era, 0 for the first, only set if known
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub esix: Option<u32>,
     // first and last parachain block tracked in the session
     #[serde(default)]
     pub sbix: BlockNumber,
@@ -703,8 +741,26 @@ mod tests {
         r.add_slot(5, &[], 2, 20);
         assert_eq!(
             serde_json::to_string(&r.summary()).unwrap(),
-            r#"{"kind":"V","os":2,"eb":4,"pb":2,"pt":40,"ms":1}"#
+            r#"{"kind":"v","os":2,"eb":4,"pb":2,"pt":40,"ms":1}"#
         );
+    }
+
+    #[test]
+    fn kind_is_lower_case_and_reads_the_upper_case_cached_before() {
+        assert_eq!(
+            serde_json::to_string(&CollatorKind::Validator).unwrap(),
+            r#""v""#
+        );
+        for (cached, kind) in [
+            ("I", CollatorKind::Invulnerable),
+            ("p", CollatorKind::Permissionless),
+        ] {
+            let parsed: CollatorKind = serde_json::from_str(&format!("\"{cached}\"")).unwrap();
+            assert_eq!(parsed, kind);
+        }
+        assert_eq!(CollatorKind::from_code("V"), Some(CollatorKind::Validator));
+        assert_eq!(CollatorKind::from_code("v"), Some(CollatorKind::Validator));
+        assert_eq!(CollatorKind::from_code("ah"), None);
     }
 
     #[test]

@@ -292,10 +292,14 @@ mod tests {
 
     #[test]
     fn session_topics_are_different() {
-        assert_eq!(Topic::CurrentSession.to_string(), "current_session");
+        assert_eq!(Topic::CurrentSession(None).to_string(), "current_session");
         assert_ne!(
-            Topic::CurrentSession.to_string(),
-            Topic::NewSession.to_string()
+            Topic::CurrentSession(None).to_string(),
+            Topic::NewSession(None).to_string()
+        );
+        assert_ne!(
+            Topic::CurrentSession(None),
+            Topic::CurrentSession(Some(ChainKey::AH))
         );
     }
 
@@ -311,12 +315,12 @@ mod tests {
         assert!(matches!(req.method, Methods::UnsubscribeCollators));
 
         assert_eq!(
-            Topic::Collators(ChainKey::PEOPLE).to_string(),
+            Topic::Collators(ChainKey::PEOPLE, None).to_string(),
             "collators:pp"
         );
         assert_ne!(
-            Topic::Collators(ChainKey::AH),
-            Topic::Collators(ChainKey::PEOPLE)
+            Topic::Collators(ChainKey::AH, None),
+            Topic::Collators(ChainKey::PEOPLE, None)
         );
     }
 }

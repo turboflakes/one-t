@@ -323,6 +323,10 @@ pub struct Records {
     collator_epoch_records: HashMap<CollatorKey, CollatorRecord>,
     // first and last parachain block tracked by parachain session
     para_session_blocks: HashMap<(ParaId, EpochIndex), (BlockNumber, BlockNumber)>,
+    // era of the parachain sessions
+    para_session_era: HashMap<(ParaId, EpochIndex), EraIndex>,
+    // first parachain session known of an era, to tell the position of a session in its era
+    para_era_first_session: HashMap<(ParaId, EraIndex), EpochIndex>,
     // first and last parachain block tracked by relay session
     para_epoch_blocks: HashMap<(ParaId, EpochIndex), (BlockNumber, BlockNumber)>,
     para_slots: HashMap<ParaId, ParaSlots>,
@@ -363,6 +367,8 @@ impl Records {
             collator_records: HashMap::new(),
             collator_epoch_records: HashMap::new(),
             para_session_blocks: HashMap::new(),
+            para_session_era: HashMap::new(),
+            para_era_first_session: HashMap::new(),
             para_epoch_blocks: HashMap::new(),
             para_slots: HashMap::new(),
             para_cache: HashMap::new(),
@@ -478,6 +484,41 @@ impl Records {
         let range = blocks.entry(key).or_insert((start, end));
         range.0 = range.0.min(start);
         range.1 = range.1.max(end);
+    }
+
+    /// Set the era of a parachain session, kept if it was already set.
+    /// Note: the session is the first of its era only if the session before is known to be in another era,
+    /// otherwise, e.g. after a restart in the middle of an era, its position in the era is not known.
+    pub fn set_para_session_era(&mut self, para_id: ParaId, session: EpochIndex, era: EraIndex) {
+        self.para_session_era
+            .entry((para_id, session))
+            .or_insert(era);
+        let previous_era = session
+            .checked_sub(1)
+            .and_then(|s| self.para_session_era.get(&(para_id, s)));
+        if previous_era.is_some_and(|previous| *previous != era) {
+            self.para_era_first_session
+                .entry((para_id, era))
+                .or_insert(session);
+        }
+    }
+
+    /// Resume the era of a parachain session read from the cache, and its position in the era if it was known
+    pub fn seed_para_session_era(
+        &mut self,
+        para_id: ParaId,
+        session: EpochIndex,
+        era: EraIndex,
+        esix: Option<u32>,
+    ) {
+        self.para_session_era
+            .entry((para_id, session))
+            .or_insert(era);
+        if let Some(first) = esix.and_then(|e| session.checked_sub(e)) {
+            self.para_era_first_session
+                .entry((para_id, era))
+                .or_insert(first);
+        }
     }
 
     /// Resume the block range of a parachain session read from the cache
@@ -606,6 +647,11 @@ impl Records {
             stats.sbix = *start;
             stats.ebix = *end;
         }
+        stats.eix = self.para_session_era.get(&(para_id, session)).copied();
+        stats.esix = stats.eix.and_then(|era| {
+            let first = self.para_era_first_session.get(&(para_id, era))?;
+            session.checked_sub(*first)
+        });
         stats
     }
 
@@ -2591,6 +2637,48 @@ mod tests {
 
         records.clear_dirty_collators(para_id);
         assert!(records.dirty_collators(para_id).is_empty());
+    }
+
+    #[test]
+    fn para_session_has_the_era_it_started_in() {
+        let para_id = 1000;
+        let mut records = Records::with_era_epoch_and_block(10, 100, 1);
+        assert_eq!(records.collator_session_stats(para_id, 7).eix, None);
+        records.set_para_session_era(para_id, 7, 11303);
+        // the era does not change once set
+        records.set_para_session_era(para_id, 7, 11304);
+        assert_eq!(records.collator_session_stats(para_id, 7).eix, Some(11303));
+        assert_eq!(records.collator_session_stats(para_id, 8).eix, None);
+        // not shown for relay sessions
+        assert_eq!(records.collator_epoch_stats(para_id, 7).eix, None);
+    }
+
+    #[test]
+    fn para_session_knows_its_position_in_the_era_only_after_an_era_change() {
+        let para_id = 1000;
+        let mut records = Records::with_era_epoch_and_block(10, 100, 1);
+        // tracker started in the middle of an era, position not known
+        records.set_para_session_era(para_id, 7, 5);
+        records.set_para_session_era(para_id, 8, 5);
+        assert_eq!(records.collator_session_stats(para_id, 8).esix, None);
+        // the session after an era change is the first of the new era
+        records.set_para_session_era(para_id, 9, 6);
+        records.set_para_session_era(para_id, 10, 6);
+        records.set_para_session_era(para_id, 11, 6);
+        let esix = |s| records.collator_session_stats(para_id, s).esix;
+        assert_eq!((esix(9), esix(10), esix(11)), (Some(0), Some(1), Some(2)));
+        assert_eq!(esix(8), None);
+
+        // resumed after a restart from the stats of the running session
+        let mut records = Records::with_era_epoch_and_block(10, 100, 1);
+        records.seed_para_session_era(para_id, 11, 6, Some(2));
+        records.set_para_session_era(para_id, 12, 6);
+        assert_eq!(records.collator_session_stats(para_id, 12).esix, Some(3));
+        // resumed without the position
+        let mut records = Records::with_era_epoch_and_block(10, 100, 1);
+        records.seed_para_session_era(para_id, 11, 6, None);
+        records.set_para_session_era(para_id, 12, 6);
+        assert_eq!(records.collator_session_stats(para_id, 12).esix, None);
     }
 
     #[test]

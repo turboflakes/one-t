@@ -433,6 +433,9 @@ pub async fn rehydrate_collator_records(
         .and_then(|s| serde_json::from_str(&s).ok());
     if let Some(stats) = session_stats.filter(|s| s.sbix > 0) {
         records.seed_para_session_blocks(para_id, session, stats.sbix, stats.ebix);
+        if let Some(era) = stats.eix {
+            records.seed_para_session_era(para_id, session, era, stats.esix);
+        }
     }
     let epoch_stats: Option<CollatorSessionStats> = redis::cmd("HGET")
         .arg(CacheKey::CollatorStatsByEpoch(epoch))

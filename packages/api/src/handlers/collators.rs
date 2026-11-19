@@ -33,7 +33,7 @@ use onet_cache::{
 };
 use onet_config::CONFIG;
 use onet_records::{
-    collators::{CollatorRecord, CollatorSessionStats, LiveSlot},
+    collators::{CollatorKind, CollatorRecord, CollatorSessionStats, LiveSlot},
     EpochIndex, ParaId,
 };
 use redis::aio::MultiplexedConnection as Connection;
@@ -60,12 +60,20 @@ pub struct Params {
     // Note: `show_missed_slots` is deprecated, use `missed_slots`
     #[serde(default, alias = "show_missed_slots")]
     missed_slots: bool,
-    // infra indicates whether the number of collators by kind should be retrieved or not, default false
+    // slot indicates whether the slot the parachain is in right now should be retrieved or not, default false
+    // Note: only available for the current session
     #[serde(default)]
-    infra: bool,
-    // infra_only is the same as `infra` but the collators (`data`) are not retrieved, default false
+    slot: bool,
+    // kind of the collators to retrieve: `i` invulnerable, `p` permissionless, `v` validator or `u` unknown,
+    // default all. Note: `kind_counter` always counts all collators
     #[serde(default)]
-    infra_only: bool,
+    kind: Option<CollatorKind>,
+    // kind_counter indicates whether the number of collators by kind should be retrieved or not, default false
+    #[serde(default)]
+    kind_counter: bool,
+    // kind_counter_only is the same as `kind_counter` but the collators (`data`) are not retrieved, default false
+    #[serde(default)]
+    kind_counter_only: bool,
 }
 
 fn default_chain() -> ChainKey {
@@ -95,11 +103,15 @@ pub async fn get_collators(
         params.stats,
         params.block_numbers,
         params.missed_slots,
+        params.slot,
     )
     .await?;
 
-    if params.infra || params.infra_only {
-        result.set_infra(params.infra_only);
+    if params.kind_counter || params.kind_counter_only {
+        result.set_kind_counter(params.kind_counter_only);
+    }
+    if let Some(kind) = params.kind {
+        result.retain_kind(kind);
     }
 
     respond_json(result)
@@ -113,6 +125,7 @@ pub async fn get_collators_result(
     show_stats: bool,
     show_block_numbers: bool,
     show_missed_slots: bool,
+    show_slot: bool,
 ) -> Result<CollatorsResult, ApiError> {
     let current_session: Option<EpochIndex> = redis::cmd("GET")
         .arg(CacheKey::CollatorCurrentSession(chain_key.clone()))
@@ -183,7 +196,7 @@ pub async fn get_collators_result(
     );
 
     // Note: the slot the parachain is in only makes sense for its current session
-    if current_session == Some(session_index) {
+    if show_slot && current_session == Some(session_index) {
         result.slot = redis::cmd("GET")
             .arg(CacheKey::CollatorLiveSlot(chain_key.clone()))
             .query_async::<Option<String>>(&mut *conn)
@@ -193,6 +206,19 @@ pub async fn get_collators_result(
     }
 
     Ok(result)
+}
+
+/// Slot a parachain is in right now.
+pub async fn get_live_slot(
+    conn: &mut Connection,
+    chain_key: &ChainKey,
+) -> Result<Option<LiveSlot>, ApiError> {
+    Ok(redis::cmd("GET")
+        .arg(CacheKey::CollatorLiveSlot(chain_key.clone()))
+        .query_async::<Option<String>>(&mut *conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?
+        .and_then(|s| serde_json::from_str::<LiveSlot>(&s).ok()))
 }
 
 /// Slot each parachain is in right now, by parachain id.

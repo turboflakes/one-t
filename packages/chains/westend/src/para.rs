@@ -28,7 +28,7 @@ use onet_core::error::OnetError;
 use onet_people_westend as people;
 use onet_records::{
     collators::{CollatorKind, Slot},
-    BlockNumber, Records,
+    BlockNumber, EraIndex, Records,
 };
 use subxt::{
     config::{
@@ -152,6 +152,8 @@ async fn process_block(
     // The session index changes in the block of the event, the collators only apply from the next block
     if let Some(session_index) = new_session {
         records.para_slots_mut(para_id).set_session(session_index);
+        let era = fetch_era(ah, runtime, &at).await?;
+        records.set_para_session_era(para_id, session_index, era);
         // era points per block are set by governance, so refresh them at every new session
         let points = fetch_points_per_block(ah, runtime).await?;
         if points != records.para_slots_mut(para_id).points_per_block() {
@@ -201,6 +203,9 @@ async fn initialize_tracker(
     tracker.set_points_per_block(points_per_block);
     tracker.set_session(session);
     tracker.set_collators(collators);
+    // Note: kept if it was resumed from the cache
+    let era = fetch_era(ah, runtime, at).await?;
+    records.set_para_session_era(para_id, session, era);
     Ok(())
 }
 
@@ -224,6 +229,20 @@ fn is_supported(runtime: SupportedParasRuntime) -> bool {
 
 fn unsupported(runtime: SupportedParasRuntime) -> OnetError {
     OnetError::from(format!("Block tracking not supported for {runtime}"))
+}
+
+/// Era of the parachain sessions, the active era of staking on asset hub.
+/// Note: asset hub is read at the block of the session and the other parachains at the asset hub head.
+async fn fetch_era(
+    ah: &ChainClient,
+    runtime: SupportedParasRuntime,
+    at: &OnlineClientAtBlock<PolkadotConfig>,
+) -> Result<EraIndex, OnetError> {
+    if matches!(runtime, SupportedParasRuntime::AssetHubWestend) {
+        return Ok(asset_hub::fetch_active_era_info(at).await?.index);
+    }
+    let at_ah = ah.client.at_current_block().await?;
+    Ok(asset_hub::fetch_active_era_info(&at_ah).await?.index)
 }
 
 fn fetch_aura_slot_duration(
