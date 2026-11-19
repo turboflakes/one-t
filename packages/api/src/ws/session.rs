@@ -160,11 +160,17 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                         _ => (),
                     },
                     Methods::SubscribeSession => {
-                        if &req.params[0] == "new" {
-                            self.server_addr.do_send(server::Subscribe {
+                        // "new" at the start of every session, "current" at every new finalized block
+                        match req.params.first().map(|p| p.as_str()) {
+                            Some("new") => self.server_addr.do_send(server::Subscribe {
                                 id: self.id,
                                 topic: Topic::NewSession,
-                            });
+                            }),
+                            Some("current") => self.server_addr.do_send(server::Subscribe {
+                                id: self.id,
+                                topic: Topic::CurrentSession,
+                            }),
+                            _ => (),
                         }
                     }
                     Methods::SubscribeValidator => {
@@ -231,11 +237,17 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                         _ => (),
                     },
                     Methods::UnsubscribeSession => {
-                        if &req.params[0] == "new" {
-                            self.server_addr.do_send(server::Unsubscribe {
+                        // "new" at the start of every session, "current" at every new finalized block
+                        match req.params.first().map(|p| p.as_str()) {
+                            Some("new") => self.server_addr.do_send(server::Unsubscribe {
                                 id: self.id,
                                 topic: Topic::NewSession,
-                            });
+                            }),
+                            Some("current") => self.server_addr.do_send(server::Unsubscribe {
+                                id: self.id,
+                                topic: Topic::CurrentSession,
+                            }),
+                            _ => (),
                         }
                     }
                     Methods::UnsubscribeValidator => {

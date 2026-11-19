@@ -22,7 +22,8 @@
 use crate::error::ApiError;
 use crate::{
     handlers::blocks::get_collation_stats_by_chain,
-    handlers::collators::{attach_collation_live, get_collators_result},
+    handlers::collators::{attach_collation_live, get_collators_result, get_live_slots},
+    handlers::sessions::get_session_data,
     responses::{
         AuthorityKey, AuthorityKeyCache, BlockResult, BlocksResult, CacheMap, ParachainsResult,
         SessionResult, ValidatorResult, ValidatorsResult,
@@ -53,6 +54,8 @@ pub enum Topic {
     BestBlock,
     Block(BlockNumber),
     NewSession,
+    // current session, pushed at every new finalized block
+    CurrentSession,
     Validator(SS58),
     ParaAuthorities(EpochIndex, Verbosity),
     Parachains(EpochIndex),
@@ -71,6 +74,7 @@ impl std::fmt::Display for Topic {
             Self::BestBlock => write!(f, "best_block"),
             Self::Block(block_number) => write!(f, "block:{}", block_number),
             Self::NewSession => write!(f, "new_session"),
+            Self::CurrentSession => write!(f, "current_session"),
             Self::Validator(account) => write!(f, "v:{}", account),
             Self::ParaAuthorities(index, verbosity) => write!(f, "pas:{}:{}", index, verbosity),
             Self::Parachains(index) => write!(f, "parachains:{}", index),
@@ -166,6 +170,9 @@ impl Channel {
                 Self::handle_best_blocks(&mut conn, &config, client_id, act).await?
             }
             Topic::NewSession => Self::handle_new_session(&mut conn, act).await?,
+            Topic::CurrentSession => {
+                Self::handle_current_session(&mut conn, &config, client_id, act).await?
+            }
             Topic::Validator(account) => {
                 Self::handle_validator(&mut conn, client_id, account, act).await?
             }
@@ -527,6 +534,64 @@ impl Channel {
             }
         }
 
+        Ok(())
+    }
+
+    /// Send the current session with its collation stats, when a new relay block was finalized
+    async fn handle_current_session(
+        conn: &mut Connection,
+        config: &Config,
+        client_id: ClientId,
+        act: &Channel,
+    ) -> Result<(), ApiError> {
+        let cache_key = CacheKey::SessionByIndex(Index::Current);
+        let Some(finalized_block) = redis::cmd("GET")
+            .arg(CacheKey::FinalizedBlock(ChainKey::RC))
+            .query_async::<Option<BlockNumber>>(conn)
+            .await
+            .map_err(onet_cache::error::CacheError::RedisCMDError)?
+        else {
+            return Ok(());
+        };
+        let pushed_block = redis::cmd("GET")
+            .arg(CacheKey::PushedBlockByClientIdV2(
+                cache_key.to_string(),
+                client_id,
+            ))
+            .query_async::<Option<BlockNumber>>(conn)
+            .await
+            .map_err(onet_cache::error::CacheError::RedisCMDError)?;
+        // nothing new since the last push to this client
+        if pushed_block == Some(finalized_block) {
+            return Ok(());
+        }
+        let Some(session) = redis::cmd("GET")
+            .arg(&cache_key)
+            .query_async::<Option<EpochIndex>>(conn)
+            .await
+            .map_err(onet_cache::error::CacheError::RedisCMDError)?
+        else {
+            return Ok(());
+        };
+
+        let (mut data, _) = get_session_data(conn, session, false, false, true).await?;
+        data.insert(String::from("is_current"), (true).to_string());
+        let mut result = SessionResult::from(data);
+        // the slot is not cached with the stats since it changes with every parachain block
+        result.set_live_slots(&get_live_slots(conn).await?);
+        let resp = WsResponseMessage {
+            r#type: String::from("session"),
+            result,
+        };
+        let serialized = serde_json::to_string(&resp).unwrap();
+        // Note: only this client is waiting for this block
+        act.reply_message(client_id, &serialized);
+
+        if let Err(e) =
+            cache_latest_pushed_block_v2(conn, config, &client_id, cache_key, finalized_block).await
+        {
+            warn!("Cache PushedBlock failed with error: {:?}", e);
+        }
         Ok(())
     }
 

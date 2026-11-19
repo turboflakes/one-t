@@ -291,6 +291,15 @@ mod tests {
     use onet_cache::types::ChainKey;
 
     #[test]
+    fn session_topics_are_different() {
+        assert_eq!(Topic::CurrentSession.to_string(), "current_session");
+        assert_ne!(
+            Topic::CurrentSession.to_string(),
+            Topic::NewSession.to_string()
+        );
+    }
+
+    #[test]
     fn collators_methods_and_topic() {
         let req: WsRequestMessage =
             serde_json::from_str(r#"{"method":"subscribe_collators","params":["ah","pp"]}"#)

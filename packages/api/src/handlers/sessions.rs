@@ -21,7 +21,7 @@
 
 use crate::error::ApiError;
 use crate::{
-    handlers::params::Params,
+    handlers::{collators::get_live_slots, params::Params},
     helpers::respond_json,
     responses::{CacheMap, SessionResult, SessionsResult},
 };
@@ -118,6 +118,22 @@ pub async fn get_sessions(
             .map_err(CacheError::RedisCMDError)?;
     }
 
+    // Note: the slot is not cached, it is only set on the running session
+    if params.collation_stats {
+        let live = get_live_slots(&mut conn as &mut Connection).await?;
+        for session in data.iter_mut().filter(|s| s.six() == current_session) {
+            session.set_live_slots(&live);
+        }
+    }
+
+    // Note: the slot is not cached, it is only set on the running session
+    if params.collation_stats {
+        let live = get_live_slots(&mut conn as &mut Connection).await?;
+        for session in data.iter_mut().filter(|s| s.six() == current_session) {
+            session.set_live_slots(&live);
+        }
+    }
+
     respond_json(data.into())
 }
 
@@ -144,7 +160,7 @@ pub async fn get_collation_stats(
 
 /// Get the session data with the requested stats.
 /// The second element is false if any of the requested stats is not yet cached.
-async fn get_session_data(
+pub(crate) async fn get_session_data(
     conn: &mut Connection,
     session_index: EpochIndex,
     show_stats: bool,
@@ -278,5 +294,10 @@ pub async fn get_session_by_index(
         }
     }
 
-    respond_json(data.into())
+    let mut result: SessionResult = data.into();
+    // Note: the slot is not cached, it is only set on the running session
+    if params.collation_stats && result.is_current() {
+        result.set_live_slots(&get_live_slots(&mut conn as &mut Connection).await?);
+    }
+    respond_json(result)
 }
