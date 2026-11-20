@@ -151,7 +151,10 @@ impl Handler<Disconnect> for Server {
         if self.sessions.remove(&msg.id).is_some() {
             // remove session from all channels
             for addr in self.channels.values_mut() {
-                addr.do_send(channel::Unsubscribe { id: msg.id });
+                addr.do_send(channel::Unsubscribe {
+                    id: msg.id,
+                    reply_to: None,
+                });
             }
         }
     }
@@ -262,10 +265,16 @@ impl Handler<Unsubscribe> for Server {
     fn handle(&mut self, msg: Unsubscribe, _: &mut Context<Self>) {
         let Unsubscribe { id, topic } = msg;
 
-        if self.sessions.contains_key(&id) {
-            // unsubscribe to a channel
-            if let Some(channel_addr) = self.channels.get(&topic) {
-                channel_addr.do_send(channel::Unsubscribe { id });
+        if let Some(session_addr) = self.sessions.get(&id) {
+            // unsubscribe to a channel, the client is told if it was subscribed or not
+            match self.channels.get(&topic) {
+                Some(channel_addr) => channel_addr.do_send(channel::Unsubscribe {
+                    id,
+                    reply_to: Some(session_addr.clone()),
+                }),
+                None => {
+                    channel::send_notification(session_addr, format!("not subscribed to {}", topic))
+                }
             }
         }
     }
@@ -327,6 +336,79 @@ mod tests {
         assert_ne!(
             Topic::Collators(ChainKey::AH, None),
             Topic::Collators(ChainKey::PEOPLE, None)
+        );
+    }
+
+    /// Session that keeps what the server sends to it
+    struct Inbox(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl Actor for Inbox {
+        type Context = Context<Self>;
+    }
+
+    impl Handler<Message> for Inbox {
+        type Result = ();
+
+        fn handle(&mut self, msg: Message, _: &mut Context<Self>) {
+            self.0.lock().unwrap().push(msg.0);
+        }
+    }
+
+    #[test]
+    fn unsubscribe_tells_the_client_if_it_was_subscribed() {
+        let inbox = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let received = inbox.clone();
+        System::new().block_on(async move {
+            let server = Server::new().start();
+            let session = Inbox(inbox).start();
+            let id = server
+                .send(Connect {
+                    addr: session.recipient(),
+                })
+                .await
+                .unwrap();
+            let topic = Topic::BestBlock(None);
+            let pause = || actix::clock::sleep(std::time::Duration::from_millis(100));
+
+            // not subscribed to a channel that does not exist
+            server.do_send(Unsubscribe {
+                id,
+                topic: topic.clone(),
+            });
+            pause().await;
+            // subscribed, unsubscribed and unsubscribed again
+            server.do_send(Subscribe {
+                id,
+                topic: topic.clone(),
+            });
+            pause().await;
+            for _ in 0..2 {
+                server.do_send(Unsubscribe {
+                    id,
+                    topic: topic.clone(),
+                });
+                pause().await;
+            }
+        });
+
+        let results: Vec<String> = received
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|m| {
+                serde_json::from_str::<WsResponseMessage<String>>(m)
+                    .unwrap()
+                    .result
+            })
+            .collect();
+        assert_eq!(
+            results,
+            [
+                "not subscribed to best_block",
+                "subscribed to best_block",
+                "unsubscribed from best_block",
+                "not subscribed to best_block",
+            ]
         );
     }
 }

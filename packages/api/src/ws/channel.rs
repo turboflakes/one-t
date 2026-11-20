@@ -107,6 +107,17 @@ impl std::fmt::Display for Topic {
 
 type ClientId = usize;
 
+/// Tell a client something about its subscriptions, e.g. `subscribed to <topic>`
+pub(crate) fn send_notification(addr: &Recipient<Message>, text: String) {
+    let resp = WsResponseMessage {
+        r#type: String::from("notifications"),
+        result: text,
+    };
+    if let Ok(serialized) = serde_json::to_string(&resp) {
+        addr.do_send(Message(serialized));
+    }
+}
+
 /// `Channel` manages topic subscriptions.
 ///
 #[derive(Clone)]
@@ -1279,6 +1290,10 @@ impl Handler<Subscribe> for Channel {
 pub struct Unsubscribe {
     /// Client ID
     pub id: usize,
+
+    /// Where the client is told if it was unsubscribed or not, none if it is not to be told
+    /// (the client disconnected)
+    pub reply_to: Option<Recipient<Message>>,
 }
 
 /// Unsubscribe to a topic, remove client from channel
@@ -1286,10 +1301,18 @@ impl Handler<Unsubscribe> for Channel {
     type Result = ();
 
     fn handle(&mut self, msg: Unsubscribe, ctx: &mut Context<Self>) {
-        let Unsubscribe { id } = msg;
+        let Unsubscribe { id, reply_to } = msg;
 
         // remove address
-        if self.sessions.remove(&msg.id).is_some() {
+        let removed = self.sessions.remove(&id).is_some();
+        if let Some(reply_to) = reply_to {
+            let text = match removed {
+                true => format!("unsubscribed from {}", self.topic),
+                false => format!("not subscribed to {}", self.topic),
+            };
+            send_notification(&reply_to, text);
+        }
+        if removed {
             info!("session {} unsubscribed from channel {}", id, self.topic);
             // delete unsubscribed clientes from cache
             if let Topic::FinalizedBlock(..) = self.topic {
