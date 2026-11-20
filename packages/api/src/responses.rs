@@ -904,7 +904,8 @@ impl From<CacheMap> for ValidatorResult {
         let auth: AuthorityRecord = serde_json::from_str(&serialized).unwrap_or_default();
 
         let serialized = data.get("para").unwrap_or(&"{}".to_string()).to_string();
-        let mut para: BTreeMap<String, Value> = serde_json::from_str(&serialized).unwrap();
+        let mut para: BTreeMap<String, Value> =
+            serde_json::from_str(&serialized).unwrap_or_default();
         // NOTE: bitfields.uat is not being currently used on the frontend, so let's skip it for now as the response size increases a lot
         if let Some(bitfields) = para.get_mut("bitfields") {
             if let Some(obj) = bitfields.as_object_mut() {

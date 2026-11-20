@@ -135,6 +135,9 @@ async fn run_api(tx: mpsc::Sender<ServerHandle>) -> std::io::Result<()> {
     // start http server with an websocket /ws endpoint
     let addr = format!("{}:{}", config.api_host, config.api_port);
     info!("Starting HTTP server at http://{}", addr);
+    // start a single websocket server shared by all the http workers, so the channels
+    // and the cache polling are not repeated by worker nor run in the workers' threads
+    let ws_server = web::Data::new(server::Server::new().start());
     let server = HttpServer::new(move || {
         let cors = Cors::default()
             .allowed_origin_fn(|origin, _req_head| {
@@ -150,7 +153,7 @@ async fn run_api(tx: mpsc::Sender<ServerHandle>) -> std::io::Result<()> {
             .supports_credentials()
             .max_age(3600);
         App::new()
-            .app_data(web::Data::new(server::Server::new().start()))
+            .app_data(ws_server.clone())
             .wrap(middleware::Logger::default())
             .wrap(cors)
             .configure(add_pool)

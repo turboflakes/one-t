@@ -80,12 +80,17 @@ pub async fn get_sessions(
     // Try if query exists in cache
     if params.from != 0 && params.from < params.to && params.netstats {
         // Check if query is already cached
-        if let Ok(serialized_data) = redis::cmd("GET")
+        let cached = redis::cmd("GET")
             .arg(CacheKey::QuerySessions(req.query_string().to_string()))
             .query_async::<String>(&mut conn as &mut Connection)
             .await
-        {
-            let data: Vec<SessionResult> = serde_json::from_str(&serialized_data).unwrap();
+            .ok()
+            .and_then(|serialized_data| {
+                serde_json::from_str::<Vec<SessionResult>>(&serialized_data)
+                    .map_err(|e| warn!("Cached query sessions ignored: {e:?}"))
+                    .ok()
+            });
+        if let Some(data) = cached {
             return respond_json(data.into());
         }
     }
