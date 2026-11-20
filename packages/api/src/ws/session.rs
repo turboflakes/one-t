@@ -306,16 +306,21 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
     }
 }
 
-/// Topics of the collators from the params `[chain_key, ..., kind]`, where chain_key is `ah` or `pp`.
-/// Note: the optional kind (`i`, `p`, `v` or `u`) applies to all chains given, and the
-/// collators sent are only the ones of that kind.
+/// Topics of the collators from the params `[chain_key, ..., kind | "slot"]`, where chain_key is `ah` or `pp`.
+/// Note: the collators and the stats are sent when a slot is closed. The optional kind (`i`, `p`, `v` or `u`)
+/// applies to all chains given and only the collators of that kind are sent. With `slot` only the slot
+/// each chain is in is sent, which changes with every block.
 fn collators_topics(params: &[String]) -> Vec<Topic> {
     let kind = params.iter().find_map(|p| CollatorKind::from_code(p));
+    let slot = params.iter().any(|p| p.eq_ignore_ascii_case("slot"));
     params
         .iter()
         .filter_map(|p| ChainKey::from_str(p).ok())
         .filter(|c| matches!(c, ChainKey::AH | ChainKey::PEOPLE))
-        .map(|c| Topic::Collators(c, kind))
+        .map(|c| match slot {
+            true => Topic::CollatorSlot(c),
+            false => Topic::Collators(c, kind),
+        })
         .collect()
 }
 
@@ -329,20 +334,26 @@ fn session_chain(params: &[String]) -> Option<ChainKey> {
 
 /// Topic of the best blocks from the params `["best", previous_sessions, chain_key]`.
 /// Note: `previous_sessions` is not used by best blocks, it is kept so the params
-/// are the same as the finalized ones. If `chain_key` is not given, all chains are followed.
+/// are the same as the finalized ones. If `chain_key` is not given, only the relay chain is followed.
 fn best_topic(params: &[String]) -> Topic {
     Topic::BestBlock(params.get(2).and_then(|c| ChainKey::from_str(c).ok()))
 }
 
-/// Topic of the finalized blocks from the params `["finalized", previous_sessions, chain_key]`.
-/// Note: `previous_sessions` is 0 if not valid and, if `chain_key` is not given, all chains are followed.
+/// Topic of the finalized blocks from the params `["finalized", previous_sessions, chain_key, "stats"]`.
+/// Note: `previous_sessions` is 0 if not valid and, if `chain_key` is not given, only the relay chain is followed.
+/// The param `stats` can be anywhere after `finalized` and sends the collation stats with the blocks
+/// of asset hub and people, so it needs one of them as `chain_key`.
 fn finalized_topic(params: &[String]) -> Topic {
     let previous_sessions = params
         .get(1)
         .and_then(|p| p.parse::<u8>().ok())
         .unwrap_or_default();
     let chain_key = params.get(2).and_then(|c| ChainKey::from_str(c).ok());
-    Topic::FinalizedBlock(previous_sessions, chain_key)
+    let stats = params
+        .iter()
+        .skip(1)
+        .any(|p| p.eq_ignore_ascii_case("stats"));
+    Topic::FinalizedBlock(previous_sessions, chain_key, stats)
 }
 
 #[cfg(test)]
@@ -367,6 +378,12 @@ mod tests {
             topics(&["ah", "pp", "V"]),
             ["collators:ah:v", "collators:pp:v"]
         );
+        // only the slot
+        assert_eq!(topics(&["ah", "slot"]), ["collators:ah:slot"]);
+        assert_eq!(
+            topics(&["ah", "pp", "slot"]),
+            ["collators:ah:slot", "collators:pp:slot"]
+        );
         // not collators chains
         assert_eq!(topics(&["rc", "xx", "I"]), Vec::<String>::new());
     }
@@ -384,7 +401,7 @@ mod tests {
     }
 
     #[test]
-    fn best_topic_follows_all_chains_unless_one_is_given() {
+    fn best_topic_follows_the_relay_chain_unless_one_is_given() {
         assert_eq!(best_topic(&params(&["best"])).to_string(), "best_block");
         assert_eq!(
             best_topic(&params(&["best", "0", "pp"])).to_string(),
@@ -397,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn finalized_topic_follows_all_chains_unless_one_is_given() {
+    fn finalized_topic_follows_the_relay_chain_unless_one_is_given() {
         let topic = finalized_topic(&params(&["finalized", "2"]));
         assert_eq!(topic.to_string(), "finalized_block:2");
         let topic = finalized_topic(&params(&["finalized"]));
@@ -407,5 +424,14 @@ mod tests {
         // not a chain
         let topic = finalized_topic(&params(&["finalized", "1", "xx"]));
         assert_eq!(topic.to_string(), "finalized_block:1");
+        // with the collation stats
+        let topic = finalized_topic(&params(&["finalized", "0", "ah", "stats"]));
+        assert_eq!(topic.to_string(), "finalized_block:0:ah:stats");
+        let topic = finalized_topic(&params(&["finalized", "0", "stats"]));
+        assert_eq!(topic.to_string(), "finalized_block:0:stats");
+        assert_ne!(
+            finalized_topic(&params(&["finalized", "0", "ah"])),
+            finalized_topic(&params(&["finalized", "0", "ah", "stats"]))
+        );
     }
 }

@@ -22,11 +22,11 @@
 use crate::error::ApiError;
 use crate::{
     handlers::blocks::get_collation_stats_by_chain,
-    handlers::collators::{attach_collation_live, get_collators_result, get_live_slots},
+    handlers::collators::{attach_collation_live, get_collators_result, get_live_slot},
     handlers::sessions::{get_para_current_session, get_para_session_result, get_session_data},
     responses::{
-        AuthorityKey, AuthorityKeyCache, BlockResult, BlocksResult, CacheMap, ParachainsResult,
-        SessionResult, ValidatorResult, ValidatorsResult,
+        AuthorityKey, AuthorityKeyCache, BlockResult, BlocksResult, CacheMap, CollatorSlotResult,
+        ParachainsResult, SessionResult, ValidatorResult, ValidatorsResult,
     },
     ws::server::{Message, Remove, Server, WsResponseMessage},
 };
@@ -49,8 +49,10 @@ const BLOCK_INTERVAL: Duration = Duration::from_secs(6);
 
 #[derive(Clone, Eq, Hash, PartialEq, Debug)]
 pub enum Topic {
-    // number of previous sessions and optionally the only chain to follow, all chains if none
-    FinalizedBlock(u8, Option<ChainKey>),
+    // number of previous sessions, optionally the only chain to follow (the relay chain if none) and
+    // whether the collation stats of asset hub and people are sent with their blocks
+    FinalizedBlock(u8, Option<ChainKey>, bool),
+    // optionally the only chain to follow, the relay chain if none
     BestBlock(Option<ChainKey>),
     Block(BlockNumber),
     // optionally the parachain of the sessions, the relay chain if none
@@ -62,16 +64,22 @@ pub enum Topic {
     Parachains(EpochIndex),
     // chain and optionally the only kind of collators to send, with nothing else but the collators
     Collators(ChainKey, Option<CollatorKind>),
+    // only the slot the parachain is in, which changes with every block
+    CollatorSlot(ChainKey),
 }
 
 impl std::fmt::Display for Topic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::FinalizedBlock(previous_sessions, None) => {
-                write!(f, "finalized_block:{}", previous_sessions)
-            }
-            Self::FinalizedBlock(previous_sessions, Some(chain_key)) => {
-                write!(f, "finalized_block:{}:{}", previous_sessions, chain_key)
+            Self::FinalizedBlock(previous_sessions, chain_key, stats) => {
+                write!(f, "finalized_block:{}", previous_sessions)?;
+                if let Some(chain_key) = chain_key {
+                    write!(f, ":{}", chain_key)?;
+                }
+                if *stats {
+                    write!(f, ":stats")?;
+                }
+                Ok(())
             }
             Self::BestBlock(None) => write!(f, "best_block"),
             Self::BestBlock(Some(chain_key)) => write!(f, "best_block:{}", chain_key),
@@ -84,6 +92,7 @@ impl std::fmt::Display for Topic {
             Self::ParaAuthorities(index, verbosity) => write!(f, "pas:{}:{}", index, verbosity),
             Self::Parachains(index) => write!(f, "parachains:{}", index),
             Self::Collators(chain_key, None) => write!(f, "collators:{}", chain_key),
+            Self::CollatorSlot(chain_key) => write!(f, "collators:{}:slot", chain_key),
             Self::Collators(chain_key, Some(kind)) => {
                 write!(f, "collators:{}:{}", chain_key, kind.code())
             }
@@ -163,13 +172,14 @@ impl Channel {
         let mut conn = get_conn(cache).await?;
 
         match &topic {
-            Topic::FinalizedBlock(number_previous_sessions, chain_key) => {
+            Topic::FinalizedBlock(number_previous_sessions, chain_key, stats) => {
                 Self::handle_finalized_blocks(
                     &mut conn,
                     &config,
                     client_id,
                     *number_previous_sessions,
                     chain_key.as_ref(),
+                    *stats,
                     act,
                 )
                 .await?
@@ -197,6 +207,9 @@ impl Channel {
             Topic::Parachains(index) => {
                 Self::handle_parachains(&mut conn, client_id, *index, act).await?
             }
+            Topic::CollatorSlot(chain_key) => {
+                Self::handle_collator_slot(&mut conn, &config, client_id, chain_key, act).await?
+            }
             Topic::Collators(chain_key, kind) => {
                 Self::handle_collators(&mut conn, &config, client_id, chain_key, *kind, act).await?
             }
@@ -211,9 +224,14 @@ impl Channel {
         client_id: ClientId,
         number_previous_sessions: u8,
         only_chain_key: Option<&ChainKey>,
+        with_stats: bool,
         act: &Channel,
     ) -> Result<(), ApiError> {
-        let follows = |chain_key: &ChainKey| only_chain_key.is_none_or(|only| only == chain_key);
+        // Note: only the relay chain is followed unless a chain is given, so the parachains are explicitly subscribed
+        let follows = |chain_key: &ChainKey| match only_chain_key {
+            Some(only) => only == chain_key,
+            None => *chain_key == ChainKey::RC,
+        };
 
         // Process Relay Chain finalized blocks
         if follows(&ChainKey::RC) {
@@ -230,8 +248,10 @@ impl Channel {
         // Process Asset Hub and People finalized blocks
         for chain_key in [ChainKey::AH, ChainKey::PEOPLE] {
             if follows(&chain_key) {
-                Self::process_parachain_finalized_blocks(conn, config, client_id, chain_key, act)
-                    .await?;
+                Self::process_parachain_finalized_blocks(
+                    conn, config, client_id, chain_key, with_stats, act,
+                )
+                .await?;
             }
         }
 
@@ -381,9 +401,15 @@ impl Channel {
         config: &Config,
         client_id: ClientId,
         chain_key: ChainKey,
+        with_stats: bool,
         act: &Channel,
     ) -> Result<(), ApiError> {
         let cache_key = CacheKey::FinalizedBlock(chain_key.clone());
+        // Note: with and without stats are different subscriptions, so each has its own cursor
+        let pushed_key = match with_stats {
+            true => format!("{}:stats", cache_key),
+            false => cache_key.to_string(),
+        };
         if let Ok(Some(block_number)) = redis::cmd("GET")
             .arg(CacheKey::FinalizedBlock(chain_key.clone()))
             .query_async::<Option<BlockNumber>>(conn)
@@ -391,7 +417,7 @@ impl Channel {
         {
             if let Ok(pushed_block_number) = redis::cmd("GET")
                 .arg(CacheKey::PushedBlockByClientIdV2(
-                    cache_key.to_string(),
+                    pushed_key.clone(),
                     client_id,
                 ))
                 .query_async::<Option<BlockNumber>>(conn)
@@ -404,12 +430,14 @@ impl Channel {
                     block_data.insert(String::from("block_number"), block_number.to_string());
                     block_data.insert(String::from("is_finalized"), (true).to_string());
                     // collation stats of the current parachain session
-                    match get_collation_stats_by_chain(conn, &chain_key).await {
-                        Ok(Some(stats)) => {
-                            block_data.insert(String::from("stats"), stats);
+                    if with_stats {
+                        match get_collation_stats_by_chain(conn, &chain_key).await {
+                            Ok(Some(stats)) => {
+                                block_data.insert(String::from("stats"), stats);
+                            }
+                            Ok(None) => {}
+                            Err(e) => warn!("Collation stats of {chain_key} not available: {e:?}"),
                         }
-                        Ok(None) => {}
-                        Err(e) => warn!("Collation stats of {chain_key} not available: {e:?}"),
                     }
 
                     let resp = WsResponseMessage {
@@ -420,11 +448,11 @@ impl Channel {
                     act.publish_message(&serialized, 0);
 
                     // cache latest pushed block
-                    if let Err(e) = cache_latest_pushed_block_v2(
+                    if let Err(e) = cache_latest_pushed_block_by_key(
                         conn,
                         config,
                         &client_id,
-                        cache_key.clone(),
+                        pushed_key.clone(),
                         block_number,
                     )
                     .await
@@ -445,7 +473,12 @@ impl Channel {
         act: &Channel,
     ) -> Result<(), ApiError> {
         for chain_key in [ChainKey::RC, ChainKey::AH, ChainKey::PEOPLE] {
-            if only_chain_key.as_ref().is_some_and(|c| c != &chain_key) {
+            // Note: only the relay chain is followed unless a chain is given, so the parachains are explicitly subscribed
+            let follows = match only_chain_key {
+                Some(only) => *only == chain_key,
+                None => chain_key == ChainKey::RC,
+            };
+            if !follows {
                 continue;
             }
             let cache_key = CacheKey::BestBlock(chain_key.clone());
@@ -556,7 +589,7 @@ impl Channel {
         Ok(())
     }
 
-    /// Send the current session with its collation stats, when a new relay block was finalized
+    /// Send the current session, when a new relay block was finalized
     async fn handle_current_session(
         conn: &mut Connection,
         config: &Config,
@@ -593,11 +626,9 @@ impl Channel {
             return Ok(());
         };
 
-        let (mut data, _) = get_session_data(conn, session, false, false, true).await?;
+        let (mut data, _) = get_session_data(conn, session, false, false, false).await?;
         data.insert(String::from("is_current"), (true).to_string());
-        let mut result = SessionResult::from(data);
-        // the slot is not cached with the stats since it changes with every parachain block
-        result.set_live_slots(&get_live_slots(conn).await?);
+        let result = SessionResult::from(data);
         let resp = WsResponseMessage {
             r#type: String::from("session"),
             result,
@@ -953,7 +984,8 @@ impl Channel {
             return Ok(());
         }
 
-        // Note: with a kind only the collators of that kind are sent
+        // Note: the slot is not sent, it changes with every block and has its own topic.
+        // With a kind only the collators of that kind are sent.
         let mut result = get_collators_result(
             conn,
             chain_key,
@@ -961,7 +993,7 @@ impl Channel {
             kind.is_none(),
             false,
             false,
-            kind.is_none(),
+            false,
         )
         .await?;
         if let Some(kind) = kind {
@@ -977,6 +1009,59 @@ impl Channel {
 
         if let Err(e) =
             cache_latest_pushed_block_by_key(conn, config, &client_id, pushed_key, last_block).await
+        {
+            warn!("Cache PushedBlock failed with error: {:?}", e);
+        }
+        Ok(())
+    }
+
+    /// Send the slot a parachain is in, when there is a new parachain block in it
+    async fn handle_collator_slot(
+        conn: &mut Connection,
+        config: &Config,
+        client_id: ClientId,
+        chain_key: &ChainKey,
+        act: &Channel,
+    ) -> Result<(), ApiError> {
+        let Some(slot) = get_live_slot(conn, chain_key).await? else {
+            return Ok(());
+        };
+        // Note: the session is cached as soon as it changes, regardless of the slots closed
+        let Some(session) = get_para_current_session(conn, chain_key).await? else {
+            return Ok(());
+        };
+        // Note: the last parachain block of the slot is the cursor
+        let pushed_key = format!("{}:slot", CacheKey::CollatorLiveSlot(chain_key.clone()));
+        let pushed_block = redis::cmd("GET")
+            .arg(CacheKey::PushedBlockByClientIdV2(
+                pushed_key.clone(),
+                client_id,
+            ))
+            .query_async::<Option<BlockNumber>>(conn)
+            .await
+            .map_err(onet_cache::error::CacheError::RedisCMDError)?;
+        if pushed_block == Some(slot.bix) {
+            return Ok(());
+        }
+        let bix = slot.bix;
+        let para_id = match chain_key {
+            ChainKey::PEOPLE => config.people_para_id,
+            _ => config.asset_hub_para_id,
+        };
+        let resp = WsResponseMessage {
+            r#type: String::from("collators"),
+            result: CollatorSlotResult {
+                chain_key: chain_key.to_string(),
+                para_id,
+                session,
+                slot,
+            },
+        };
+        let serialized = serde_json::to_string(&resp).unwrap();
+        act.reply_message(client_id, &serialized);
+
+        if let Err(e) =
+            cache_latest_pushed_block_by_key(conn, config, &client_id, pushed_key, bix).await
         {
             warn!("Cache PushedBlock failed with error: {:?}", e);
         }

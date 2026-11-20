@@ -1009,6 +1009,16 @@ pub struct CollatorResult {
     pub msl: Option<Vec<Slot>>,
 }
 
+/// Slot a parachain is in right now, which changes with every block
+#[derive(Debug, Serialize)]
+pub struct CollatorSlotResult {
+    pub chain_key: String,
+    pub para_id: ParaId,
+    // session of the parachain the slot belongs to
+    pub session: EpochIndex,
+    pub slot: LiveSlot,
+}
+
 #[derive(Debug, Serialize, Default)]
 pub struct CollatorsResult {
     pub chain_key: String,
@@ -1452,6 +1462,28 @@ mod collator_tests {
         result.slot = Some(LiveSlot::default());
         result.set_kind_counter(true);
         assert!(!serde_json::to_string(&result).unwrap().contains("slot"));
+    }
+
+    #[test]
+    fn collator_slot_result_has_only_the_slot() {
+        let slot = LiveSlot {
+            slot: 123,
+            cix: Some(17),
+            owner: Some("a".to_string()),
+            pb: 5,
+            pt: 100,
+            bix: 19565900,
+        };
+        let result = CollatorSlotResult {
+            chain_key: "ah".into(),
+            para_id: 1000,
+            session: 7373,
+            slot,
+        };
+        assert_eq!(
+            serde_json::to_string(&result).unwrap(),
+            r#"{"chain_key":"ah","para_id":1000,"session":7373,"slot":{"ix":123,"cix":17,"owner":"a","pb":5,"pt":100,"bix":19565900}}"#
+        );
     }
 
     #[test]
