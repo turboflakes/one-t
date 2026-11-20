@@ -855,12 +855,14 @@ async fn get_validators_by_params(
     //
     if params.from != 0 && params.from < params.to && params.ranking == Ranking::Performance {
         // Check if query is already cached
-        if let Ok(serialized_data) = redis::cmd("GET")
+        // Note: an entry that can not be read, e.g. cached by another version, is calculated again
+        let cached = redis::cmd("GET")
             .arg(CacheKey::QueryValidators(req.query_string().to_string()))
             .query_async::<String>(&mut conn as &mut Connection)
             .await
-        {
-            let data: Vec<ValidatorResult> = serde_json::from_str(&serialized_data).unwrap();
+            .ok()
+            .and_then(|serialized_data| parse_cached_validators(&serialized_data));
+        if let Some(data) = cached {
             return respond_json(ValidatorsResult {
                 data,
                 ..Default::default()
@@ -1326,6 +1328,18 @@ pub async fn get_validator_profile_by_stash(
         profile: ValidatorProfileResult::from(serialized_data),
         preds: get_validator_predictions(&mut conn as &mut Connection, stash).await?,
     })
+}
+
+/// Validators of a cached query, none if the cached value can not be read (e.g. it was cached by
+/// another version) so the query is calculated again instead of failing.
+fn parse_cached_validators(serialized_data: &str) -> Option<Vec<ValidatorResult>> {
+    match serde_json::from_str(serialized_data) {
+        Ok(data) => Some(data),
+        Err(e) => {
+            warn!("Cached query validators ignored: {e:?}");
+            None
+        }
+    }
 }
 
 /// Minimum blocks a validator must be expected to produce, over the requested sessions, for
@@ -1866,6 +1880,18 @@ async fn get_waiting_validator_stashes_by_session(
 #[cfg(test)]
 mod grade_tests {
     use super::*;
+
+    #[test]
+    fn cached_validators_that_can_not_be_read_are_ignored() {
+        // readable
+        let data = parse_cached_validators(r#"[{"address":"5abc"}]"#).unwrap();
+        assert_eq!(data.len(), 1);
+        assert!(parse_cached_validators("[]").unwrap().is_empty());
+        // a field this version does not know, as cached by a newer version
+        assert!(parse_cached_validators(r#"[{"address":"5abc","unknown_field":true}]"#).is_none());
+        // not json at all
+        assert!(parse_cached_validators("not json").is_none());
+    }
 
     #[test]
     fn performance_score_with_and_without_collation() {
