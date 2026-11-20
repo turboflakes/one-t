@@ -148,17 +148,12 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                             }
                         }
                     }
-                    Methods::SubscribeBlock => match req.params[0].as_str() {
-                        "best" => self.server_addr.do_send(server::Subscribe {
-                            id: self.id,
-                            topic: best_topic(&req.params),
-                        }),
-                        "finalized" => self.server_addr.do_send(server::Subscribe {
-                            id: self.id,
-                            topic: finalized_topic(&req.params),
-                        }),
-                        _ => (),
-                    },
+                    Methods::SubscribeBlock => {
+                        if let Some(topic) = block_topic(&req.params) {
+                            self.server_addr
+                                .do_send(server::Subscribe { id: self.id, topic });
+                        }
+                    }
                     Methods::SubscribeSession => {
                         // "new" at the start of every session, "current" at every new finalized block
                         match req.params.first().map(|p| p.as_str()) {
@@ -219,17 +214,12 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                 .do_send(server::Subscribe { id: self.id, topic });
                         }
                     }
-                    Methods::UnsubscribeBlock => match req.params[0].as_str() {
-                        "best" => self.server_addr.do_send(server::Unsubscribe {
-                            id: self.id,
-                            topic: best_topic(&req.params),
-                        }),
-                        "finalized" => self.server_addr.do_send(server::Unsubscribe {
-                            id: self.id,
-                            topic: finalized_topic(&req.params),
-                        }),
-                        _ => (),
-                    },
+                    Methods::UnsubscribeBlock => {
+                        if let Some(topic) = block_topic(&req.params) {
+                            self.server_addr
+                                .do_send(server::Unsubscribe { id: self.id, topic });
+                        }
+                    }
                     Methods::UnsubscribeSession => {
                         // "new" at the start of every session, "current" at every new finalized block
                         match req.params.first().map(|p| p.as_str()) {
@@ -332,6 +322,16 @@ fn session_chain(params: &[String]) -> Option<ChainKey> {
         .filter(|c| matches!(c, ChainKey::AH | ChainKey::PEOPLE))
 }
 
+/// Topic of the blocks from the params `["best" | "finalized", ...]`, none if the params are empty or
+/// do not start with one of them.
+fn block_topic(params: &[String]) -> Option<Topic> {
+    match params.first().map(|p| p.as_str()) {
+        Some("best") => Some(best_topic(params)),
+        Some("finalized") => Some(finalized_topic(params)),
+        _ => None,
+    }
+}
+
 /// Topic of the best blocks from the params `["best", previous_sessions, chain_key]`.
 /// Note: `previous_sessions` is not used by best blocks, it is kept so the params
 /// are the same as the finalized ones. If `chain_key` is not given, only the relay chain is followed.
@@ -397,6 +397,23 @@ mod tests {
         assert_eq!(
             Topic::CurrentSession(session_chain(&params(&["current", "pp"]))).to_string(),
             "current_session:pp"
+        );
+    }
+
+    #[test]
+    fn block_topic_does_not_need_params() {
+        // no params must not panic
+        assert_eq!(block_topic(&[]), None);
+        assert_eq!(block_topic(&params(&["other"])), None);
+        assert_eq!(
+            block_topic(&params(&["best"])).unwrap().to_string(),
+            "best_block"
+        );
+        assert_eq!(
+            block_topic(&params(&["finalized", "1", "ah"]))
+                .unwrap()
+                .to_string(),
+            "finalized_block:1:ah"
         );
     }
 
