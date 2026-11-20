@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::{BlockNumber, EpochIndex, ParaId, SS58};
+use crate::{BlockNumber, EpochIndex, EraIndex, ParaId, SS58};
 use log::warn;
 use serde::{Deserialize, Serialize};
 use subxt::utils::AccountId32;
@@ -32,15 +32,39 @@ const MAX_SLOT_GAP: u64 = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CollatorKind {
-    #[serde(rename = "I")]
+    // Note: the upper case aliases are to read the values cached before the kinds were lower case
+    #[serde(rename = "i", alias = "I")]
     Invulnerable,
-    #[serde(rename = "P")]
+    #[serde(rename = "p", alias = "P")]
     Permissionless,
-    #[serde(rename = "V")]
+    #[serde(rename = "v", alias = "V")]
     Validator,
     // session validator not found in invulnerables, candidates or drawn collators
-    #[serde(rename = "U")]
+    #[serde(rename = "u", alias = "U")]
     Unknown,
+}
+
+impl CollatorKind {
+    /// Letter of the kind, as it is serialized
+    pub fn code(&self) -> char {
+        match self {
+            Self::Invulnerable => 'i',
+            Self::Permissionless => 'p',
+            Self::Validator => 'v',
+            Self::Unknown => 'u',
+        }
+    }
+
+    /// Kind from its letter, upper or lower case
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code.to_ascii_lowercase().as_str() {
+            "i" => Some(Self::Invulnerable),
+            "p" => Some(Self::Permissionless),
+            "v" => Some(Self::Validator),
+            "u" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
 }
 
 /// Position of a validator in the collators of a parachain, once it is part of the draw
@@ -58,11 +82,16 @@ pub struct CollationIndex {
     pub slot: Option<Slot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pb: Option<u32>,
+    // era points earned so far in that slot
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pt: Option<u32>,
 }
 
 /// Slot a parachain is currently in, as of the last block followed
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LiveSlot {
+    // slot index, Note: alias to read the values cached before the rename
+    #[serde(rename = "ix", alias = "slot")]
     pub slot: Slot,
     // position of the slot owner in the collators of the session and its address
     pub cix: Option<u32>,
@@ -70,6 +99,12 @@ pub struct LiveSlot {
     pub owner: Option<SS58>,
     // blocks produced in the slot so far
     pub pb: u32,
+    // era points earned in the slot so far
+    #[serde(default)]
+    pub pt: u32,
+    // last parachain block followed, the one that is in the slot
+    #[serde(default)]
+    pub bix: BlockNumber,
 }
 
 impl CollationIndex {
@@ -79,6 +114,7 @@ impl CollationIndex {
             cix,
             slot: None,
             pb: None,
+            pt: None,
         }
     }
 
@@ -87,6 +123,7 @@ impl CollationIndex {
         if live.cix == Some(self.cix) {
             self.slot = Some(live.slot);
             self.pb = Some(live.pb);
+            self.pt = Some(live.pt);
         }
     }
 
@@ -171,9 +208,46 @@ impl CollatorSummary {
     }
 }
 
+/// Number of collators of a parachain session by kind
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollatorKindCounter {
+    // invulnerables
+    pub i: u32,
+    // permissionless
+    pub p: u32,
+    // validators
+    pub v: u32,
+    // unknown, only shown if there are any
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub u: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+impl CollatorKindCounter {
+    /// Count a collator, collators without a kind are not counted
+    pub fn add(&mut self, kind: Option<CollatorKind>) {
+        match kind {
+            Some(CollatorKind::Invulnerable) => self.i += 1,
+            Some(CollatorKind::Permissionless) => self.p += 1,
+            Some(CollatorKind::Validator) => self.v += 1,
+            Some(CollatorKind::Unknown) => self.u += 1,
+            None => {}
+        }
+    }
+}
+
 /// Counters of the collators of a parachain in a session
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CollatorSessionStats {
+    // era of the parachain session, only set for parachain sessions
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eix: Option<EraIndex>,
+    // position of the parachain session in the era, 0 for the first, only set if known
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub esix: Option<u32>,
     // first and last parachain block tracked in the session
     #[serde(default)]
     pub sbix: BlockNumber,
@@ -192,6 +266,9 @@ pub struct CollatorSessionStats {
     pub pt: u32,
     // missed slots
     pub ms: u32,
+    // slot the parachain is in right now, only set by the api for the current session
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<LiveSlot>,
 }
 
 impl CollatorSessionStats {
@@ -413,6 +490,8 @@ impl ParaSlots {
             cix,
             owner: open.owner.map(|owner| owner.to_string()),
             pb: open.blocks.len() as u32,
+            pt: open.blocks.len() as u32 * self.points_per_block,
+            bix: self.last_block.unwrap_or_default(),
         })
     }
 
@@ -534,6 +613,7 @@ mod tests {
     fn tracker() -> ParaSlots {
         let mut t = ParaSlots::default();
         t.set_blocks_per_slot(3);
+        t.set_points_per_block(20);
         t.set_session(10);
         t.set_collators(vec![
             (acc(0), CollatorKind::Invulnerable),
@@ -611,11 +691,14 @@ mod tests {
                 slot: 4,
                 cix: Some(1),
                 owner: Some(acc(1).to_string()),
-                pb: 1
+                pb: 1,
+                pt: 20,
+                bix: 1
             })
         );
         t.on_block(2, 4);
         assert_eq!(t.live_slot().unwrap().pb, 2);
+        assert_eq!(t.live_slot().unwrap().bix, 2);
         t.on_block(3, 5);
         assert_eq!(
             t.live_slot(),
@@ -623,7 +706,9 @@ mod tests {
                 slot: 5,
                 cix: Some(2),
                 owner: Some(acc(2).to_string()),
-                pb: 1
+                pb: 1,
+                pt: 20,
+                bix: 3
             })
         );
 
@@ -633,8 +718,11 @@ mod tests {
         let mut other = CollationIndex::new(1000, 1);
         owner.set_live(&live);
         other.set_live(&live);
-        assert_eq!((owner.slot, owner.pb), (Some(5), Some(1)));
-        assert_eq!((other.slot, other.pb), (None, None));
+        assert_eq!(
+            (owner.slot, owner.pb, owner.pt),
+            (Some(5), Some(1), Some(20))
+        );
+        assert_eq!((other.slot, other.pb, other.pt), (None, None, None));
     }
 
     #[test]
@@ -653,8 +741,26 @@ mod tests {
         r.add_slot(5, &[], 2, 20);
         assert_eq!(
             serde_json::to_string(&r.summary()).unwrap(),
-            r#"{"kind":"V","os":2,"eb":4,"pb":2,"pt":40,"ms":1}"#
+            r#"{"kind":"v","os":2,"eb":4,"pb":2,"pt":40,"ms":1}"#
         );
+    }
+
+    #[test]
+    fn kind_is_lower_case_and_reads_the_upper_case_cached_before() {
+        assert_eq!(
+            serde_json::to_string(&CollatorKind::Validator).unwrap(),
+            r#""v""#
+        );
+        for (cached, kind) in [
+            ("I", CollatorKind::Invulnerable),
+            ("p", CollatorKind::Permissionless),
+        ] {
+            let parsed: CollatorKind = serde_json::from_str(&format!("\"{cached}\"")).unwrap();
+            assert_eq!(parsed, kind);
+        }
+        assert_eq!(CollatorKind::from_code("V"), Some(CollatorKind::Validator));
+        assert_eq!(CollatorKind::from_code("v"), Some(CollatorKind::Validator));
+        assert_eq!(CollatorKind::from_code("ah"), None);
     }
 
     #[test]

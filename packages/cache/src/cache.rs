@@ -856,19 +856,32 @@ pub async fn cache_latest_pushed_block_v2(
     cache_key: CacheKey,
     block_number: BlockNumber,
 ) -> Result<(), CacheError> {
+    cache_latest_pushed_block_by_key(
+        cache,
+        config,
+        client_id,
+        cache_key.to_string(),
+        block_number,
+    )
+    .await
+}
+
+/// Same as `cache_latest_pushed_block_v2` but the key of the cursor is given as it is,
+/// so a client can have a cursor for each subscription that shares the same cache key
+pub async fn cache_latest_pushed_block_by_key(
+    cache: &mut Connection,
+    config: &Config,
+    client_id: &usize,
+    key: String,
+    block_number: BlockNumber,
+) -> Result<(), CacheError> {
     redis::pipe()
         .atomic()
         .cmd("SET")
-        .arg(CacheKey::PushedBlockByClientIdV2(
-            cache_key.to_string(),
-            *client_id,
-        ))
+        .arg(CacheKey::PushedBlockByClientIdV2(key.clone(), *client_id))
         .arg(block_number)
         .cmd("EXPIRE")
-        .arg(CacheKey::PushedBlockByClientIdV2(
-            cache_key.to_string(),
-            *client_id,
-        ))
+        .arg(CacheKey::PushedBlockByClientIdV2(key, *client_id))
         .arg(config.cache_writer_prunning)
         .query_async::<()>(cache)
         .await

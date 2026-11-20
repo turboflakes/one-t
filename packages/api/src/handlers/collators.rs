@@ -33,7 +33,7 @@ use onet_cache::{
 };
 use onet_config::CONFIG;
 use onet_records::{
-    collators::{CollatorRecord, CollatorSessionStats, LiveSlot},
+    collators::{CollatorKind, CollatorRecord, CollatorSessionStats, LiveSlot},
     EpochIndex, ParaId,
 };
 use redis::aio::MultiplexedConnection as Connection;
@@ -48,15 +48,32 @@ pub struct Params {
     // parachain session, default current
     #[serde(default = "default_index")]
     session: Index,
-    // show_stats indicates whether the session stats should be retrieved or not, default false
+    // stats indicates whether the session stats should be retrieved or not, default false
+    // Note: `show_stats` is deprecated, use `stats`
+    #[serde(default, alias = "show_stats")]
+    stats: bool,
+    // block_numbers indicates whether the produced block numbers (pbn) of each collator should be retrieved or not, default false
+    // Note: `show_block_numbers` is deprecated, use `block_numbers`
+    #[serde(default, alias = "show_block_numbers")]
+    block_numbers: bool,
+    // missed_slots indicates whether the missed slots (msl) of each collator should be retrieved or not, default false
+    // Note: `show_missed_slots` is deprecated, use `missed_slots`
+    #[serde(default, alias = "show_missed_slots")]
+    missed_slots: bool,
+    // slot indicates whether the slot the parachain is in right now should be retrieved or not, default false
+    // Note: only available for the current session
     #[serde(default)]
-    show_stats: bool,
-    // show_block_numbers indicates whether the produced block numbers (pbn) of each collator should be retrieved or not, default false
+    slot: bool,
+    // kind of the collators to retrieve: `i` invulnerable, `p` permissionless, `v` validator or `u` unknown,
+    // default all. Note: `kind_counter` always counts all collators
     #[serde(default)]
-    show_block_numbers: bool,
-    // show_missed_slots indicates whether the missed slots (msl) of each collator should be retrieved or not, default false
+    kind: Option<CollatorKind>,
+    // kind_counter indicates whether the number of collators by kind should be retrieved or not, default false
     #[serde(default)]
-    show_missed_slots: bool,
+    kind_counter: bool,
+    // kind_counter_only is the same as `kind_counter` but the collators (`data`) are not retrieved, default false
+    #[serde(default)]
+    kind_counter_only: bool,
 }
 
 fn default_chain() -> ChainKey {
@@ -79,15 +96,23 @@ pub async fn get_collators(
     }
 
     let mut conn = get_conn(&cache).await?;
-    let result = get_collators_result(
+    let mut result = get_collators_result(
         &mut conn as &mut Connection,
         &params.chain_key,
         &params.session,
-        params.show_stats,
-        params.show_block_numbers,
-        params.show_missed_slots,
+        params.stats,
+        params.block_numbers,
+        params.missed_slots,
+        params.slot,
     )
     .await?;
+
+    if params.kind_counter || params.kind_counter_only {
+        result.set_kind_counter(params.kind_counter_only);
+    }
+    if let Some(kind) = params.kind {
+        result.retain_kind(kind);
+    }
 
     respond_json(result)
 }
@@ -100,6 +125,7 @@ pub async fn get_collators_result(
     show_stats: bool,
     show_block_numbers: bool,
     show_missed_slots: bool,
+    show_slot: bool,
 ) -> Result<CollatorsResult, ApiError> {
     let current_session: Option<EpochIndex> = redis::cmd("GET")
         .arg(CacheKey::CollatorCurrentSession(chain_key.clone()))
@@ -170,8 +196,8 @@ pub async fn get_collators_result(
     );
 
     // Note: the slot the parachain is in only makes sense for its current session
-    if current_session == Some(session_index) {
-        result.live = redis::cmd("GET")
+    if show_slot && current_session == Some(session_index) {
+        result.slot = redis::cmd("GET")
             .arg(CacheKey::CollatorLiveSlot(chain_key.clone()))
             .query_async::<Option<String>>(&mut *conn)
             .await
@@ -182,15 +208,22 @@ pub async fn get_collators_result(
     Ok(result)
 }
 
-/// Set the slot and the blocks produced so far on the validators that are collating right now.
-/// Note: the slot a parachain is in changes with every block, so it is not cached with the validators
-pub async fn attach_collation_live(
+/// Slot a parachain is in right now.
+pub async fn get_live_slot(
     conn: &mut Connection,
-    validators: &mut [ValidatorResult],
-) -> Result<(), ApiError> {
-    if validators.iter().all(|v| v.collation.is_empty()) {
-        return Ok(());
-    }
+    chain_key: &ChainKey,
+) -> Result<Option<LiveSlot>, ApiError> {
+    Ok(redis::cmd("GET")
+        .arg(CacheKey::CollatorLiveSlot(chain_key.clone()))
+        .query_async::<Option<String>>(&mut *conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?
+        .and_then(|s| serde_json::from_str::<LiveSlot>(&s).ok()))
+}
+
+/// Slot each parachain is in right now, by parachain id.
+/// Note: the slot a parachain is in changes with every block, so it is not cached with the stats
+pub async fn get_live_slots(conn: &mut Connection) -> Result<BTreeMap<ParaId, LiveSlot>, ApiError> {
     let config = CONFIG.clone();
     let mut live: BTreeMap<ParaId, LiveSlot> = BTreeMap::new();
     for (chain_key, para_id) in [
@@ -199,7 +232,7 @@ pub async fn attach_collation_live(
     ] {
         let slot = redis::cmd("GET")
             .arg(CacheKey::CollatorLiveSlot(chain_key))
-            .query_async::<Option<String>>(conn)
+            .query_async::<Option<String>>(&mut *conn)
             .await
             .map_err(CacheError::RedisCMDError)?
             .and_then(|s| serde_json::from_str::<LiveSlot>(&s).ok());
@@ -207,6 +240,18 @@ pub async fn attach_collation_live(
             live.insert(para_id, slot);
         }
     }
+    Ok(live)
+}
+
+/// Set the slot and the blocks produced so far on the validators that are collating right now.
+pub async fn attach_collation_live(
+    conn: &mut Connection,
+    validators: &mut [ValidatorResult],
+) -> Result<(), ApiError> {
+    if validators.iter().all(|v| v.collation.is_empty()) {
+        return Ok(());
+    }
+    let live = get_live_slots(conn).await?;
     for validator in validators.iter_mut() {
         for entry in validator.collation.iter_mut() {
             if let Some(slot) = live.get(&entry.para_id) {

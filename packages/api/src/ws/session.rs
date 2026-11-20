@@ -12,7 +12,7 @@ use actix::prelude::*;
 use actix_web_actors::ws;
 use log::{debug, warn};
 use onet_cache::types::{ChainKey, Verbosity};
-use onet_records::{BlockNumber, EpochIndex};
+use onet_records::{collators::CollatorKind, BlockNumber, EpochIndex};
 use subxt::utils::AccountId32;
 
 /// How often heartbeat pings are sent
@@ -151,29 +151,26 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                     Methods::SubscribeBlock => match req.params[0].as_str() {
                         "best" => self.server_addr.do_send(server::Subscribe {
                             id: self.id,
-                            topic: Topic::BestBlock,
+                            topic: best_topic(&req.params),
                         }),
-                        "finalized" => {
-                            if let Ok(previous_sessions) = req.params[1].as_str().parse::<u8>() {
-                                self.server_addr.do_send(server::Subscribe {
-                                    id: self.id,
-                                    topic: Topic::FinalizedBlock(previous_sessions),
-                                })
-                            } else {
-                                self.server_addr.do_send(server::Subscribe {
-                                    id: self.id,
-                                    topic: Topic::FinalizedBlock(0),
-                                })
-                            }
-                        }
+                        "finalized" => self.server_addr.do_send(server::Subscribe {
+                            id: self.id,
+                            topic: finalized_topic(&req.params),
+                        }),
                         _ => (),
                     },
                     Methods::SubscribeSession => {
-                        if &req.params[0] == "new" {
-                            self.server_addr.do_send(server::Subscribe {
+                        // "new" at the start of every session, "current" at every new finalized block
+                        match req.params.first().map(|p| p.as_str()) {
+                            Some("new") => self.server_addr.do_send(server::Subscribe {
                                 id: self.id,
-                                topic: Topic::NewSession,
-                            });
+                                topic: Topic::NewSession(session_chain(&req.params)),
+                            }),
+                            Some("current") => self.server_addr.do_send(server::Subscribe {
+                                id: self.id,
+                                topic: Topic::CurrentSession(session_chain(&req.params)),
+                            }),
+                            _ => (),
                         }
                     }
                     Methods::SubscribeValidator => {
@@ -217,43 +214,34 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                         }
                     }
                     Methods::SubscribeCollators => {
-                        for chain_key in req.params.iter() {
-                            if let Ok(chain_key @ (ChainKey::AH | ChainKey::PEOPLE)) =
-                                ChainKey::from_str(chain_key)
-                            {
-                                self.server_addr.do_send(server::Subscribe {
-                                    id: self.id,
-                                    topic: Topic::Collators(chain_key),
-                                });
-                            }
+                        for topic in collators_topics(&req.params) {
+                            self.server_addr
+                                .do_send(server::Subscribe { id: self.id, topic });
                         }
                     }
                     Methods::UnsubscribeBlock => match req.params[0].as_str() {
                         "best" => self.server_addr.do_send(server::Unsubscribe {
                             id: self.id,
-                            topic: Topic::BestBlock,
+                            topic: best_topic(&req.params),
                         }),
-                        "finalized" => {
-                            if let Ok(previous_sessions) = req.params[1].as_str().parse::<u8>() {
-                                self.server_addr.do_send(server::Unsubscribe {
-                                    id: self.id,
-                                    topic: Topic::FinalizedBlock(previous_sessions),
-                                })
-                            } else {
-                                self.server_addr.do_send(server::Unsubscribe {
-                                    id: self.id,
-                                    topic: Topic::FinalizedBlock(0),
-                                })
-                            }
-                        }
+                        "finalized" => self.server_addr.do_send(server::Unsubscribe {
+                            id: self.id,
+                            topic: finalized_topic(&req.params),
+                        }),
                         _ => (),
                     },
                     Methods::UnsubscribeSession => {
-                        if &req.params[0] == "new" {
-                            self.server_addr.do_send(server::Unsubscribe {
+                        // "new" at the start of every session, "current" at every new finalized block
+                        match req.params.first().map(|p| p.as_str()) {
+                            Some("new") => self.server_addr.do_send(server::Unsubscribe {
                                 id: self.id,
-                                topic: Topic::NewSession,
-                            });
+                                topic: Topic::NewSession(session_chain(&req.params)),
+                            }),
+                            Some("current") => self.server_addr.do_send(server::Unsubscribe {
+                                id: self.id,
+                                topic: Topic::CurrentSession(session_chain(&req.params)),
+                            }),
+                            _ => (),
                         }
                     }
                     Methods::UnsubscribeValidator => {
@@ -297,13 +285,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                         }
                     }
                     Methods::UnsubscribeCollators => {
-                        for chain_key in req.params.iter() {
-                            if let Ok(chain_key) = ChainKey::from_str(chain_key) {
-                                self.server_addr.do_send(server::Unsubscribe {
-                                    id: self.id,
-                                    topic: Topic::Collators(chain_key),
-                                });
-                            }
+                        for topic in collators_topics(&req.params) {
+                            self.server_addr
+                                .do_send(server::Unsubscribe { id: self.id, topic });
                         }
                     }
                     _ => warn!("Not Implemented: {:?}", req),
@@ -319,5 +303,135 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
             }
             ws::Message::Nop => (),
         }
+    }
+}
+
+/// Topics of the collators from the params `[chain_key, ..., kind | "slot"]`, where chain_key is `ah` or `pp`.
+/// Note: the collators and the stats are sent when a slot is closed. The optional kind (`i`, `p`, `v` or `u`)
+/// applies to all chains given and only the collators of that kind are sent. With `slot` only the slot
+/// each chain is in is sent, which changes with every block.
+fn collators_topics(params: &[String]) -> Vec<Topic> {
+    let kind = params.iter().find_map(|p| CollatorKind::from_code(p));
+    let slot = params.iter().any(|p| p.eq_ignore_ascii_case("slot"));
+    params
+        .iter()
+        .filter_map(|p| ChainKey::from_str(p).ok())
+        .filter(|c| matches!(c, ChainKey::AH | ChainKey::PEOPLE))
+        .map(|c| match slot {
+            true => Topic::CollatorSlot(c),
+            false => Topic::Collators(c, kind),
+        })
+        .collect()
+}
+
+/// Parachain of the session topics from the params `["new" | "current", chain_key]`, the relay chain if none.
+fn session_chain(params: &[String]) -> Option<ChainKey> {
+    params
+        .get(1)
+        .and_then(|c| ChainKey::from_str(c).ok())
+        .filter(|c| matches!(c, ChainKey::AH | ChainKey::PEOPLE))
+}
+
+/// Topic of the best blocks from the params `["best", previous_sessions, chain_key]`.
+/// Note: `previous_sessions` is not used by best blocks, it is kept so the params
+/// are the same as the finalized ones. If `chain_key` is not given, only the relay chain is followed.
+fn best_topic(params: &[String]) -> Topic {
+    Topic::BestBlock(params.get(2).and_then(|c| ChainKey::from_str(c).ok()))
+}
+
+/// Topic of the finalized blocks from the params `["finalized", previous_sessions, chain_key, "stats"]`.
+/// Note: `previous_sessions` is 0 if not valid and, if `chain_key` is not given, only the relay chain is followed.
+/// The param `stats` can be anywhere after `finalized` and sends the collation stats with the blocks
+/// of asset hub and people, so it needs one of them as `chain_key`.
+fn finalized_topic(params: &[String]) -> Topic {
+    let previous_sessions = params
+        .get(1)
+        .and_then(|p| p.parse::<u8>().ok())
+        .unwrap_or_default();
+    let chain_key = params.get(2).and_then(|c| ChainKey::from_str(c).ok());
+    let stats = params
+        .iter()
+        .skip(1)
+        .any(|p| p.eq_ignore_ascii_case("stats"));
+    Topic::FinalizedBlock(previous_sessions, chain_key, stats)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn params(p: &[&str]) -> Vec<String> {
+        p.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn collators_topics_have_an_optional_kind() {
+        let topics = |p: &[&str]| -> Vec<String> {
+            collators_topics(&params(p))
+                .iter()
+                .map(|t| t.to_string())
+                .collect()
+        };
+        assert_eq!(topics(&["ah", "pp"]), ["collators:ah", "collators:pp"]);
+        assert_eq!(topics(&["pp", "I"]), ["collators:pp:i"]);
+        assert_eq!(
+            topics(&["ah", "pp", "V"]),
+            ["collators:ah:v", "collators:pp:v"]
+        );
+        // only the slot
+        assert_eq!(topics(&["ah", "slot"]), ["collators:ah:slot"]);
+        assert_eq!(
+            topics(&["ah", "pp", "slot"]),
+            ["collators:ah:slot", "collators:pp:slot"]
+        );
+        // not collators chains
+        assert_eq!(topics(&["rc", "xx", "I"]), Vec::<String>::new());
+    }
+
+    #[test]
+    fn session_topics_follow_the_relay_chain_unless_a_parachain_is_given() {
+        assert_eq!(session_chain(&params(&["current"])), None);
+        assert_eq!(session_chain(&params(&["current", "rc"])), None);
+        assert_eq!(session_chain(&params(&["new", "xx"])), None);
+        assert_eq!(session_chain(&params(&["new", "ah"])), Some(ChainKey::AH));
+        assert_eq!(
+            Topic::CurrentSession(session_chain(&params(&["current", "pp"]))).to_string(),
+            "current_session:pp"
+        );
+    }
+
+    #[test]
+    fn best_topic_follows_the_relay_chain_unless_one_is_given() {
+        assert_eq!(best_topic(&params(&["best"])).to_string(), "best_block");
+        assert_eq!(
+            best_topic(&params(&["best", "0", "pp"])).to_string(),
+            "best_block:pp"
+        );
+        assert_eq!(
+            best_topic(&params(&["best", "0", "xx"])).to_string(),
+            "best_block"
+        );
+    }
+
+    #[test]
+    fn finalized_topic_follows_the_relay_chain_unless_one_is_given() {
+        let topic = finalized_topic(&params(&["finalized", "2"]));
+        assert_eq!(topic.to_string(), "finalized_block:2");
+        let topic = finalized_topic(&params(&["finalized"]));
+        assert_eq!(topic.to_string(), "finalized_block:0");
+        let topic = finalized_topic(&params(&["finalized", "0", "pp"]));
+        assert_eq!(topic.to_string(), "finalized_block:0:pp");
+        // not a chain
+        let topic = finalized_topic(&params(&["finalized", "1", "xx"]));
+        assert_eq!(topic.to_string(), "finalized_block:1");
+        // with the collation stats
+        let topic = finalized_topic(&params(&["finalized", "0", "ah", "stats"]));
+        assert_eq!(topic.to_string(), "finalized_block:0:ah:stats");
+        let topic = finalized_topic(&params(&["finalized", "0", "stats"]));
+        assert_eq!(topic.to_string(), "finalized_block:0:stats");
+        assert_ne!(
+            finalized_topic(&params(&["finalized", "0", "ah"])),
+            finalized_topic(&params(&["finalized", "0", "ah", "stats"]))
+        );
     }
 }

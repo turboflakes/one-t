@@ -75,12 +75,14 @@ pub struct Params {
     report: Report,
     #[serde(default = "default_index")]
     session: Index,
-    // show_stats indicates wheter parachain details should be retrieved or not, default false
-    #[serde(default)]
-    show_stats: bool,
-    // show_summary indicates wheter parachain summary should be retrieved or not, default false
-    #[serde(default)]
-    show_summary: bool,
+    // stats indicates wheter parachain details should be retrieved or not, default false
+    // Note: `show_stats` is deprecated, use `stats`
+    #[serde(default, alias = "show_stats")]
+    stats: bool,
+    // summary indicates wheter parachain summary should be retrieved or not, default false
+    // Note: `show_summary` is deprecated, use `summary`
+    #[serde(default, alias = "show_summary")]
+    summary: bool,
 }
 
 fn default_role() -> Role {

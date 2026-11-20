@@ -30,9 +30,9 @@ pub mod types;
 
 pub use cache::{
     cache_best_block, cache_board_limits_at_session, cache_finalized_block,
-    cache_latest_pushed_block, cache_latest_pushed_block_v2, cache_network_stats_at_session,
-    cache_records, cache_records_at_new_session, cache_validator_profile,
-    cache_validator_profile_only, cache_waiting_validator,
+    cache_latest_pushed_block, cache_latest_pushed_block_by_key, cache_latest_pushed_block_v2,
+    cache_network_stats_at_session, cache_records, cache_records_at_new_session,
+    cache_validator_profile, cache_validator_profile_only, cache_waiting_validator,
 };
 
 pub use collators::{cache_collator_records, rehydrate_collator_records};

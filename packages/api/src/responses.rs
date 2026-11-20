@@ -23,7 +23,8 @@ use onet_cache::types::ChainKey;
 use onet_pools::{Pool, PoolCounter, PoolNominees, PoolNomineesStats, PoolState, PoolStats, Roles};
 use onet_records::{
     collators::{
-        CollationIndex, CollatorRecord, CollatorSessionStats, CollatorSummary, LiveSlot, Slot,
+        CollationIndex, CollatorKind, CollatorKindCounter, CollatorRecord, CollatorSessionStats,
+        CollatorSummary, LiveSlot, Slot,
     },
     AuthorityIndex, AuthorityRecord, BlockNumber, DiscoveryRecord, EpochIndex, EraIndex,
     NetworkSessionStats, ParaId, ParaStats, ParachainRecord, ProfilePrediction, SessionStats,
@@ -130,22 +131,45 @@ pub struct BlockResult {
     // is_finalized
     #[serde(skip_serializing_if = "default")]
     is_finalized: bool,
-    // session stats
-    #[serde(skip_serializing_if = "SessionStats::is_empty")]
-    stats: SessionStats,
+    // stats depend on the chain_key: network session stats for rc, collation session stats for ah and pp
+    #[serde(default, skip_serializing_if = "BlockStats::is_empty")]
+    stats: BlockStats,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum BlockStats {
+    Network(SessionStats),
+    Collation(CollatorSessionStats),
+}
+
+impl Default for BlockStats {
+    fn default() -> Self {
+        BlockStats::Network(SessionStats::default())
+    }
+}
+
+impl BlockStats {
+    fn is_empty(&self) -> bool {
+        match self {
+            BlockStats::Network(s) => s.is_empty(),
+            BlockStats::Collation(s) => s.is_empty(),
+        }
+    }
 }
 
 impl From<CacheMap> for BlockResult {
     fn from(data: CacheMap) -> Self {
         let zero = "0".to_string();
         let serialized = data.get("stats").unwrap_or(&"{}".to_string()).to_string();
-        let stats: SessionStats = serde_json::from_str(&serialized).unwrap_or_default();
+        let stats: BlockStats = serde_json::from_str(&serialized).unwrap_or_default();
+        let chain_key = data
+            .get("chain_key")
+            .unwrap_or(&"{}".to_string())
+            .parse::<ChainKey>()
+            .unwrap_or_default();
         BlockResult {
-            chain_key: data
-                .get("chain_key")
-                .unwrap_or(&"{}".to_string())
-                .parse::<ChainKey>()
-                .unwrap_or_default(),
+            chain_key,
             block_number: data
                 .get("block_number")
                 .unwrap_or(&zero)
@@ -187,7 +211,7 @@ pub struct SessionResult {
     netstats: NetworkSessionStats,
     // collation stats by parachain id
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    collation: BTreeMap<ParaId, CollatorSessionStats>,
+    collation_stats: BTreeMap<ParaId, CollatorSessionStats>,
     is_syncing: bool,
 }
 
@@ -209,12 +233,12 @@ impl From<CacheMap> for SessionResult {
         let netstats: NetworkSessionStats =
             serde_json::from_str(&netstats_serialized).unwrap_or_default();
 
-        // collation
+        // collation stats
         let collation_serialized = data
-            .get("collation")
+            .get("collation_stats")
             .unwrap_or(&"{}".to_string())
             .to_string();
-        let collation: BTreeMap<ParaId, CollatorSessionStats> =
+        let collation_stats: BTreeMap<ParaId, CollatorSessionStats> =
             serde_json::from_str(&collation_serialized).unwrap_or_default();
 
         SessionResult {
@@ -255,7 +279,7 @@ impl From<CacheMap> for SessionResult {
                 .unwrap_or_default(),
             stats,
             netstats,
-            collation,
+            collation_stats,
         }
     }
 }
@@ -280,7 +304,7 @@ impl<'de> Deserialize<'de> for SessionResult {
             IsCurrent,
             Stats,
             Netstats,
-            Collation,
+            CollationStats,
             IsSyncing,
         }
 
@@ -305,7 +329,7 @@ impl<'de> Deserialize<'de> for SessionResult {
                 let mut is_current: Option<bool> = None;
                 let mut stats: Option<SessionStats> = None;
                 let mut netstats: Option<NetworkSessionStats> = None;
-                let mut collation: Option<BTreeMap<ParaId, CollatorSessionStats>> = None;
+                let mut collation_stats: Option<BTreeMap<ParaId, CollatorSessionStats>> = None;
                 let mut is_syncing: Option<bool> = None;
 
                 while let Some(key) = map.next_key()? {
@@ -358,11 +382,11 @@ impl<'de> Deserialize<'de> for SessionResult {
                             }
                             netstats = Some(map.next_value()?);
                         }
-                        Field::Collation => {
-                            if collation.is_some() {
-                                return Err(serde::de::Error::duplicate_field("collation"));
+                        Field::CollationStats => {
+                            if collation_stats.is_some() {
+                                return Err(serde::de::Error::duplicate_field("collation_stats"));
                             }
-                            collation = Some(map.next_value()?);
+                            collation_stats = Some(map.next_value()?);
                         }
                         Field::IsSyncing => {
                             if is_syncing.is_some() {
@@ -384,7 +408,7 @@ impl<'de> Deserialize<'de> for SessionResult {
                 let mut result = SessionResult::new(
                     six, eix, sbix, ebix, esix, is_current, stats, netstats, is_syncing,
                 );
-                result.collation = collation.unwrap_or_default();
+                result.collation_stats = collation_stats.unwrap_or_default();
                 Ok(result)
             }
         }
@@ -398,7 +422,7 @@ impl<'de> Deserialize<'de> for SessionResult {
             "is_current",
             "stats",
             "netstats",
-            "collation",
+            "collation_stats",
             "is_syncing",
         ];
         deserializer.deserialize_struct("SessionResult", FIELDS, SessionResultVisitor)
@@ -406,6 +430,23 @@ impl<'de> Deserialize<'de> for SessionResult {
 }
 
 impl SessionResult {
+    pub fn six(&self) -> EpochIndex {
+        self.six
+    }
+
+    pub fn is_current(&self) -> bool {
+        self.is_current
+    }
+
+    /// Set the slot each parachain is in right now on its collation stats
+    pub fn set_live_slots(&mut self, live: &BTreeMap<ParaId, LiveSlot>) {
+        for (para_id, stats) in self.collation_stats.iter_mut() {
+            if let Some(slot) = live.get(para_id) {
+                stats.slot = Some(slot.clone());
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         six: EpochIndex,
@@ -427,7 +468,7 @@ impl SessionResult {
             is_current,
             stats,
             netstats,
-            collation: BTreeMap::new(),
+            collation_stats: BTreeMap::new(),
             is_syncing,
         }
     }
@@ -435,12 +476,101 @@ impl SessionResult {
 
 #[derive(Debug, Serialize)]
 pub struct SessionsResult {
-    pub data: Vec<SessionResult>,
+    pub data: SessionList,
+}
+
+// Note: the sessions are relay chain sessions or parachain sessions depending on the param `chain_key`
+#[derive(Serialize, Debug)]
+#[serde(untagged)]
+pub enum SessionList {
+    Relay(Vec<SessionResult>),
+    Para(Vec<ParaSessionResult>),
 }
 
 impl From<Vec<SessionResult>> for SessionsResult {
     fn from(data: Vec<SessionResult>) -> Self {
-        SessionsResult { data }
+        SessionsResult {
+            data: SessionList::Relay(data),
+        }
+    }
+}
+
+impl From<Vec<ParaSessionResult>> for SessionsResult {
+    fn from(data: Vec<ParaSessionResult>) -> Self {
+        SessionsResult {
+            data: SessionList::Para(data),
+        }
+    }
+}
+
+// Note: a relay chain session or a parachain session depending on the param `chain_key`
+#[derive(Serialize, Debug)]
+#[serde(untagged)]
+pub enum SessionResponse {
+    Relay(SessionResult),
+    Para(ParaSessionResult),
+}
+
+/// Counters of the collators of a parachain session
+#[derive(Serialize, Debug, Default, PartialEq)]
+pub struct ParaSessionStats {
+    pub nc: u32,
+    pub os: u32,
+    pub eb: u32,
+    pub pb: u32,
+    pub pt: u32,
+    pub ms: u32,
+}
+
+/// Parachain session, `six` is the index of the session in the parachain
+#[derive(Serialize, Debug, Default)]
+pub struct ParaSessionResult {
+    pub six: EpochIndex,
+    // era of the session and position of the session in the era, when known
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eix: Option<EraIndex>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub esix: Option<u32>,
+    pub sbix: BlockNumber,
+    pub ebix: BlockNumber,
+    #[serde(skip_serializing_if = "default")]
+    pub is_current: bool,
+    // counters of the collators, only if requested
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stats: Option<ParaSessionStats>,
+    // slot the parachain is in right now, only for the current session and if requested
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slot: Option<LiveSlot>,
+}
+
+impl ParaSessionResult {
+    pub fn new(
+        six: EpochIndex,
+        stats: &CollatorSessionStats,
+        is_current: bool,
+        with_stats: bool,
+    ) -> Self {
+        Self {
+            six,
+            eix: stats.eix,
+            esix: stats.esix,
+            sbix: stats.sbix,
+            ebix: stats.ebix,
+            is_current,
+            stats: with_stats.then_some(ParaSessionStats {
+                nc: stats.nc,
+                os: stats.os,
+                eb: stats.eb,
+                pb: stats.pb,
+                pt: stats.pt,
+                ms: stats.ms,
+            }),
+            slot: None,
+        }
+    }
+
+    pub fn six(&self) -> EpochIndex {
+        self.six
     }
 }
 
@@ -879,20 +1009,54 @@ pub struct CollatorResult {
     pub msl: Option<Vec<Slot>>,
 }
 
+/// Slot a parachain is in right now, which changes with every block
+#[derive(Debug, Serialize)]
+pub struct CollatorSlotResult {
+    pub chain_key: String,
+    pub para_id: ParaId,
+    // session of the parachain the slot belongs to
+    pub session: EpochIndex,
+    pub slot: LiveSlot,
+}
+
 #[derive(Debug, Serialize, Default)]
 pub struct CollatorsResult {
     pub chain_key: String,
     pub para_id: ParaId,
     pub session: EpochIndex,
-    // slot the parachain is in right now, only for the current session
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub live: Option<LiveSlot>,
+    pub slot: Option<LiveSlot>,
     #[serde(skip_serializing_if = "CollatorSessionStats::is_empty")]
     pub stats: CollatorSessionStats,
-    pub data: Vec<CollatorResult>,
+    // number of collators by kind, only set when requested
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind_counter: Option<CollatorKindCounter>,
+    // collators, not set when only the kind_counter is requested
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Vec<CollatorResult>>,
 }
 
 impl CollatorsResult {
+    /// Keep only the collators of a kind
+    pub fn retain_kind(&mut self, kind: CollatorKind) {
+        if let Some(data) = self.data.as_mut() {
+            data.retain(|c| c.summary.kind == Some(kind));
+        }
+    }
+
+    /// Set the number of collators by kind, and drop the collators and the slot if `only` is set
+    pub fn set_kind_counter(&mut self, only: bool) {
+        let mut kind_counter = CollatorKindCounter::default();
+        for collator in self.data.iter().flatten() {
+            kind_counter.add(collator.summary.kind);
+        }
+        self.kind_counter = Some(kind_counter);
+        if only {
+            self.data = None;
+            self.slot = None;
+        }
+    }
+
     pub fn new(
         chain_key: String,
         para_id: ParaId,
@@ -917,9 +1081,10 @@ impl CollatorsResult {
             chain_key,
             para_id,
             session,
-            live: None,
+            slot: None,
             stats,
-            data,
+            kind_counter: None,
+            data: Some(data),
         }
     }
 }
@@ -1148,11 +1313,11 @@ mod collator_tests {
     }
 
     #[test]
-    fn session_result_has_collation_by_para_id() {
+    fn session_result_has_collation_stats_by_para_id() {
         let mut data = CacheMap::new();
         data.insert(String::from("session"), String::from("57754"));
         data.insert(
-            String::from("collation"),
+            String::from("collation_stats"),
             String::from(
                 r#"{"1000":{"sbix":19471000,"ebix":19471600,"nc":22,"os":150,"eb":1800,"pb":1796,"pt":35920,"ms":1}}"#,
             ),
@@ -1160,7 +1325,7 @@ mod collator_tests {
         let result: SessionResult = data.into();
         let serialized = serde_json::to_string(&result).unwrap();
         assert!(serialized.contains(
-            r#""collation":{"1000":{"sbix":19471000,"ebix":19471600,"nc":22,"os":150,"eb":1800,"pb":1796,"pt":35920,"ms":1}}"#
+            r#""collation_stats":{"1000":{"sbix":19471000,"ebix":19471600,"nc":22,"os":150,"eb":1800,"pb":1796,"pt":35920,"ms":1}}"#
         ));
         // round trip, as used by the sessions query cache
         let parsed: SessionResult = serde_json::from_str(&serialized).unwrap();
@@ -1171,8 +1336,68 @@ mod collator_tests {
     }
 
     #[test]
+    fn block_stats_depend_on_the_chain() {
+        let mut data = CacheMap::new();
+        data.insert(String::from("chain_key"), String::from("ah"));
+        data.insert(String::from("block_number"), String::from("19519312"));
+        let without = serde_json::to_string(&BlockResult::from(data.clone())).unwrap();
+        assert!(!without.contains("stats"));
+        data.insert(
+            String::from("stats"),
+            String::from(
+                r#"{"sbix":1,"ebix":2,"nc":22,"os":150,"eb":1800,"pb":1796,"pt":35920,"ms":1}"#,
+            ),
+        );
+        let ah = serde_json::to_string(&BlockResult::from(data)).unwrap();
+        assert!(ah.contains(r#""stats":{"sbix":1,"ebix":2,"nc":22"#));
+
+        let mut data = CacheMap::new();
+        data.insert(String::from("chain_key"), String::from("rc"));
+        data.insert(String::from("block_number"), String::from("33799906"));
+        data.insert(
+            String::from("stats"),
+            String::from(
+                r#"{"na":20,"npa":20,"pt":1,"ab":1,"ca":1,"ev":0,"iv":1,"mv":0,"di":0,"ba":1,"bu":0}"#,
+            ),
+        );
+        let rc = serde_json::to_string(&BlockResult::from(data)).unwrap();
+        assert!(rc.contains(r#""stats":{"na":20,"npa":20"#));
+    }
+
+    #[test]
+    fn session_collation_stats_show_the_open_slot() {
+        let mut data = CacheMap::new();
+        data.insert(String::from("session"), String::from("57804"));
+        data.insert(
+            String::from("collation_stats"),
+            String::from(
+                r#"{"1000":{"sbix":1,"ebix":2,"nc":30,"os":15,"eb":180,"pb":158,"pt":3160,"ms":1},"1004":{"sbix":1,"ebix":2,"nc":22,"os":15,"eb":180,"pb":174,"pt":1740,"ms":0}}"#,
+            ),
+        );
+        let mut result: SessionResult = data.into();
+        let mut live = BTreeMap::new();
+        live.insert(
+            1000,
+            LiveSlot {
+                slot: 74792625,
+                cix: Some(17),
+                owner: Some("a".to_string()),
+                pb: 3,
+                pt: 30,
+                bix: 19566017,
+            },
+        );
+        result.set_live_slots(&live);
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(serialized.contains(
+            r#""ms":1,"slot":{"ix":74792625,"cix":17,"owner":"a","pb":3,"pt":30,"bix":19566017}}"#
+        ));
+        // only the parachain with an open slot has it
+        assert_eq!(serialized.matches(r#""slot""#).count(), 1);
+    }
+
+    #[test]
     fn collator_result_shows_block_numbers_and_missed_slots_on_request() {
-        use onet_records::collators::CollatorKind;
         let mut r = CollatorRecord::new("a".to_string(), CollatorKind::Validator);
         r.add_slot(4, &[1, 2], 2, 20);
         let new = |records, blocks, slots| {
@@ -1193,6 +1418,75 @@ mod collator_tests {
     }
 
     #[test]
+    fn collators_result_counts_collators_by_kind() {
+        let records = vec![
+            CollatorRecord::new("a".to_string(), CollatorKind::Invulnerable),
+            CollatorRecord::new("b".to_string(), CollatorKind::Invulnerable),
+            CollatorRecord::new("c".to_string(), CollatorKind::Permissionless),
+            CollatorRecord::new("d".to_string(), CollatorKind::Validator),
+            CollatorRecord::new("e".to_string(), CollatorKind::Unknown),
+        ];
+        let new = || {
+            CollatorsResult::new(
+                "pp".into(),
+                1004,
+                7,
+                Default::default(),
+                records.clone(),
+                false,
+                false,
+            )
+        };
+        let plain = serde_json::to_string(&new()).unwrap();
+        assert!(plain.contains(r#""data":["#) && !plain.contains("kind_counter"));
+        let mut result = new();
+        result.set_kind_counter(false);
+        let with = serde_json::to_string(&result).unwrap();
+        assert!(
+            with.contains(r#""kind_counter":{"i":2,"p":1,"v":1,"u":1}"#)
+                && with.contains(r#""data":["#)
+        );
+        let mut result = new();
+        result.set_kind_counter(false);
+        result.retain_kind(CollatorKind::Invulnerable);
+        let kind = serde_json::to_string(&result).unwrap();
+        assert!(kind.contains(r#""kind_counter":{"i":2,"p":1,"v":1,"u":1}"#));
+        assert_eq!(result.data.as_ref().map(|d| d.len()), Some(2));
+        let mut result = new();
+        result.set_kind_counter(true);
+        let only = serde_json::to_string(&result).unwrap();
+        assert!(
+            only.contains(r#""kind_counter":{"i":2,"p":1,"v":1,"u":1}"#) && !only.contains("data")
+        );
+        let mut result = new();
+        result.slot = Some(LiveSlot::default());
+        result.set_kind_counter(true);
+        assert!(!serde_json::to_string(&result).unwrap().contains("slot"));
+    }
+
+    #[test]
+    fn collator_slot_result_has_only_the_slot() {
+        let slot = LiveSlot {
+            slot: 123,
+            cix: Some(17),
+            owner: Some("a".to_string()),
+            pb: 5,
+            pt: 100,
+            bix: 19565900,
+        };
+        let result = CollatorSlotResult {
+            chain_key: "ah".into(),
+            para_id: 1000,
+            session: 7373,
+            slot,
+        };
+        assert_eq!(
+            serde_json::to_string(&result).unwrap(),
+            r#"{"chain_key":"ah","para_id":1000,"session":7373,"slot":{"ix":123,"cix":17,"owner":"a","pb":5,"pt":100,"bix":19565900}}"#
+        );
+    }
+
+    #[test]
     fn collators_result_shows_the_live_slot_only_when_set() {
         let mut result = CollatorsResult::new(
             "ah".into(),
@@ -1203,16 +1497,39 @@ mod collator_tests {
             false,
             false,
         );
-        assert!(!serde_json::to_string(&result).unwrap().contains("live"));
-        result.live = Some(LiveSlot {
+        assert!(!serde_json::to_string(&result).unwrap().contains("slot"));
+        result.slot = Some(LiveSlot {
             slot: 123,
             cix: Some(17),
             owner: Some("a".to_string()),
             pb: 5,
+            pt: 100,
+            bix: 19565900,
         });
         assert!(serde_json::to_string(&result)
             .unwrap()
-            .contains(r#""live":{"slot":123,"cix":17,"owner":"a","pb":5}"#));
+            .contains(r#""slot":{"ix":123,"cix":17,"owner":"a","pb":5,"pt":100,"bix":19565900}"#));
+    }
+
+    #[test]
+    fn para_session_shows_what_is_known_and_requested() {
+        let stats = CollatorSessionStats {
+            eix: Some(11303),
+            sbix: 10,
+            ebix: 20,
+            nc: 30,
+            pb: 5,
+            ..Default::default()
+        };
+        let plain =
+            serde_json::to_string(&ParaSessionResult::new(7, &stats, false, false)).unwrap();
+        assert_eq!(plain, r#"{"six":7,"eix":11303,"sbix":10,"ebix":20}"#);
+        let mut full = ParaSessionResult::new(7, &stats, true, true);
+        full.slot = Some(LiveSlot::default());
+        let full = serde_json::to_string(&full).unwrap();
+        assert!(full.contains(r#""is_current":true"#));
+        assert!(full.contains(r#""stats":{"nc":30,"os":0,"eb":0,"pb":5,"pt":0,"ms":0}"#));
+        assert!(full.contains(r#""slot":{"#));
     }
 
     #[test]

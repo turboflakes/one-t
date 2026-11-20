@@ -58,6 +58,7 @@ pub async fn cache_collator_records(
     }
 
     cache_collator_live_slot(cache, chain_key.clone(), para_id, records).await?;
+    cache_collator_current_session(cache, chain_key.clone(), para_id, records).await?;
     // Note: the draw does not depend on closed slots, so it is cached even if there are no records
     cache_collator_draw(cache, para_id, records).await?;
 
@@ -171,6 +172,33 @@ pub async fn cache_collator_records(
 
 /// Seconds the slot a parachain is in is kept, it is written with every block
 const LIVE_SLOT_EXPIRE: u64 = 60;
+
+/// Cache the session the parachain is in, as soon as it changes and regardless of the slots closed.
+/// Note: it is also written with the records, which is where the stats of the session are cached.
+async fn cache_collator_current_session(
+    cache: &mut Connection,
+    chain_key: ChainKey,
+    para_id: ParaId,
+    records: &Records,
+) -> Result<(), CacheError> {
+    let config = CONFIG.clone();
+    let Some(session) = records.para_slots(para_id).and_then(|t| t.session()) else {
+        return Ok(());
+    };
+    let key = CacheKey::CollatorCurrentSession(chain_key);
+    redis::pipe()
+        .atomic()
+        .cmd("SET")
+        .arg(&key)
+        .arg(session.to_string())
+        .cmd("EXPIRE")
+        .arg(&key)
+        .arg(config.cache_writer_prunning)
+        .query_async::<()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    Ok(())
+}
 
 /// Cache the slot a parachain is currently in, to tell which validator is collating right now
 async fn cache_collator_live_slot(
@@ -433,6 +461,9 @@ pub async fn rehydrate_collator_records(
         .and_then(|s| serde_json::from_str(&s).ok());
     if let Some(stats) = session_stats.filter(|s| s.sbix > 0) {
         records.seed_para_session_blocks(para_id, session, stats.sbix, stats.ebix);
+        if let Some(era) = stats.eix {
+            records.seed_para_session_era(para_id, session, era, stats.esix);
+        }
     }
     let epoch_stats: Option<CollatorSessionStats> = redis::cmd("HGET")
         .arg(CacheKey::CollatorStatsByEpoch(epoch))

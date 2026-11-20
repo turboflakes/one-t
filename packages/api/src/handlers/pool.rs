@@ -93,7 +93,7 @@ pub async fn get_pools(
 
             if !session_pool_ids.is_empty() {
                 for id in session_pool_ids.iter() {
-                    let pool: Pool = if params.show_metadata {
+                    let pool: Pool = if params.metadata {
                         if let Ok(serialized_data) = redis::cmd("GET")
                             .arg(CacheKey::NominationPoolRecord(*id))
                             .query_async::<String>(&mut conn as &mut Connection)
@@ -115,7 +115,7 @@ pub async fn get_pools(
                     let mut pool_response: PoolResult = pool.into();
                     pool_response.session = session_index;
 
-                    if params.show_stats {
+                    if params.stats {
                         if let Ok(serialized_data) = redis::cmd("GET")
                             .arg(CacheKey::NominationPoolStatsByPoolAndSession(
                                 *id,
@@ -129,7 +129,7 @@ pub async fn get_pools(
                         }
                     }
 
-                    if params.show_nominees {
+                    if params.nominees {
                         if let Ok(serialized_data) = redis::cmd("GET")
                             .arg(CacheKey::NominationPoolNomineesByPoolAndSession(
                                 *id,
@@ -143,7 +143,7 @@ pub async fn get_pools(
                         }
                     }
 
-                    if params.show_nomstats {
+                    if params.nomstats {
                         if let Ok(serialized_data) = redis::cmd("GET")
                             .arg(CacheKey::NominationPoolNomineesByPoolAndSession(
                                 *id,
@@ -213,7 +213,7 @@ pub async fn get_pool(
         let pool: Pool = serde_json::from_str(&serialized_data).unwrap_or_default();
         let mut pool_response: PoolResult = pool.into();
 
-        if params.show_stats {
+        if params.stats {
             if let Ok(serialized_data) = redis::cmd("GET")
                 .arg(CacheKey::NominationPoolStatsByPoolAndSession(
                     *id,
@@ -226,7 +226,7 @@ pub async fn get_pool(
             }
         }
 
-        if params.show_nominees {
+        if params.nominees {
             if let Ok(serialized_data) = redis::cmd("GET")
                 .arg(CacheKey::NominationPoolNomineesByPoolAndSession(
                     *id,

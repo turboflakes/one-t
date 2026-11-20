@@ -40,15 +40,39 @@ use serde::Deserialize;
 pub struct Params {
     #[serde(default = "default_index")]
     session: Index,
-    // show_stats indicates whether session stats should be retrieved or not, default false
-    #[serde(default)]
-    show_stats: bool,
+    // stats indicates whether session stats should be retrieved or not, default false
+    // - rc: network session stats of the block
+    // - ah, pp: collation stats of the current parachain session of the chain
+    // Note: `show_stats` is deprecated, use `stats`
+    #[serde(default, alias = "show_stats")]
+    stats: bool,
     #[serde(default)]
     chain_key: ChainKey,
 }
 
 fn default_index() -> Index {
     Index::Current
+}
+
+/// Collation stats of the current parachain session of a chain (ah, pp), serialized.
+/// Note: as of now, collation is not tracked per block.
+pub(crate) async fn get_collation_stats_by_chain(
+    conn: &mut Connection,
+    chain_key: &ChainKey,
+) -> Result<Option<String>, ApiError> {
+    let Some(session) = redis::cmd("GET")
+        .arg(CacheKey::CollatorCurrentSession(chain_key.clone()))
+        .query_async::<Option<EpochIndex>>(&mut *conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?
+    else {
+        return Ok(None);
+    };
+    Ok(redis::cmd("GET")
+        .arg(CacheKey::CollatorStatsBySession(chain_key.clone(), session))
+        .query_async::<Option<String>>(&mut *conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?)
 }
 
 /// Get a blocks filtered by query params
@@ -93,7 +117,7 @@ pub async fn get_blocks(
                 block_data.insert(String::from("block_number"), block_number.to_string());
                 block_data.insert(String::from("is_finalized"), (true).to_string());
 
-                if params.show_stats {
+                if params.stats {
                     if let Ok(stats) = redis::cmd("GET")
                         .arg(CacheKey::BlockByIndexStats(Index::Num(*block_number)))
                         .query_async::<String>(&mut conn as &mut Connection)
@@ -134,12 +158,17 @@ pub async fn get_finalized_block(
         data.insert(String::from("block_number"), block_number.to_string());
         data.insert(String::from("is_finalized"), (true).to_string());
 
-        if params.show_stats {
-            if let Ok(stats) = redis::cmd("GET")
-                .arg(CacheKey::BlockByIndexStats(Index::Num(block_number)))
-                .query_async::<String>(&mut conn as &mut Connection)
-                .await
-            {
+        if params.stats {
+            let stats = if chain_key == ChainKey::RC {
+                redis::cmd("GET")
+                    .arg(CacheKey::BlockByIndexStats(Index::Num(block_number)))
+                    .query_async::<Option<String>>(&mut conn as &mut Connection)
+                    .await
+                    .unwrap_or_default()
+            } else {
+                get_collation_stats_by_chain(&mut conn, &chain_key).await?
+            };
+            if let Some(stats) = stats {
                 data.insert(String::from("stats"), stats);
             }
         }

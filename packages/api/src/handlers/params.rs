@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use onet_cache::types::Index;
+use onet_cache::types::{ChainKey, Index};
 use onet_pools::PoolId;
 use onet_records::EpochIndex;
 use serde::{de::Deserializer, Deserialize};
@@ -38,21 +38,40 @@ pub struct Params {
     #[serde(default)]
     #[serde(deserialize_with = "parse_session")]
     pub to: EpochIndex,
-    // show_metadata indicates whether metadata should be retrieved or not, default false
+    // metadata indicates whether metadata should be retrieved or not, default false
+    // Note: `show_metadata` is deprecated, use `metadata`
+    #[serde(default, alias = "show_metadata")]
+    pub metadata: bool,
+    // stats indicates whether session stats should be retrieved or not, default false
+    // Note: `show_stats` is deprecated, use `stats`
+    #[serde(default, alias = "show_stats")]
+    pub stats: bool,
+    // netstats indicates whether session network stats should be retrieved or not, default false
+    // Note: `show_netstats` is deprecated, use `netstats`
+    #[serde(default, alias = "show_netstats")]
+    pub netstats: bool,
+    // nominees indicates whether pool nominees should be retrieved or not, default false
+    // Note: `show_nominees` is deprecated, use `nominees`
+    #[serde(default, alias = "show_nominees")]
+    pub nominees: bool,
+    // nomstats indicates whether pool nominees stats should be retrieved or not, default false
+    // Note: `show_nomstats` is deprecated, use `nomstats`
+    #[serde(default, alias = "show_nomstats")]
+    pub nomstats: bool,
+    // chain_key is the chain of the sessions, default `rc`. For `ah` or `pp` the sessions are the parachain ones
+    #[serde(default = "default_chain_key")]
+    pub chain_key: ChainKey,
+    // slot indicates whether the slot a parachain is in right now should be retrieved or not, default false
+    // Note: only for the current session of `ah` or `pp`
     #[serde(default)]
-    pub show_metadata: bool,
-    // show_stats indicates whether session stats should be retrieved or not, default false
+    pub slot: bool,
+    // collation_stats indicates whether session collation stats by parachain should be retrieved or not, default false
     #[serde(default)]
-    pub show_stats: bool,
-    // show_netstats indicates whether session network stats should be retrieved or not, default false
-    #[serde(default)]
-    pub show_netstats: bool,
-    // show_nominees indicates whether pool nominees should be retrieved or not, default false
-    #[serde(default)]
-    pub show_nominees: bool,
-    // show_nomstats indicates whether pool nominees stats should be retrieved or not, default false
-    #[serde(default)]
-    pub show_nomstats: bool,
+    pub collation_stats: bool,
+}
+
+fn default_chain_key() -> ChainKey {
+    ChainKey::RC
 }
 
 fn default_index() -> Index {
@@ -68,4 +87,22 @@ where
             .parse::<EpochIndex>()
             .unwrap_or_default()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::web::Query;
+
+    #[test]
+    fn stats_is_accepted_with_its_deprecated_name() {
+        let p = Query::<Params>::from_query("stats=true").unwrap();
+        assert!(p.stats);
+        let p = Query::<Params>::from_query("show_stats=true").unwrap();
+        assert!(p.stats);
+        let p = Query::<Params>::from_query("from=1&to=2").unwrap();
+        assert!(!p.stats);
+        let p = Query::<Params>::from_query("show_netstats=true&nominees=true").unwrap();
+        assert!(p.netstats && p.nominees && !p.nomstats && !p.metadata);
+    }
 }
