@@ -25,6 +25,8 @@ use crate::ws::{
 };
 use actix::prelude::*;
 use log::info;
+use onet_cache::provider::{create_or_await_pool, RedisPool};
+use onet_config::CONFIG;
 use rand::{self, rngs::ThreadRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -78,6 +80,7 @@ pub struct WsResponseMessage<T> {
 pub struct Server {
     sessions: HashMap<usize, Recipient<Message>>,
     channels: HashMap<Topic, Addr<Channel>>,
+    cache: RedisPool,
     rng: ThreadRng,
 }
 
@@ -92,6 +95,7 @@ impl Server {
         Server {
             sessions: HashMap::new(),
             channels: HashMap::new(),
+            cache: create_or_await_pool(CONFIG.clone()),
             rng: rand::thread_rng(),
         }
     }
@@ -181,7 +185,8 @@ impl Handler<Get> for Server {
                     topic,
                 });
             } else {
-                let channel_addr = Channel::new(topic.clone(), ctx.address()).start();
+                let channel_addr =
+                    Channel::new(topic.clone(), ctx.address(), self.cache.clone()).start();
                 self.channels
                     .entry(topic.clone())
                     .or_insert(channel_addr.clone());
@@ -223,7 +228,8 @@ impl Handler<Subscribe> for Server {
                     topic,
                 });
             } else {
-                let channel_addr = Channel::new(topic.clone(), ctx.address()).start();
+                let channel_addr =
+                    Channel::new(topic.clone(), ctx.address(), self.cache.clone()).start();
                 self.channels
                     .entry(topic.clone())
                     .or_insert(channel_addr.clone());

@@ -33,19 +33,24 @@ use crate::{
 use actix::prelude::*;
 use onet_cache::{
     cache_latest_pushed_block_by_key, cache_latest_pushed_block_v2,
-    provider::{create_or_await_pool, get_conn, RedisPool},
+    provider::{get_conn, RedisPool},
     types::{CacheKey, ChainKey, Index, Verbosity},
 };
 use onet_config::{Config, CONFIG};
 use onet_records::{collators::CollatorKind, BlockNumber, EpochIndex, SS58};
 
-use futures::executor::block_on;
 use log::{info, warn};
 use redis::aio::MultiplexedConnection as Connection;
-use std::{collections::HashMap, str::FromStr, time::Duration};
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    time::{Duration, Instant},
+};
 use subxt::utils::AccountId32;
 
 const BLOCK_INTERVAL: Duration = Duration::from_secs(6);
+// a channel interval that takes longer than this is reported, it means the cache is slow
+const SLOW_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Eq, Hash, PartialEq, Debug)]
 pub enum Topic {
@@ -104,20 +109,24 @@ type ClientId = usize;
 
 /// `Channel` manages topic subscriptions.
 ///
+#[derive(Clone)]
 pub struct Channel {
     topic: Topic,
     sessions: HashMap<ClientId, Recipient<Message>>,
     cache: RedisPool,
     server_addr: Addr<Server>,
+    // when the interval still being processed started, none if it has finished
+    busy_since: Option<Instant>,
 }
 
 impl Channel {
-    pub fn new(topic: Topic, addr: Addr<Server>) -> Channel {
+    pub fn new(topic: Topic, addr: Addr<Server>, cache: RedisPool) -> Channel {
         Channel {
             topic,
             sessions: HashMap::new(),
-            cache: create_or_await_pool(CONFIG.clone()),
+            cache,
             server_addr: addr,
+            busy_since: None,
         }
     }
 
@@ -137,6 +146,8 @@ impl Channel {
     }
 
     /// helper method that fetches data from cache and send it to subscribers at every block rate.
+    /// Note: the clients are processed by a spawned future, so the thread is never blocked waiting
+    /// for the cache. An interval is skipped if the previous one has not finished.
     fn run(&self, ctx: &mut Context<Self>) {
         ctx.run_interval(BLOCK_INTERVAL, |act, ctx| {
             // stop actor if no registered sessions
@@ -144,21 +155,43 @@ impl Channel {
                 ctx.stop();
                 return;
             }
-            let cache = &act.cache;
-            let topic = &act.topic;
+            if let Some(since) = act.busy_since {
+                warn!(
+                    "channel {} skipped an interval, the previous one is still running after {:?} with {} clients",
+                    act.topic,
+                    since.elapsed(),
+                    act.sessions.len()
+                );
+                return;
+            }
+            let started = Instant::now();
+            act.busy_since = Some(started);
 
-            // Process each client session
-            for client_id in act.sessions.keys() {
-                let client_id = *client_id;
-
-                let future = async {
-                    if let Err(e) = Self::process_session_client(cache, topic, client_id, act).await
+            // the clients subscribed now, the ones that subscribe later are processed in the next interval
+            let channel = act.clone();
+            let task = async move {
+                let clients = channel.sessions.len();
+                for client_id in channel.sessions.keys().copied() {
+                    if let Err(e) = Self::process_session_client(
+                        &channel.cache,
+                        &channel.topic,
+                        client_id,
+                        &channel,
+                    )
+                    .await
                     {
                         warn!("Error processing client_id {}: {:?}", client_id, e);
                     }
-                };
-                block_on(future);
-            }
+                }
+                let elapsed = started.elapsed();
+                if elapsed > SLOW_INTERVAL {
+                    warn!(
+                        "channel {} took {:?} to process {} clients",
+                        channel.topic, elapsed, clients
+                    );
+                }
+            };
+            ctx.spawn(task.into_actor(act).map(|_, act, _| act.busy_since = None));
         });
     }
 
@@ -1153,20 +1186,25 @@ pub struct Get {
 impl Handler<Get> for Channel {
     type Result = ();
 
-    fn handle(&mut self, msg: Get, _ctx: &mut Context<Self>) {
+    fn handle(&mut self, msg: Get, ctx: &mut Context<Self>) {
         let Get { id, addr, topic } = msg;
 
         info!("channel {} requested by session {}", topic, id);
+
+        // only this client gets the reply
+        let reply_to = addr.clone();
 
         // add session to this channel
         self.sessions.entry(id).or_insert(addr);
 
         // TODO handle all topics here
         if let Topic::Block(block_number) = &topic {
-            let future = async {
-                if let Ok(mut conn) = get_conn(&self.cache).await {
+            let block_number = *block_number;
+            let cache = self.cache.clone();
+            let future = async move {
+                if let Ok(mut conn) = get_conn(&cache).await {
                     if let Ok(serialized_data) = redis::cmd("GET")
-                        .arg(CacheKey::BlockByIndexStats(Index::Num(*block_number)))
+                        .arg(CacheKey::BlockByIndexStats(Index::Num(block_number)))
                         .query_async::<String>(&mut conn as &mut Connection)
                         .await
                     {
@@ -1180,12 +1218,12 @@ impl Handler<Get> for Channel {
                             result: BlockResult::from(block_data),
                         };
                         if let Ok(serialized) = serde_json::to_string(&resp) {
-                            self.reply_message(id, &serialized);
+                            reply_to.do_send(Message(serialized));
                         }
                     }
                 }
             };
-            block_on(future);
+            ctx.spawn(future.into_actor(self));
         }
 
         // remove address
@@ -1247,7 +1285,7 @@ pub struct Unsubscribe {
 impl Handler<Unsubscribe> for Channel {
     type Result = ();
 
-    fn handle(&mut self, msg: Unsubscribe, _ctx: &mut Context<Self>) {
+    fn handle(&mut self, msg: Unsubscribe, ctx: &mut Context<Self>) {
         let Unsubscribe { id } = msg;
 
         // remove address
@@ -1255,8 +1293,9 @@ impl Handler<Unsubscribe> for Channel {
             info!("session {} unsubscribed from channel {}", id, self.topic);
             // delete unsubscribed clientes from cache
             if let Topic::FinalizedBlock(..) = self.topic {
-                let future = async {
-                    if let Ok(mut conn) = get_conn(&self.cache).await {
+                let cache = self.cache.clone();
+                let future = async move {
+                    if let Ok(mut conn) = get_conn(&cache).await {
                         if let Err(e) = redis::cmd("DEL")
                             .arg(CacheKey::PushedBlockByClientId(id))
                             .query_async::<u8>(&mut conn as &mut Connection)
@@ -1270,7 +1309,7 @@ impl Handler<Unsubscribe> for Channel {
                         }
                     }
                 };
-                block_on(future);
+                ctx.spawn(future.into_actor(self));
             }
         }
     }
