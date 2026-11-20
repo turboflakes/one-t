@@ -23,7 +23,10 @@ use onet_cache::types::Index;
 use onet_mcda::criterias::{
     Filters, Interval, Intervals, Weights, FILTERS_CAPACITY, WEIGHTS_CAPACITY,
 };
-use serde::{de::Deserializer, Deserialize};
+use serde::{
+    de::{Deserializer, Error as DeError},
+    Deserialize,
+};
 use std::result::Result;
 
 // Number of elements to return
@@ -76,49 +79,48 @@ fn parse_weights<'de, D>(d: D) -> Result<Weights, D::Error>
 where
     D: Deserializer<'de>,
 {
-    Deserialize::deserialize(d).map(|x: Option<_>| {
-        let weights_as_csv = x.unwrap_or("".to_string());
+    let x: Option<String> = Deserialize::deserialize(d)?;
+    let weights_as_csv = x.unwrap_or_default();
 
-        let mut weights_as_strvec: Vec<&str> = weights_as_csv.split(",").collect();
-        weights_as_strvec.resize(WEIGHTS_CAPACITY, "5");
+    let mut weights_as_strvec: Vec<&str> = weights_as_csv.split(",").collect();
+    weights_as_strvec.resize(WEIGHTS_CAPACITY, "5");
 
-        let mut weights: Weights = Vec::with_capacity(WEIGHTS_CAPACITY);
-        for i in 0..WEIGHTS_CAPACITY {
-            let weight: u8 = weights_as_strvec.get(i).unwrap_or(&"0").parse().unwrap();
-            let weight = if weight > 9 { 9 } else { weight };
-            weights.push(weight);
-        }
-        weights
-    })
+    let mut weights: Weights = Vec::with_capacity(WEIGHTS_CAPACITY);
+    for i in 0..WEIGHTS_CAPACITY {
+        let weight: u8 = weights_as_strvec
+            .get(i)
+            .unwrap_or(&"0")
+            .parse()
+            .map_err(|_| D::Error::custom(format!("invalid weight `{}`", weights_as_strvec[i])))?;
+        let weight = if weight > 9 { 9 } else { weight };
+        weights.push(weight);
+    }
+    Ok(weights)
 }
 
 fn parse_intervals<'de, D>(d: D) -> Result<Intervals, D::Error>
 where
     D: Deserializer<'de>,
 {
-    Deserialize::deserialize(d).map(|x: Option<_>| {
-        let intervals_as_csv = x.unwrap_or("".to_string());
-        let mut intervals_as_strvec: Vec<&str> = intervals_as_csv.split(",").collect();
-        intervals_as_strvec.resize(WEIGHTS_CAPACITY, "0");
-        let mut intervals: Intervals = Vec::with_capacity(WEIGHTS_CAPACITY);
-        for interval_str in intervals_as_strvec.iter().take(WEIGHTS_CAPACITY) {
-            let interval_as_strvec: Vec<&str> = interval_str.split(":").collect();
-            let interval = Interval {
-                min: interval_as_strvec
-                    .first()
-                    .unwrap_or(&"0")
-                    .parse::<u64>()
-                    .unwrap(),
-                max: interval_as_strvec
-                    .get(1)
-                    .unwrap_or(&"0")
-                    .parse::<u64>()
-                    .unwrap(),
-            };
-            intervals.push(interval);
-        }
-        intervals
-    })
+    let x: Option<String> = Deserialize::deserialize(d)?;
+    let intervals_as_csv = x.unwrap_or_default();
+    let mut intervals_as_strvec: Vec<&str> = intervals_as_csv.split(",").collect();
+    intervals_as_strvec.resize(WEIGHTS_CAPACITY, "0");
+
+    let parse = |value: &str| {
+        value
+            .parse::<u64>()
+            .map_err(|_| D::Error::custom(format!("invalid interval value `{}`", value)))
+    };
+    let mut intervals: Intervals = Vec::with_capacity(WEIGHTS_CAPACITY);
+    for interval_str in intervals_as_strvec.iter().take(WEIGHTS_CAPACITY) {
+        let interval_as_strvec: Vec<&str> = interval_str.split(":").collect();
+        intervals.push(Interval {
+            min: parse(interval_as_strvec.first().unwrap_or(&"0"))?,
+            max: parse(interval_as_strvec.get(1).unwrap_or(&"0"))?,
+        });
+    }
+    Ok(intervals)
 }
 
 fn parse_filters<'de, D>(d: D) -> Result<Filters, D::Error>
@@ -139,4 +141,24 @@ where
         }
         filters
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::web::Query;
+
+    #[test]
+    fn weights_and_intervals_that_are_not_numbers_are_rejected() {
+        // valid
+        let p = Query::<Params>::from_query("w=1,2,3&i=0:10,5:20").unwrap();
+        assert_eq!(p.w.len(), WEIGHTS_CAPACITY);
+        assert_eq!(p.i[1].min, 5);
+        assert_eq!(p.i[1].max, 20);
+        // not numbers, must not panic
+        assert!(Query::<Params>::from_query("w=a,2").is_err());
+        assert!(Query::<Params>::from_query("w=1,,3").is_err());
+        assert!(Query::<Params>::from_query("i=x:y").is_err());
+        assert!(Query::<Params>::from_query("i=1:").is_err());
+    }
 }
