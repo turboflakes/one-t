@@ -99,6 +99,10 @@ async fn create_para_client_from_supported_runtime(
     let rpc_url = match para_type {
         SupportedParasRuntimeType::People => runtime.people_runtime().default_rpc_url(),
         SupportedParasRuntimeType::AssetHub => runtime.asset_hub_runtime().default_rpc_url(),
+        SupportedParasRuntimeType::Bulletin => runtime
+            .bulletin_runtime()
+            .ok_or_else(|| OnetError::Other(format!("Bulletin chain not supported on {runtime}")))?
+            .default_rpc_url(),
     };
 
     let rpc_client = build_rpc_reconnecting_client(&rpc_url).await?;

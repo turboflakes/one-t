@@ -77,6 +77,13 @@ impl SupportedRuntime {
         }
     }
 
+    pub fn bulletin_runtime(&self) -> Option<SupportedParasRuntime> {
+        match &self {
+            Self::Westend => Some(SupportedParasRuntime::BulletinWestend),
+            Self::Polkadot | Self::Kusama | Self::Paseo => None,
+        }
+    }
+
     pub fn is_asset_hub_runtime_available(&self) -> bool {
         match &self {
             Self::Polkadot => true,
@@ -92,7 +99,6 @@ impl SupportedRuntime {
             Self::Westend => SupportedParasRuntime::AssetHubWestend,
             Self::Paseo => SupportedParasRuntime::AssetHubPaseo,
             Self::Kusama => SupportedParasRuntime::AssetHubKusama,
-            // _ => unimplemented!("AssetHubChain not supported"),
         }
     }
 
@@ -166,6 +172,7 @@ pub enum SupportedParasRuntime {
     AssetHubPaseo,
     AssetHubKusama,
     AssetHubWestend,
+    BulletinWestend,
 }
 
 impl SupportedParasRuntime {
@@ -179,6 +186,7 @@ impl SupportedParasRuntime {
             | Self::AssetHubPaseo
             | Self::AssetHubKusama
             | Self::AssetHubWestend => config.substrate_asset_hub_ws_url,
+            Self::BulletinWestend => config.substrate_bulletin_ws_url,
         }
     }
 
@@ -193,6 +201,7 @@ impl SupportedParasRuntime {
             | Self::AssetHubPaseo
             | Self::AssetHubKusama
             | Self::AssetHubWestend => config.asset_hub_para_id,
+            Self::BulletinWestend => config.bulletin_para_id,
         }
     }
 
@@ -208,7 +217,7 @@ impl SupportedParasRuntime {
             | Self::PeoplePolkadot
             | Self::PeoplePaseo
             | Self::PeopleWestend => 3000,
-            Self::PeopleKusama => 1000,
+            Self::PeopleKusama | Self::BulletinWestend => 1000,
             _ => panic!("Unsupported chain"),
         }
     }
@@ -229,7 +238,8 @@ impl SupportedParasRuntime {
             | Self::AssetHubPaseo
             | Self::AssetHubWestend
             | Self::PeopleKusama
-            | Self::PeopleWestend => 6 * 600,
+            | Self::PeopleWestend
+            | Self::BulletinWestend => 6 * 600,
             _ => panic!("Unsupported chain"),
         }
     }
@@ -246,6 +256,7 @@ impl std::fmt::Display for SupportedParasRuntime {
             Self::AssetHubWestend => write!(f, "Asset Hub Westend"),
             Self::AssetHubPaseo => write!(f, "Asset Hub Paseo"),
             Self::AssetHubKusama => write!(f, "Asset Hub Kusama"),
+            Self::BulletinWestend => write!(f, "Bulletin Westend"),
         }
     }
 }
@@ -254,4 +265,5 @@ impl std::fmt::Display for SupportedParasRuntime {
 pub enum SupportedParasRuntimeType {
     People,
     AssetHub,
+    Bulletin,
 }
