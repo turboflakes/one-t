@@ -56,6 +56,20 @@ pub enum ChainKey {
     AH,
     #[serde(rename = "pp")]
     PEOPLE,
+    #[serde(rename = "bu")]
+    BULLETIN,
+}
+
+impl ChainKey {
+    /// Parachain id of the chain as configured, none for the relay chain
+    pub fn para_id(&self, config: &onet_config::Config) -> Option<u32> {
+        match self {
+            Self::RC => None,
+            Self::AH => Some(config.asset_hub_para_id),
+            Self::PEOPLE => Some(config.people_para_id),
+            Self::BULLETIN => Some(config.bulletin_para_id),
+        }
+    }
 }
 
 impl std::fmt::Display for ChainKey {
@@ -64,6 +78,7 @@ impl std::fmt::Display for ChainKey {
             Self::RC => write!(f, "rc"),
             Self::AH => write!(f, "ah"),
             Self::PEOPLE => write!(f, "pp"),
+            Self::BULLETIN => write!(f, "bu"),
         }
     }
 }
@@ -76,6 +91,7 @@ impl FromStr for ChainKey {
             "rc" => Ok(ChainKey::RC),
             "ah" => Ok(ChainKey::AH),
             "pp" => Ok(ChainKey::PEOPLE),
+            "bu" => Ok(ChainKey::BULLETIN),
             _ => Err(format!("Unknown chain key: {}", s)),
         }
     }
@@ -363,6 +379,33 @@ mod tests {
             ChainKey::AH
         );
         assert!(serde_json::from_str::<ChainKey>("\"people\"").is_err());
+        assert_eq!(
+            serde_json::to_string(&ChainKey::BULLETIN).unwrap(),
+            "\"bu\""
+        );
+        assert_eq!("bu".parse::<ChainKey>(), Ok(ChainKey::BULLETIN));
+        assert_eq!(
+            CacheKey::BestBlock(ChainKey::BULLETIN).to_string(),
+            "bu:best"
+        );
+    }
+
+    #[test]
+    fn chain_key_para_id_is_the_configured_one() {
+        let config = onet_config::CONFIG.clone();
+        assert_eq!(ChainKey::RC.para_id(&config), None);
+        assert_eq!(
+            ChainKey::AH.para_id(&config),
+            Some(config.asset_hub_para_id)
+        );
+        assert_eq!(
+            ChainKey::PEOPLE.para_id(&config),
+            Some(config.people_para_id)
+        );
+        assert_eq!(
+            ChainKey::BULLETIN.para_id(&config),
+            Some(config.bulletin_para_id)
+        );
     }
 
     #[test]

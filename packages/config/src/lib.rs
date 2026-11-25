@@ -282,6 +282,11 @@ fn default_people_para_id() -> u32 {
     1004
 }
 
+/// sets default para_id for bulletin chain
+fn default_bulletin_para_id() -> u32 {
+    2487
+}
+
 /// provides default value for discobery_epoch_rate if ONET_DISCOVERY_EPOCH_RATE env var is not set
 /// recommended value is 1 for every session on Polkadot and 2 for every 2 sessions on Kusama
 fn default_discovery_epoch_rate() -> u64 {
@@ -318,6 +323,10 @@ pub struct Config {
     pub people_para_id: u32,
     #[serde(default)]
     pub substrate_people_ws_url: String,
+    #[serde(default = "default_bulletin_para_id")]
+    pub bulletin_para_id: u32,
+    #[serde(default)]
+    pub substrate_bulletin_ws_url: String,
     #[serde(default = "default_data_path")]
     pub data_path: String,
     #[serde(default = "default_data_path_read_only")]
@@ -562,6 +571,14 @@ fn get_config() -> Config {
           ),
       )
     .arg(
+        Arg::with_name("substrate-bulletin-ws-url")
+          .long("substrate-bulletin-ws-url")
+          .takes_value(true)
+          .help(
+            "Substrate websocket endpoint of the bulletin chain for which 'onet' will try to connect. (the bulletin para id is set with ONET_BULLETIN_PARA_ID)",
+          ),
+      )
+    .arg(
       Arg::with_name("maximum-history-eras")
             .long("maximum-history-eras")
             .takes_value(true)
@@ -683,6 +700,10 @@ fn get_config() -> Config {
             "ONET_SUBSTRATE_ASSET_HUB_WS_URL",
             substrate_asset_hub_ws_url,
         );
+    }
+
+    if let Some(substrate_bulletin_ws_url) = matches.value_of("substrate-bulletin-ws-url") {
+        env::set_var("ONET_SUBSTRATE_BULLETIN_WS_URL", substrate_bulletin_ws_url);
     }
 
     if let Some(maximum_subscribers) = matches.value_of("maximum-subscribers") {

@@ -318,7 +318,7 @@ pub async fn get_session_by_index(
 fn parachain_only(chain_key: &ChainKey) -> Result<(), ApiError> {
     if *chain_key == ChainKey::RC {
         return Err(ApiError::BadRequest(
-            "Parameter chain_key must be equal to one of the options: [rc, ah, pp]".to_string(),
+            "Parameter chain_key must be equal to one of the options: [rc, ah, pp, bu]".to_string(),
         ));
     }
     Ok(())

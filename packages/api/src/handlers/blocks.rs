@@ -54,7 +54,7 @@ fn default_index() -> Index {
     Index::Current
 }
 
-/// Collation stats of the current parachain session of a chain (ah, pp), serialized.
+/// Collation stats of the current parachain session of a chain (ah, pp, bu), serialized.
 /// Note: as of now, collation is not tracked per block.
 pub(crate) async fn get_collation_stats_by_chain(
     conn: &mut Connection,

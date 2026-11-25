@@ -5338,6 +5338,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "onet-bulletin-westend"
+version = "1.27.2"
+dependencies = [
+ "onet-core",
+ "subxt",
+]
+
+[[package]]
 name = "onet-cache"
 version = "1.27.2"
 dependencies = [
@@ -5654,6 +5662,7 @@ dependencies = [
  "log",
  "onet-api",
  "onet-asset-hub-westend",
+ "onet-bulletin-westend",
  "onet-cache",
  "onet-chains",
  "onet-config",
