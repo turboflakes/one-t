@@ -152,3 +152,94 @@ fn parse_identity_data(data: Data) -> String {
 pub fn bytes_to_str(bytes: Vec<u8>) -> String {
     format!("{}", String::from_utf8_lossy(&bytes))
 }
+
+use people_runtime::runtime_types::bounded_collections::bounded_vec::BoundedVec;
+
+/// Fetch the parachain session current index, at an already resolved block.
+pub async fn fetch_session_current_index(
+    at: &OnlineClientAtBlock<PolkadotConfig>,
+) -> Result<u32, OnetError> {
+    let addr = people_runtime::storage().session().current_index();
+
+    at.storage()
+        .try_fetch(addr, ())
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
+        .ok_or_else(|| {
+            OnetError::from(format!(
+                "Session current index not defined at block hash {:?}",
+                at.block_hash()
+            ))
+        })
+}
+
+/// Fetch the session validators (ordered as the aura authorities), at an already resolved block.
+pub async fn fetch_session_validators(
+    at: &OnlineClientAtBlock<PolkadotConfig>,
+) -> Result<Vec<AccountId32>, OnetError> {
+    let addr = people_runtime::storage().session().validators();
+
+    Ok(at
+        .storage()
+        .try_fetch(addr, ())
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
+        .unwrap_or_default())
+}
+
+/// Fetch the invulnerable collators, at an already resolved block.
+pub async fn fetch_invulnerables(
+    at: &OnlineClientAtBlock<PolkadotConfig>,
+) -> Result<Vec<AccountId32>, OnetError> {
+    let addr = people_runtime::storage()
+        .collator_selection()
+        .invulnerables();
+
+    Ok(at
+        .storage()
+        .try_fetch(addr, ())
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
+        .map(|BoundedVec(v)| v)
+        .unwrap_or_default())
+}
+
+/// Fetch the permissionless collator candidates, at an already resolved block.
+pub async fn fetch_candidates(
+    at: &OnlineClientAtBlock<PolkadotConfig>,
+) -> Result<Vec<AccountId32>, OnetError> {
+    let addr = people_runtime::storage()
+        .collator_selection()
+        .candidate_list();
+
+    Ok(at
+        .storage()
+        .try_fetch(addr, ())
+        .await?
+        .map(|v| v.decode())
+        .transpose()?
+        .map(|BoundedVec(v)| v.into_iter().map(|c| c.who).collect())
+        .unwrap_or_default())
+}
+
+/// Fetch the validators drawn to collate, at an already resolved block.
+/// Note: the runtime does not have the `ValidatorCollators` pallet yet, so there are no types to
+/// read and no validators are drawn. Once it has, update the metadata and read `DrawnCollators`
+/// like `onet-asset-hub-westend` does.
+pub async fn fetch_drawn_collators(
+    _at: &OnlineClientAtBlock<PolkadotConfig>,
+) -> Result<Vec<AccountId32>, OnetError> {
+    Ok(Vec::new())
+}
+
+/// Fetch the aura slot duration in milliseconds, at an already resolved block.
+pub fn fetch_aura_slot_duration(
+    at: &OnlineClientAtBlock<PolkadotConfig>,
+) -> Result<u64, OnetError> {
+    at.constants()
+        .entry(people_runtime::constants().aura().slot_duration())
+        .map_err(|e| OnetError::from(format!("Aura slot duration not available: {e:?}")))
+}

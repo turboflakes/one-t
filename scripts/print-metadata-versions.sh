@@ -58,7 +58,8 @@ fi
 for chain in polkadot asset-hub-polkadot people-polkadot \
              kusama asset-hub-kusama people-kusama \
              paseo asset-hub-paseo people-paseo \
-             westend asset-hub-westend people-westend bulletin-westend; do
+             westend asset-hub-westend people-westend bulletin-westend \
+             bulletin-polkadot; do
   chain_in_network "$chain" || continue
   suffix=""
   is_updated "$chain" "$@" && suffix=" (updated)"

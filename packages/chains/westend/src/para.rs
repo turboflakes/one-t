@@ -148,7 +148,7 @@ async fn process_block(
         );
     }
 
-    let (new_session, drawn) = fetch_session_events(runtime, &at).await?;
+    let new_session = fetch_session_events(runtime, &at).await?;
 
     // The session index changes in the block of the event, the collators only apply from the next block
     if let Some(session_index) = new_session {
@@ -169,9 +169,8 @@ async fn process_block(
     if let Some(session_index) = new_session {
         let collators = fetch_collators(runtime, &at).await?;
         info!(
-            "{runtime}: block {number} NewSession {session_index} slot {:?} drawn {:?} collators [{}]",
+            "{runtime}: block {number} NewSession {session_index} slot {:?} collators [{}]",
             slot,
-            drawn,
             describe(&collators)
         );
         records.para_slots_mut(para_id).set_collators(collators);
@@ -272,13 +271,12 @@ async fn fetch_session_current_index(
     }
 }
 
-/// Fetch the `NewSession` session index and the `CollatorsDrawn` event (as debug) of a block.
+/// Fetch the `NewSession` session index.
 async fn fetch_session_events(
     runtime: SupportedParasRuntime,
     at: &OnlineClientAtBlock<PolkadotConfig>,
-) -> Result<(Option<u32>, Option<String>), OnetError> {
+) -> Result<Option<u32>, OnetError> {
     let mut new_session = None;
-    let mut drawn = None;
     for event in at.events().fetch().await?.iter() {
         let Ok(event) = event else { continue };
         match runtime {
@@ -288,11 +286,6 @@ async fn fetch_session_events(
                     .transpose()?
                 {
                     new_session = Some(ev.session_index);
-                } else if let Some(ev) = event
-                    .decode_fields_as::<asset_hub::asset_hub_runtime::validator_collators::events::CollatorsDrawn>()
-                    .transpose()?
-                {
-                    drawn = Some(format!("{ev:?}"));
                 }
             }
             SupportedParasRuntime::PeopleWestend => {
@@ -301,11 +294,6 @@ async fn fetch_session_events(
                     .transpose()?
                 {
                     new_session = Some(ev.session_index);
-                } else if let Some(ev) = event
-                    .decode_fields_as::<people::people_runtime::validator_collators::events::CollatorsDrawn>()
-                    .transpose()?
-                {
-                    drawn = Some(format!("{ev:?}"));
                 }
             }
             SupportedParasRuntime::BulletinWestend => {
@@ -314,17 +302,12 @@ async fn fetch_session_events(
                     .transpose()?
                 {
                     new_session = Some(ev.session_index);
-                } else if let Some(ev) = event
-                    .decode_fields_as::<bulletin::bulletin_runtime::validator_collators::events::CollatorsDrawn>()
-                    .transpose()?
-                {
-                    drawn = Some(format!("{ev:?}"));
                 }
             }
             _ => return Err(unsupported(runtime)),
         }
     }
-    Ok((new_session, drawn))
+    Ok(new_session)
 }
 
 /// Collators ordered as the aura authorities (session validators).

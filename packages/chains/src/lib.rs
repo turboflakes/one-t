@@ -80,7 +80,8 @@ impl SupportedRuntime {
     pub fn bulletin_runtime(&self) -> Option<SupportedParasRuntime> {
         match &self {
             Self::Westend => Some(SupportedParasRuntime::BulletinWestend),
-            Self::Polkadot | Self::Kusama | Self::Paseo => None,
+            Self::Polkadot => Some(SupportedParasRuntime::BulletinPolkadot),
+            Self::Kusama | Self::Paseo => None,
         }
     }
 
@@ -173,6 +174,7 @@ pub enum SupportedParasRuntime {
     AssetHubKusama,
     AssetHubWestend,
     BulletinWestend,
+    BulletinPolkadot,
 }
 
 impl SupportedParasRuntime {
@@ -186,7 +188,7 @@ impl SupportedParasRuntime {
             | Self::AssetHubPaseo
             | Self::AssetHubKusama
             | Self::AssetHubWestend => config.substrate_asset_hub_ws_url,
-            Self::BulletinWestend => config.substrate_bulletin_ws_url,
+            Self::BulletinWestend | Self::BulletinPolkadot => config.substrate_bulletin_ws_url,
         }
     }
 
@@ -201,7 +203,7 @@ impl SupportedParasRuntime {
             | Self::AssetHubPaseo
             | Self::AssetHubKusama
             | Self::AssetHubWestend => config.asset_hub_para_id,
-            Self::BulletinWestend => config.bulletin_para_id,
+            Self::BulletinWestend | Self::BulletinPolkadot => config.bulletin_para_id,
         }
     }
 
@@ -217,7 +219,7 @@ impl SupportedParasRuntime {
             | Self::PeoplePolkadot
             | Self::PeoplePaseo
             | Self::PeopleWestend => 3000,
-            Self::PeopleKusama | Self::BulletinWestend => 1000,
+            Self::PeopleKusama | Self::BulletinWestend | Self::BulletinPolkadot => 1000,
             _ => panic!("Unsupported chain"),
         }
     }
@@ -239,7 +241,8 @@ impl SupportedParasRuntime {
             | Self::AssetHubWestend
             | Self::PeopleKusama
             | Self::PeopleWestend
-            | Self::BulletinWestend => 6 * 600,
+            | Self::BulletinWestend
+            | Self::BulletinPolkadot => 6 * 600,
             _ => panic!("Unsupported chain"),
         }
     }
@@ -257,6 +260,7 @@ impl std::fmt::Display for SupportedParasRuntime {
             Self::AssetHubPaseo => write!(f, "Asset Hub Paseo"),
             Self::AssetHubKusama => write!(f, "Asset Hub Kusama"),
             Self::BulletinWestend => write!(f, "Bulletin Westend"),
+            Self::BulletinPolkadot => write!(f, "Bulletin Polkadot"),
         }
     }
 }
