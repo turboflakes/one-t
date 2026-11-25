@@ -21,6 +21,7 @@ onet-pools = { path = "../../pools" }
 onet-records = { path = "../../records" }
 onet-report = { path = "../../report" }
 onet-people-westend = { path = "../../chains/people-westend" }
+onet-bulletin-westend = { path = "../../chains/bulletin-westend" }
 onet-asset-hub-westend = { path = "../../chains/asset-hub-westend" }
 
 async-recursion = { workspace = true }

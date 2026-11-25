@@ -270,9 +270,10 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
     let mut latest_block_number_processed: Option<u64> = Some(start_block_number);
     let mut is_loading = true;
 
-    // AH and People Subscribe head
+    // AH, People and Bulletin Subscribe head
     try_run_subscribe_best_para(SupportedParasRuntime::AssetHubWestend).await?;
     try_run_subscribe_best_para(SupportedParasRuntime::PeopleWestend).await?;
+    try_run_subscribe_best_para(SupportedParasRuntime::BulletinWestend).await?;
 
     // RC Subscribe head
     // NOTE: the reason why we subscribe head and not finalized_head,
@@ -351,8 +352,8 @@ pub async fn process_best_block(
     match chain_key {
         ChainKey::RC => records.set_relay_chain_best_block_number(block_number),
         ChainKey::AH => records.set_asset_hub_best_block_number(block_number),
-        // Note: people best block is not tracked in records
-        ChainKey::PEOPLE => {}
+        // Note: the best block of people and bulletin is not tracked in records
+        ChainKey::PEOPLE | ChainKey::BULLETIN => {}
     };
 
     // if api enabled cache best block
@@ -381,6 +382,7 @@ pub async fn process_finalized_block(
         relay,
         asset_hub,
         people,
+        bulletin,
     } = setup_processing_context(onet, rc_block_number).await?;
 
     // Process RC events
@@ -391,6 +393,7 @@ pub async fn process_finalized_block(
         &relay,
         &asset_hub,
         &people,
+        &bulletin,
         records,
         subscribers,
         rc_block_number,
@@ -431,6 +434,7 @@ pub async fn process_finalized_block(
 /// don't spawn duplicates of it.
 static AH_BEST_BLOCK_TASK_RUNNING: AtomicBool = AtomicBool::new(false);
 static PEOPLE_BEST_BLOCK_TASK_RUNNING: AtomicBool = AtomicBool::new(false);
+static BULLETIN_BEST_BLOCK_TASK_RUNNING: AtomicBool = AtomicBool::new(false);
 
 pub async fn try_run_subscribe_best_para(runtime: SupportedParasRuntime) -> Result<(), OnetError> {
     let config = CONFIG.clone();
@@ -440,6 +444,7 @@ pub async fn try_run_subscribe_best_para(runtime: SupportedParasRuntime) -> Resu
 
     let is_running = match runtime {
         SupportedParasRuntime::PeopleWestend => &PEOPLE_BEST_BLOCK_TASK_RUNNING,
+        SupportedParasRuntime::BulletinWestend => &BULLETIN_BEST_BLOCK_TASK_RUNNING,
         _ => &AH_BEST_BLOCK_TASK_RUNNING,
     };
     if is_running.swap(true, Ordering::SeqCst) {
@@ -463,6 +468,9 @@ pub async fn subscribe_best_para(runtime: SupportedParasRuntime) -> Result<(), O
     let chain_key = para_chain_key(runtime);
     let api = match runtime {
         SupportedParasRuntime::PeopleWestend => onet.people_client(),
+        SupportedParasRuntime::BulletinWestend => onet
+            .bulletin_client()
+            .ok_or_else(|| OnetError::from("Bulletin chain is not available"))?,
         _ => onet.asset_hub_client(),
     };
     let mut cache = onet.cache.get().await.map_err(CacheError::RedisPoolError)?;
@@ -482,6 +490,7 @@ struct BlockProcessingContext {
     relay: ChainClient,
     asset_hub: ChainClient,
     people: ChainClient,
+    bulletin: ChainClient,
 }
 
 async fn setup_processing_context(
@@ -492,6 +501,10 @@ async fn setup_processing_context(
         relay: onet.relay().clone(),
         asset_hub: onet.asset_hub().clone(),
         people: onet.people().clone(),
+        bulletin: onet
+            .bulletin()
+            .ok_or_else(|| OnetError::from("Bulletin chain is not available"))?
+            .clone(),
     })
 }
 
@@ -501,6 +514,7 @@ async fn process_relay_chain_events(
     relay: &ChainClient,
     asset_hub: &ChainClient,
     people: &ChainClient,
+    bulletin: &ChainClient,
     records: &mut Records,
     subscribers: &mut Subscribers,
     rc_block_number: BlockNumber,
@@ -544,6 +558,8 @@ async fn process_relay_chain_events(
                 .await?;
             } else if ev.0.descriptor.para_id == Id(config.people_para_id) {
                 track_people_block(onet, people, ev.0.descriptor.para_head, records).await;
+            } else if ev.0.descriptor.para_id == Id(config.bulletin_para_id) {
+                track_bulletin_block(onet, bulletin, ev.0.descriptor.para_head, records).await;
             }
         } else if let Some(ev) = event.decode_fields_as::<NewSession>().transpose()? {
             info!("RC Event {:?}", ev);
@@ -682,12 +698,45 @@ async fn track_people_block(
     block_hash: H256,
     records: &mut Records,
 ) {
-    let runtime = SupportedParasRuntime::PeopleWestend;
-    match try_fetch_block_info(&people.rpc, block_hash).await {
+    track_included_para_block(
+        onet,
+        people,
+        SupportedParasRuntime::PeopleWestend,
+        block_hash,
+        records,
+    )
+    .await;
+}
+
+async fn track_bulletin_block(
+    onet: &Onet,
+    bulletin: &ChainClient,
+    block_hash: H256,
+    records: &mut Records,
+) {
+    track_included_para_block(
+        onet,
+        bulletin,
+        SupportedParasRuntime::BulletinWestend,
+        block_hash,
+        records,
+    )
+    .await;
+}
+
+/// Track the parachain block included by the relay chain and cache it as the parachain finalized block.
+async fn track_included_para_block(
+    onet: &Onet,
+    chain: &ChainClient,
+    runtime: SupportedParasRuntime,
+    block_hash: H256,
+    records: &mut Records,
+) {
+    match try_fetch_block_info(&chain.rpc, block_hash).await {
         Ok((block_number, parent_hash)) => {
             track_para_block(
                 onet,
-                people,
+                chain,
                 runtime,
                 block_number,
                 block_hash,
@@ -716,6 +765,7 @@ async fn track_people_block(
 fn para_chain_key(runtime: SupportedParasRuntime) -> ChainKey {
     match runtime {
         SupportedParasRuntime::PeopleWestend => ChainKey::PEOPLE,
+        SupportedParasRuntime::BulletinWestend => ChainKey::BULLETIN,
         _ => ChainKey::AH,
     }
 }

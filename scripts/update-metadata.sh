@@ -77,6 +77,9 @@ fetch_metadata "people-paseo"    "people-paseo.rpc.turboflakes.io"
 fetch_metadata "people-kusama"   "people-kusama.rpc.turboflakes.io"
 fetch_metadata "people-polkadot" "people-polkadot.rpc.turboflakes.io"
 
+# Bulletin Chains
+fetch_metadata "bulletin-westend" "westend-bulletin-rpc.polkadot.io"
+
 # Report all spec versions, flagging the chains whose metadata actually changed.
 changed_chains=$(git status --porcelain -- "$BASE" \
   | awk '{print $2}' \

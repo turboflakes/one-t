@@ -58,11 +58,11 @@ pub struct Params {
     // Note: `show_nomstats` is deprecated, use `nomstats`
     #[serde(default, alias = "show_nomstats")]
     pub nomstats: bool,
-    // chain_key is the chain of the sessions, default `rc`. For `ah` or `pp` the sessions are the parachain ones
+    // chain_key is the chain of the sessions, default `rc`. For `ah`, `pp` or `bu` the sessions are the parachain ones
     #[serde(default = "default_chain_key")]
     pub chain_key: ChainKey,
     // slot indicates whether the slot a parachain is in right now should be retrieved or not, default false
-    // Note: only for the current session of `ah` or `pp`
+    // Note: only for the current session of `ah`, `pp` or `bu`
     #[serde(default)]
     pub slot: bool,
     // collation_stats indicates whether session collation stats by parachain should be retrieved or not, default false

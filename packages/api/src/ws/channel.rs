@@ -289,8 +289,8 @@ impl Channel {
             .await?;
         }
 
-        // Process Asset Hub and People finalized blocks
-        for chain_key in [ChainKey::AH, ChainKey::PEOPLE] {
+        // Process Asset Hub, People and Bulletin finalized blocks
+        for chain_key in [ChainKey::AH, ChainKey::PEOPLE, ChainKey::BULLETIN] {
             if follows(&chain_key) {
                 Self::process_parachain_finalized_blocks(
                     conn, config, client_id, chain_key, with_stats, act,
@@ -516,7 +516,12 @@ impl Channel {
         only_chain_key: &Option<ChainKey>,
         act: &Channel,
     ) -> Result<(), ApiError> {
-        for chain_key in [ChainKey::RC, ChainKey::AH, ChainKey::PEOPLE] {
+        for chain_key in [
+            ChainKey::RC,
+            ChainKey::AH,
+            ChainKey::PEOPLE,
+            ChainKey::BULLETIN,
+        ] {
             // Note: only the relay chain is followed unless a chain is given, so the parachains are explicitly subscribed
             let follows = match only_chain_key {
                 Some(only) => *only == chain_key,
@@ -1088,10 +1093,9 @@ impl Channel {
             return Ok(());
         }
         let bix = slot.bix;
-        let para_id = match chain_key {
-            ChainKey::PEOPLE => config.people_para_id,
-            _ => config.asset_hub_para_id,
-        };
+        let para_id = chain_key
+            .para_id(config)
+            .unwrap_or(config.asset_hub_para_id);
         let resp = WsResponseMessage {
             r#type: String::from("collators"),
             result: CollatorSlotResult {

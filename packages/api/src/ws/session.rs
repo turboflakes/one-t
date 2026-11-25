@@ -296,7 +296,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
     }
 }
 
-/// Topics of the collators from the params `[chain_key, ..., kind | "slot"]`, where chain_key is `ah` or `pp`.
+/// Topics of the collators from the params `[chain_key, ..., kind | "slot"]`, where chain_key is `ah`, `pp` or `bu`.
 /// Note: the collators and the stats are sent when a slot is closed. The optional kind (`i`, `p`, `v` or `u`)
 /// applies to all chains given and only the collators of that kind are sent. With `slot` only the slot
 /// each chain is in is sent, which changes with every block.
@@ -306,7 +306,7 @@ fn collators_topics(params: &[String]) -> Vec<Topic> {
     params
         .iter()
         .filter_map(|p| ChainKey::from_str(p).ok())
-        .filter(|c| matches!(c, ChainKey::AH | ChainKey::PEOPLE))
+        .filter(|c| matches!(c, ChainKey::AH | ChainKey::PEOPLE | ChainKey::BULLETIN))
         .map(|c| match slot {
             true => Topic::CollatorSlot(c),
             false => Topic::Collators(c, kind),
@@ -319,7 +319,7 @@ fn session_chain(params: &[String]) -> Option<ChainKey> {
     params
         .get(1)
         .and_then(|c| ChainKey::from_str(c).ok())
-        .filter(|c| matches!(c, ChainKey::AH | ChainKey::PEOPLE))
+        .filter(|c| matches!(c, ChainKey::AH | ChainKey::PEOPLE | ChainKey::BULLETIN))
 }
 
 /// Topic of the blocks from the params `["best" | "finalized", ...]`, none if the params are empty or
@@ -373,6 +373,9 @@ mod tests {
                 .collect()
         };
         assert_eq!(topics(&["ah", "pp"]), ["collators:ah", "collators:pp"]);
+        // bulletin
+        assert_eq!(topics(&["bu"]), ["collators:bu"]);
+        assert_eq!(topics(&["bu", "slot"]), ["collators:bu:slot"]);
         assert_eq!(topics(&["pp", "I"]), ["collators:pp:i"]);
         assert_eq!(
             topics(&["ah", "pp", "V"]),
@@ -394,6 +397,10 @@ mod tests {
         assert_eq!(session_chain(&params(&["current", "rc"])), None);
         assert_eq!(session_chain(&params(&["new", "xx"])), None);
         assert_eq!(session_chain(&params(&["new", "ah"])), Some(ChainKey::AH));
+        assert_eq!(
+            session_chain(&params(&["new", "bu"])),
+            Some(ChainKey::BULLETIN)
+        );
         assert_eq!(
             Topic::CurrentSession(session_chain(&params(&["current", "pp"]))).to_string(),
             "current_session:pp"
@@ -436,6 +443,8 @@ mod tests {
         assert_eq!(topic.to_string(), "finalized_block:2");
         let topic = finalized_topic(&params(&["finalized"]));
         assert_eq!(topic.to_string(), "finalized_block:0");
+        let topic = finalized_topic(&params(&["finalized", "0", "bu"]));
+        assert_eq!(topic.to_string(), "finalized_block:0:bu");
         let topic = finalized_topic(&params(&["finalized", "0", "pp"]));
         assert_eq!(topic.to_string(), "finalized_block:0:pp");
         // not a chain

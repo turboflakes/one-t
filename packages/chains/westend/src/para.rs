@@ -22,6 +22,7 @@
 use crate::westend::fetch_block_info;
 use log::{info, warn};
 use onet_asset_hub_westend as asset_hub;
+use onet_bulletin_westend as bulletin;
 use onet_chains::SupportedParasRuntime;
 use onet_core::core::ChainClient;
 use onet_core::error::OnetError;
@@ -223,7 +224,9 @@ async fn fetch_points_per_block(
 fn is_supported(runtime: SupportedParasRuntime) -> bool {
     matches!(
         runtime,
-        SupportedParasRuntime::AssetHubWestend | SupportedParasRuntime::PeopleWestend
+        SupportedParasRuntime::AssetHubWestend
+            | SupportedParasRuntime::PeopleWestend
+            | SupportedParasRuntime::BulletinWestend
     )
 }
 
@@ -252,6 +255,7 @@ fn fetch_aura_slot_duration(
     match runtime {
         SupportedParasRuntime::AssetHubWestend => asset_hub::fetch_aura_slot_duration(at),
         SupportedParasRuntime::PeopleWestend => people::fetch_aura_slot_duration(at),
+        SupportedParasRuntime::BulletinWestend => bulletin::fetch_aura_slot_duration(at),
         _ => Err(unsupported(runtime)),
     }
 }
@@ -263,6 +267,7 @@ async fn fetch_session_current_index(
     match runtime {
         SupportedParasRuntime::AssetHubWestend => asset_hub::fetch_session_current_index(at).await,
         SupportedParasRuntime::PeopleWestend => people::fetch_session_current_index(at).await,
+        SupportedParasRuntime::BulletinWestend => bulletin::fetch_session_current_index(at).await,
         _ => Err(unsupported(runtime)),
     }
 }
@@ -303,6 +308,19 @@ async fn fetch_session_events(
                     drawn = Some(format!("{ev:?}"));
                 }
             }
+            SupportedParasRuntime::BulletinWestend => {
+                if let Some(ev) = event
+                    .decode_fields_as::<bulletin::bulletin_runtime::session::events::NewSession>()
+                    .transpose()?
+                {
+                    new_session = Some(ev.session_index);
+                } else if let Some(ev) = event
+                    .decode_fields_as::<bulletin::bulletin_runtime::validator_collators::events::CollatorsDrawn>()
+                    .transpose()?
+                {
+                    drawn = Some(format!("{ev:?}"));
+                }
+            }
             _ => return Err(unsupported(runtime)),
         }
     }
@@ -326,6 +344,12 @@ async fn fetch_collators(
             people::fetch_invulnerables(at).await?,
             people::fetch_candidates(at).await?,
             people::fetch_drawn_collators(at).await?,
+        ),
+        SupportedParasRuntime::BulletinWestend => (
+            bulletin::fetch_session_validators(at).await?,
+            bulletin::fetch_invulnerables(at).await?,
+            bulletin::fetch_candidates(at).await?,
+            bulletin::fetch_drawn_collators(at).await?,
         ),
         _ => return Err(unsupported(runtime)),
     };

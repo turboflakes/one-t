@@ -134,6 +134,7 @@ pub struct SubstrateClients {
     pub relay: ChainClient,
     pub people: ChainClient,
     pub asset_hub: ChainClient,
+    pub bulletin: Option<ChainClient>,
     pub runtime: SupportedRuntime,
 }
 
@@ -172,6 +173,14 @@ async fn attempt_connection(config: &Config) -> Result<SubstrateClients, OnetErr
         create_para_client_from_supported_runtime(runtime, SupportedParasRuntimeType::AssetHub)
             .await?;
 
+    let bulletin = match runtime.bulletin_runtime() {
+        Some(_) => Some(
+            create_para_client_from_supported_runtime(runtime, SupportedParasRuntimeType::Bulletin)
+                .await?,
+        ),
+        None => None,
+    };
+
     info!(
         "Connected to {} network using {} * Substrate node {} v{}",
         node_connection.chain,
@@ -184,6 +193,7 @@ async fn attempt_connection(config: &Config) -> Result<SubstrateClients, OnetErr
         relay,
         people,
         asset_hub,
+        bulletin,
         runtime,
     })
 }
@@ -234,6 +244,7 @@ pub struct Onet {
     relay: ChainClient,
     people: ChainClient,
     asset_hub: ChainClient,
+    bulletin: Option<ChainClient>,
     matrix: Matrix,
     pub cache: RedisPool,
 }
@@ -277,6 +288,7 @@ impl Onet {
             relay: clients.relay,
             people: clients.people,
             asset_hub: clients.asset_hub,
+            bulletin: clients.bulletin,
             matrix,
             cache: create_or_await_pool(CONFIG.clone()),
         }
@@ -349,6 +361,14 @@ impl Onet {
 
     pub fn asset_hub_rpc(&self) -> &LegacyRpcMethods<RpcConfigFor<PolkadotConfig>> {
         &self.asset_hub.rpc
+    }
+
+    pub fn bulletin(&self) -> Option<&ChainClient> {
+        self.bulletin.as_ref()
+    }
+
+    pub fn bulletin_client(&self) -> Option<&OnlineClient<PolkadotConfig>> {
+        self.bulletin.as_ref().map(|b| &b.client)
     }
 
     /// Returns the matrix configuration

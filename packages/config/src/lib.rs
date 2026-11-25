@@ -282,6 +282,11 @@ fn default_people_para_id() -> u32 {
     1004
 }
 
+/// sets default para_id for bulletin chain
+fn default_bulletin_para_id() -> u32 {
+    2487
+}
+
 /// provides default value for discobery_epoch_rate if ONET_DISCOVERY_EPOCH_RATE env var is not set
 /// recommended value is 1 for every session on Polkadot and 2 for every 2 sessions on Kusama
 fn default_discovery_epoch_rate() -> u64 {
@@ -318,8 +323,7 @@ pub struct Config {
     pub people_para_id: u32,
     #[serde(default)]
     pub substrate_people_ws_url: String,
-    // Note: there is no default para_id for the bulletin chain, set ONET_BULLETIN_PARA_ID
-    #[serde(default)]
+    #[serde(default = "default_bulletin_para_id")]
     pub bulletin_para_id: u32,
     #[serde(default)]
     pub substrate_bulletin_ws_url: String,

@@ -42,7 +42,7 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 pub struct Params {
-    // parachain of the collators, `ah` or `pp` (people), default `ah`
+    // parachain of the collators, `ah` (asset hub), `pp` (people) or `bu` (bulletin), default `ah`
     #[serde(default = "default_chain")]
     chain_key: ChainKey,
     // parachain session, default current
@@ -90,7 +90,8 @@ pub async fn get_collators(
     cache: Data<RedisPool>,
 ) -> Result<Json<CollatorsResult>, ApiError> {
     if params.chain_key == ChainKey::RC {
-        let msg = "Parameter chain_key must be equal to one of the options: [ah, pp]".to_string();
+        let msg =
+            "Parameter chain_key must be equal to one of the options: [ah, pp, bu]".to_string();
         warn!("{}", msg);
         return Err(ApiError::BadRequest(msg));
     }
@@ -164,10 +165,9 @@ pub async fn get_collators_result(
     }
 
     let config = CONFIG.clone();
-    let para_id = match chain_key {
-        ChainKey::PEOPLE => config.people_para_id,
-        _ => config.asset_hub_para_id,
-    };
+    let para_id = chain_key
+        .para_id(&config)
+        .unwrap_or(config.asset_hub_para_id);
 
     // Note: session stats are only retrieved when requested
     let stats: CollatorSessionStats = if show_stats {
@@ -229,6 +229,7 @@ pub async fn get_live_slots(conn: &mut Connection) -> Result<BTreeMap<ParaId, Li
     for (chain_key, para_id) in [
         (ChainKey::AH, config.asset_hub_para_id),
         (ChainKey::PEOPLE, config.people_para_id),
+        (ChainKey::BULLETIN, config.bulletin_para_id),
     ] {
         let slot = redis::cmd("GET")
             .arg(CacheKey::CollatorLiveSlot(chain_key))
