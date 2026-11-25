@@ -23,6 +23,7 @@ members = [
     "packages/chains/asset-hub-westend",
     "packages/chains/people-westend",
     "packages/chains/bulletin-westend",
+    "packages/chains/bulletin-polkadot",
     "packages/chains/westend",
     "packages/chains/asset-hub-paseo",
     "packages/chains/paseo",

@@ -5338,6 +5338,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "onet-bulletin-polkadot"
+version = "1.27.2"
+dependencies = [
+ "onet-core",
+ "subxt",
+]
+
+[[package]]
 name = "onet-bulletin-westend"
 version = "1.27.2"
 dependencies = [
