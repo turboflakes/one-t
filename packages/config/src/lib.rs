@@ -284,7 +284,7 @@ fn default_people_para_id() -> u32 {
 
 /// sets default para_id for bulletin chain
 fn default_bulletin_para_id() -> u32 {
-    2487
+    1010
 }
 
 /// provides default value for discobery_epoch_rate if ONET_DISCOVERY_EPOCH_RATE env var is not set
