@@ -22,9 +22,9 @@
 use crate::error::ApiError;
 use crate::{
     helpers::respond_json,
-    responses::{CollatorsResult, ValidatorResult},
+    responses::{CollatorByStashResult, CollatorsResult, ValidatorResult},
 };
-use actix_web::web::{Data, Json, Query};
+use actix_web::web::{Data, Json, Path, Query};
 use log::warn;
 use onet_cache::{
     error::CacheError,
@@ -34,11 +34,12 @@ use onet_cache::{
 use onet_config::CONFIG;
 use onet_records::{
     collators::{CollatorKind, CollatorRecord, CollatorSessionStats, LiveSlot},
-    EpochIndex, ParaId,
+    BlockNumber, EpochIndex, ParaId,
 };
 use redis::aio::MultiplexedConnection as Connection;
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, str::FromStr};
+use subxt::utils::AccountId32;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 pub struct Params {
@@ -116,6 +117,70 @@ pub async fn get_collators(
     }
 
     respond_json(result)
+}
+
+/// Get a collator of a parachain session by stash
+pub async fn get_collator_by_stash(
+    stash: Path<String>,
+    params: Query<Params>,
+    cache: Data<RedisPool>,
+) -> Result<Json<CollatorByStashResult>, ApiError> {
+    if params.chain_key == ChainKey::RC {
+        let msg =
+            "Parameter chain_key must be equal to one of the options: [ah, pp, bu]".to_string();
+        warn!("{}", msg);
+        return Err(ApiError::BadRequest(msg));
+    }
+    let stash = stash.into_inner();
+    let account = AccountId32::from_str(&stash)
+        .map_err(|e| ApiError::BadRequest(format!("Invalid account: {stash:?} error: {e:?}")))?;
+
+    let mut conn = get_conn(&cache).await?;
+    let result = get_collators_result(
+        &mut conn as &mut Connection,
+        &params.chain_key,
+        &params.session,
+        params.stats,
+        params.block_numbers,
+        params.missed_slots,
+        params.slot,
+    )
+    .await?;
+
+    respond_json(find_collator(result, &account, &stash)?)
+}
+
+/// Pick a collator from the collators of a parachain session, not found if it is not one of them.
+pub fn find_collator(
+    result: CollatorsResult,
+    account: &AccountId32,
+    stash: &str,
+) -> Result<CollatorByStashResult, ApiError> {
+    let CollatorsResult {
+        chain_key,
+        para_id,
+        session,
+        slot,
+        data,
+        ..
+    } = result;
+    let collator = data
+        .unwrap_or_default()
+        .into_iter()
+        .find(|c| AccountId32::from_str(&c.address).is_ok_and(|a| a == *account))
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "Collator {stash} not found in {} session {}",
+                chain_key, session
+            ))
+        })?;
+    Ok(CollatorByStashResult {
+        chain_key,
+        para_id,
+        session,
+        slot,
+        collator,
+    })
 }
 
 /// Get the collators of a parachain session, the current one if `session` is current

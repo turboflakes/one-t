@@ -1020,6 +1020,18 @@ pub struct CollatorSlotResult {
     pub slot: LiveSlot,
 }
 
+/// A single collator of a parachain session
+#[derive(Debug, Serialize)]
+pub struct CollatorByStashResult {
+    pub chain_key: String,
+    pub para_id: ParaId,
+    pub session: EpochIndex,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slot: Option<LiveSlot>,
+    #[serde(flatten)]
+    pub collator: CollatorResult,
+}
+
 #[derive(Debug, Serialize, Default)]
 pub struct CollatorsResult {
     pub chain_key: String,

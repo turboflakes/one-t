@@ -1064,6 +1064,63 @@ impl Channel {
         Ok(())
     }
 
+    /// Send a collator of the current session of a parachain, when a new block was followed
+    async fn handle_collator(
+        conn: &mut Connection,
+        config: &Config,
+        client_id: ClientId,
+        chain_key: &ChainKey,
+        stash: &SS58,
+        act: &Channel,
+    ) -> Result<(), ApiError> {
+        let Ok(account) = AccountId32::from_str(stash) else {
+            return Ok(());
+        };
+        // Note: the last block followed is written together with the collators
+        let cache_key = CacheKey::CollatorLastBlock(chain_key.clone());
+        let Some(last_block) = redis::cmd("GET")
+            .arg(cache_key.to_string())
+            .query_async::<Option<BlockNumber>>(conn)
+            .await
+            .map_err(onet_cache::error::CacheError::RedisCMDError)?
+        else {
+            return Ok(());
+        };
+        // Note: each collator is followed on its own, so it has its own cursor
+        let pushed_key = format!("{}:{}", cache_key, stash);
+        let pushed_block = redis::cmd("GET")
+            .arg(CacheKey::PushedBlockByClientIdV2(
+                pushed_key.clone(),
+                client_id,
+            ))
+            .query_async::<Option<BlockNumber>>(conn)
+            .await
+            .map_err(onet_cache::error::CacheError::RedisCMDError)?;
+        if pushed_block == Some(last_block) {
+            return Ok(());
+        }
+
+        let result =
+            get_collators_result(conn, chain_key, &Index::Current, false, false, false, false)
+                .await?;
+        // Note: nothing is sent if the account is not collating in the session
+        if let Ok(collator) = find_collator(result, &account, stash) {
+            let resp = WsResponseMessage {
+                r#type: String::from("collator"),
+                result: collator,
+            };
+            let serialized = serde_json::to_string(&resp).unwrap();
+            act.reply_message(client_id, &serialized);
+        }
+
+        if let Err(e) =
+            cache_latest_pushed_block_by_key(conn, config, &client_id, pushed_key, last_block).await
+        {
+            warn!("Cache PushedBlock failed with error: {:?}", e);
+        }
+        Ok(())
+    }
+
     /// Send the slot a parachain is in, when there is a new parachain block in it
     async fn handle_collator_slot(
         conn: &mut Connection,
