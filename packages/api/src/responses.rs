@@ -1002,6 +1002,9 @@ pub struct CollatorResult {
     pub cix: Option<u32>,
     #[serde(flatten)]
     pub summary: CollatorSummary,
+    // last block ever produced by the collator, not set if none was recorded
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lab: Option<BlockNumber>,
     // produced block numbers, only if requested
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pbn: Option<Vec<BlockNumber>>,
@@ -1085,6 +1088,7 @@ impl CollatorsResult {
                 address: r.address().clone(),
                 cix: r.cix(),
                 summary: r.summary(),
+                lab: None,
                 pbn: show_block_numbers.then(|| r.produced_block_numbers().to_vec()),
                 msl: show_missed_slots.then(|| r.missed_slots().to_vec()),
             })

@@ -260,6 +260,16 @@ pub async fn get_collators_result(
         show_missed_slots,
     );
 
+    // Note: the last block authored is not bound to the session
+    let last_produced: BTreeMap<String, BlockNumber> = redis::cmd("HGETALL")
+        .arg(CacheKey::LastAuthoredBlock(chain_key.clone()))
+        .query_async(&mut *conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    for collator in result.data.iter_mut().flatten() {
+        collator.lab = last_produced.get(&collator.address).copied();
+    }
+
     // Note: the slot the parachain is in only makes sense for its current session
     if show_slot && current_session == Some(session_index) {
         result.slot = redis::cmd("GET")

@@ -41,6 +41,27 @@ use std::{
 };
 use subxt::utils::AccountId32;
 
+// sets the field only if the block number is higher, so the last authored block never moves back
+const LAST_AUTHORED_BLOCK_SCRIPT: &str = "local c = redis.call('HGET', KEYS[1], ARGV[1]) \
+if not c or tonumber(ARGV[2]) > tonumber(c) then redis.call('HSET', KEYS[1], ARGV[1], ARGV[2]) end";
+
+/// Cache the update of the last block authored by an account on a chain,
+/// the relay chain validators or the parachain collators. It is kept without expiration.
+pub(crate) fn cache_last_authored_block(
+    pipe: &mut redis::Pipeline,
+    chain_key: &ChainKey,
+    address: &str,
+    block_number: BlockNumber,
+) {
+    pipe.cmd("EVAL")
+        .arg(LAST_AUTHORED_BLOCK_SCRIPT)
+        .arg(1)
+        .arg(CacheKey::LastAuthoredBlock(chain_key.clone()))
+        .arg(address)
+        .arg(block_number.to_string())
+        .ignore();
+}
+
 const RECORD_FIELD: &str = "record";
 // field of the authority data with the collation index by parachain
 const COLLATION_FIELD: &str = "collation";
@@ -81,6 +102,9 @@ pub async fn cache_collator_records(
             continue;
         };
         if let Some(record) = records.get_collator_record(para_id, *session, address) {
+            if let Some(last) = record.produced_block_numbers().iter().max() {
+                cache_last_authored_block(&mut pipe, &chain_key, address, *last);
+            }
             let key = CacheKey::CollatorRecord(chain_key.clone(), *session, account);
             add_record(
                 &mut pipe,

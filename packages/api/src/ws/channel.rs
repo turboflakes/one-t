@@ -22,8 +22,11 @@
 use crate::error::ApiError;
 use crate::{
     handlers::blocks::get_collation_stats_by_chain,
-    handlers::collators::{attach_collation_live, get_collators_result, get_live_slot},
+    handlers::collators::{
+        attach_collation_live, find_collator, get_collators_result, get_live_slot,
+    },
     handlers::sessions::{get_para_current_session, get_para_session_result, get_session_data},
+    handlers::validators::attach_last_authored_block,
     responses::{
         AuthorityKey, AuthorityKeyCache, BlockResult, BlocksResult, CacheMap, CollatorSlotResult,
         ParachainsResult, SessionResult, ValidatorResult, ValidatorsResult,
@@ -71,6 +74,8 @@ pub enum Topic {
     Collators(ChainKey, Option<CollatorKind>),
     // only the slot the parachain is in, which changes with every block
     CollatorSlot(ChainKey),
+    // a collator of a parachain by stash
+    Collator(ChainKey, SS58),
 }
 
 impl std::fmt::Display for Topic {
@@ -98,6 +103,7 @@ impl std::fmt::Display for Topic {
             Self::Parachains(index) => write!(f, "parachains:{}", index),
             Self::Collators(chain_key, None) => write!(f, "collators:{}", chain_key),
             Self::CollatorSlot(chain_key) => write!(f, "collators:{}:slot", chain_key),
+            Self::Collator(chain_key, account) => write!(f, "collator:{}:{}", chain_key, account),
             Self::Collators(chain_key, Some(kind)) => {
                 write!(f, "collators:{}:{}", chain_key, kind.code())
             }
@@ -253,6 +259,10 @@ impl Channel {
             }
             Topic::CollatorSlot(chain_key) => {
                 Self::handle_collator_slot(&mut conn, &config, client_id, chain_key, act).await?
+            }
+            Topic::Collator(chain_key, account) => {
+                Self::handle_collator(&mut conn, &config, client_id, chain_key, account, act)
+                    .await?
             }
             Topic::Collators(chain_key, kind) => {
                 Self::handle_collators(&mut conn, &config, client_id, chain_key, *kind, act).await?
@@ -886,6 +896,14 @@ impl Channel {
                                     {
                                         warn!("Collation live slot not attached: {:?}", e);
                                     }
+                                    if let Err(e) = attach_last_authored_block(
+                                        conn,
+                                        std::slice::from_mut(&mut result),
+                                    )
+                                    .await
+                                    {
+                                        warn!("Last authored block not attached: {:?}", e);
+                                    }
                                     let resp = WsResponseMessage {
                                         r#type: String::from("validator"),
                                         result,
@@ -977,6 +995,9 @@ impl Channel {
                             // Note: the slot is not cached, a failure only omits it
                             if let Err(e) = attach_collation_live(conn, &mut data).await {
                                 warn!("Collation live slot not attached: {:?}", e);
+                            }
+                            if let Err(e) = attach_last_authored_block(conn, &mut data).await {
+                                warn!("Last authored block not attached: {:?}", e);
                             }
                             let resp = WsResponseMessage {
                                 r#type: String::from("validators"),

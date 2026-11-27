@@ -172,6 +172,7 @@ pub enum CacheKey {
     PushedBlockByClientIdV2(String, usize),
     BlockByIndexStats(Index),
     BlocksBySession(Index),
+    LastAuthoredBlock(ChainKey),
     EraByIndex(Index),
     SessionByIndex(Index),
     SessionByIndexStats(Index),
@@ -298,6 +299,7 @@ impl std::fmt::Display for CacheKey {
             Self::CollatorStatsByEpoch(epoch_index) => write!(f, "cse:{}", epoch_index),
             Self::CollatorLastBlock(chain) => write!(f, "cl:{}", chain),
             Self::CollatorLiveSlot(chain) => write!(f, "cls:{}", chain),
+            Self::LastAuthoredBlock(chain) => write!(f, "lab:{}", chain),
             Self::Event(chain, block_index) => {
                 write!(f, "ev:{}:{}", chain, block_index)
             }
@@ -445,6 +447,14 @@ mod tests {
         assert_eq!(
             CacheKey::CollatorLiveSlot(ChainKey::PEOPLE).to_string(),
             "cls:pp"
+        );
+        assert_eq!(
+            CacheKey::LastAuthoredBlock(ChainKey::BULLETIN).to_string(),
+            "lab:bu"
+        );
+        assert_eq!(
+            CacheKey::LastAuthoredBlock(ChainKey::RC).to_string(),
+            "lab:rc"
         );
     }
 }
