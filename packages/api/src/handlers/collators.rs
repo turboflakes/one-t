@@ -53,7 +53,7 @@ pub struct Params {
     // Note: `show_stats` is deprecated, use `stats`
     #[serde(default, alias = "show_stats")]
     stats: bool,
-    // block_numbers indicates whether the produced block numbers (pbn) of each collator should be retrieved or not, default false
+    // block_numbers indicates whether the produced block numbers (ab) of each collator should be retrieved or not, default false
     // Note: `show_block_numbers` is deprecated, use `block_numbers`
     #[serde(default, alias = "show_block_numbers")]
     block_numbers: bool,
