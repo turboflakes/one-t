@@ -23,7 +23,7 @@ use crate::error::ApiError;
 use crate::{
     handlers::blocks::get_collation_stats_by_chain,
     handlers::collators::{
-        attach_collation_live, find_collator, get_collators_result, get_live_slot,
+        attach_collation_live, find_collator, get_collators_result, get_live_slot, get_para_id,
     },
     handlers::sessions::{get_para_current_session, get_para_session_result, get_session_data},
     handlers::validators::attach_last_authored_block,
@@ -1171,9 +1171,7 @@ impl Channel {
             return Ok(());
         }
         let bix = slot.bix;
-        let para_id = chain_key
-            .para_id(config)
-            .unwrap_or(config.asset_hub_para_id);
+        let para_id = get_para_id(conn, chain_key).await?;
         let resp = WsResponseMessage {
             r#type: String::from("collators"),
             result: CollatorSlotResult {

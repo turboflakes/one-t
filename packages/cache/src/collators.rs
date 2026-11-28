@@ -66,6 +66,20 @@ const RECORD_FIELD: &str = "record";
 // field of the authority data with the collation index by parachain
 const COLLATION_FIELD: &str = "collation";
 
+/// Cache the parachain id
+pub async fn cache_para_id(
+    cache: &mut Connection,
+    chain_key: ChainKey,
+    para_id: ParaId,
+) -> Result<(), CacheError> {
+    redis::cmd("SET")
+        .arg(CacheKey::ParaId(chain_key))
+        .arg(para_id.to_string())
+        .query_async::<()>(cache)
+        .await
+        .map_err(CacheError::RedisCMDError)
+}
+
 /// Cache the collator records changed since the last call and the draw of validators as collators
 pub async fn cache_collator_records(
     cache: &mut Connection,

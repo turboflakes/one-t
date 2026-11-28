@@ -47,7 +47,7 @@ use onet_asset_hub_polkadot::{
 use onet_cache::{
     cache_best_block, cache_board_limits_at_session, cache_collator_records, cache_finalized_block,
     cache_network_stats_at_session, cache_nomination_pool, cache_nomination_pool_nominees,
-    cache_nomination_pool_stats, cache_records, cache_records_at_new_session,
+    cache_nomination_pool_stats, cache_para_id, cache_records, cache_records_at_new_session,
     cache_validator_profile, cache_validator_profile_only, cache_waiting_validator,
     rehydrate_collator_records,
 };
@@ -263,6 +263,15 @@ pub async fn init_and_subscribe_on_chain_events(onet: &Onet) -> Result<(), OnetE
         let first_session_index = fetch_first_session_from_active_era(&at).await?;
         cache_records_at_new_session(&mut cache, &records, first_session_index).await?;
         cache_records(&mut cache, &records).await?;
+
+        // Note: the parachain ids are followed from the configuration, so they are cached once
+        for runtime in [
+            SupportedParasRuntime::AssetHubPolkadot,
+            SupportedParasRuntime::PeoplePolkadot,
+            SupportedParasRuntime::BulletinPolkadot,
+        ] {
+            cache_para_id(&mut cache, para_chain_key(runtime), runtime.para_id()).await?;
+        }
     }
 
     // Initialize p2p discovery

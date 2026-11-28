@@ -229,10 +229,7 @@ pub async fn get_collators_result(
         }
     }
 
-    let config = CONFIG.clone();
-    let para_id = chain_key
-        .para_id(&config)
-        .unwrap_or(config.asset_hub_para_id);
+    let para_id = get_para_id(conn, chain_key).await?;
 
     // Note: session stats are only retrieved when requested
     let stats: CollatorSessionStats = if show_stats {
@@ -283,6 +280,17 @@ pub async fn get_collators_result(
     Ok(result)
 }
 
+/// Parachain id of a chain as followed by the indexer, the configured one if it is not cached yet.
+pub async fn get_para_id(conn: &mut Connection, chain_key: &ChainKey) -> Result<ParaId, ApiError> {
+    let cached = redis::cmd("GET")
+        .arg(CacheKey::ParaId(chain_key.clone()))
+        .query_async::<Option<ParaId>>(&mut *conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    let config = CONFIG.clone();
+    Ok(cached.unwrap_or(chain_key.para_id(&config).unwrap_or(0)))
+}
+
 /// Slot a parachain is in right now.
 pub async fn get_live_slot(
     conn: &mut Connection,
@@ -299,21 +307,16 @@ pub async fn get_live_slot(
 /// Slot each parachain is in right now, by parachain id.
 /// Note: the slot a parachain is in changes with every block, so it is not cached with the stats
 pub async fn get_live_slots(conn: &mut Connection) -> Result<BTreeMap<ParaId, LiveSlot>, ApiError> {
-    let config = CONFIG.clone();
     let mut live: BTreeMap<ParaId, LiveSlot> = BTreeMap::new();
-    for (chain_key, para_id) in [
-        (ChainKey::AH, config.asset_hub_para_id),
-        (ChainKey::PEOPLE, config.people_para_id),
-        (ChainKey::BULLETIN, config.bulletin_para_id),
-    ] {
+    for chain_key in [ChainKey::AH, ChainKey::PEOPLE, ChainKey::BULLETIN] {
         let slot = redis::cmd("GET")
-            .arg(CacheKey::CollatorLiveSlot(chain_key))
+            .arg(CacheKey::CollatorLiveSlot(chain_key.clone()))
             .query_async::<Option<String>>(&mut *conn)
             .await
             .map_err(CacheError::RedisCMDError)?
             .and_then(|s| serde_json::from_str::<LiveSlot>(&s).ok());
         if let Some(slot) = slot {
-            live.insert(para_id, slot);
+            live.insert(get_para_id(conn, &chain_key).await?, slot);
         }
     }
     Ok(live)
