@@ -1002,9 +1002,12 @@ pub struct CollatorResult {
     pub cix: Option<u32>,
     #[serde(flatten)]
     pub summary: CollatorSummary,
+    // last block ever produced by the collator, not set if none was recorded
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lab: Option<BlockNumber>,
     // produced block numbers, only if requested
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pbn: Option<Vec<BlockNumber>>,
+    pub ab: Option<Vec<BlockNumber>>,
     // missed slot numbers, only if requested (empty if none was missed)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub msl: Option<Vec<Slot>>,
@@ -1018,6 +1021,18 @@ pub struct CollatorSlotResult {
     // session of the parachain the slot belongs to
     pub session: EpochIndex,
     pub slot: LiveSlot,
+}
+
+/// A single collator of a parachain session
+#[derive(Debug, Serialize)]
+pub struct CollatorByStashResult {
+    pub chain_key: String,
+    pub para_id: ParaId,
+    pub session: EpochIndex,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slot: Option<LiveSlot>,
+    #[serde(flatten)]
+    pub collator: CollatorResult,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -1073,7 +1088,8 @@ impl CollatorsResult {
                 address: r.address().clone(),
                 cix: r.cix(),
                 summary: r.summary(),
-                pbn: show_block_numbers.then(|| r.produced_block_numbers().to_vec()),
+                lab: None,
+                ab: show_block_numbers.then(|| r.produced_block_numbers().to_vec()),
                 msl: show_missed_slots.then(|| r.missed_slots().to_vec()),
             })
             .collect();
@@ -1413,9 +1429,9 @@ mod collator_tests {
             )
         };
         let off = serde_json::to_string(&new(vec![r.clone()], false, false)).unwrap();
-        assert!(!off.contains("pbn") && !off.contains("msl"));
+        assert!(!off.contains("\"ab\"") && !off.contains("msl"));
         let on = serde_json::to_string(&new(vec![r], true, true)).unwrap();
-        assert!(on.contains(r#""pbn":[1,2]"#) && on.contains(r#""msl":[]"#));
+        assert!(on.contains(r#""ab":[1,2]"#) && on.contains(r#""msl":[]"#));
     }
 
     #[test]

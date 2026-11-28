@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::collators::cache_last_authored_block;
 use crate::error::CacheError;
 use crate::limits::build_limits_from_session;
 use crate::types::{CacheKey, ChainKey, Index, Trait, Verbosity};
@@ -79,8 +80,9 @@ async fn process_authority_records(
         return Ok(());
     };
 
+    let mut last_authored: Vec<(String, BlockNumber)> = Vec::new();
     for authority_idx in authorities {
-        process_authority(
+        if let Some(authored) = process_authority(
             cache,
             config,
             records,
@@ -88,7 +90,21 @@ async fn process_authority_records(
             parachains,
             authority_idx,
         )
-        .await?;
+        .await?
+        {
+            last_authored.push(authored);
+        }
+    }
+
+    // Note: the last block authored by a validator is kept beyond the session records
+    if !last_authored.is_empty() {
+        let mut pipe = redis::pipe();
+        for (address, block_number) in last_authored {
+            cache_last_authored_block(&mut pipe, &ChainKey::RC, &address, block_number);
+        }
+        pipe.query_async::<()>(cache)
+            .await
+            .map_err(CacheError::RedisCMDError)?;
     }
 
     Ok(())
@@ -101,9 +117,9 @@ async fn process_authority(
     session_stats: &mut SessionStats,
     parachains: &mut BTreeMap<ParaId, ParachainRecord>,
     authority_idx: AuthorityIndex,
-) -> Result<(), CacheError> {
+) -> Result<Option<(String, BlockNumber)>, CacheError> {
     let Some(authority_record) = records.get_authority_record(authority_idx, None) else {
-        return Ok(());
+        return Ok(None);
     };
 
     update_session_stats_with_authority_record_data(session_stats, authority_record);
@@ -132,7 +148,10 @@ async fn process_authority(
 
     cache_authority_data(cache, config, &authority_key, &data).await?;
 
-    Ok(())
+    Ok(authority_record
+        .address()
+        .zip(authority_record.authored_blocks().into_iter().max())
+        .map(|(address, block_number)| (address.to_string(), block_number)))
 }
 
 fn update_session_stats_with_authority_record_data(

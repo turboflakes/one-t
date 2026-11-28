@@ -1521,6 +1521,9 @@ pub struct AuthorityRecord {
     old_points: Points,
     #[serde(rename = "ab")]
     authored_blocks: Vec<BlockNumber>,
+    // last block ever authored, it is not part of the records but set when served
+    #[serde(rename = "lab", default, skip_serializing_if = "Option::is_none")]
+    last_authored_block: Option<BlockNumber>,
     #[serde(default)]
     #[serde(skip_serializing)]
     is_flagged: bool,
@@ -1546,6 +1549,10 @@ impl AuthorityRecord {
 
     pub fn authority_index(&self) -> Option<AuthorityIndex> {
         self.index
+    }
+
+    pub fn set_last_authored_block(&mut self, block_number: Option<BlockNumber>) {
+        self.last_authored_block = block_number;
     }
 
     pub fn address(&self) -> Option<&AccountId32> {

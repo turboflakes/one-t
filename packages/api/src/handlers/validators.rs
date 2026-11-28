@@ -39,7 +39,7 @@ use log::{debug, warn};
 use onet_cache::{
     error::CacheError,
     provider::{get_conn, RedisPool},
-    types::{CacheKey, Index, Verbosity},
+    types::{CacheKey, ChainKey, Index, Verbosity},
 };
 use onet_config::CONFIG;
 use onet_dn::dn::try_fetch_stashes_from_remote_url;
@@ -47,7 +47,8 @@ use onet_pools::{PoolId, PoolNominees};
 use onet_records::{
     collation_grade,
     collators::{CollationIndex, CollatorSummary},
-    grade, BitfieldsRecord, DiscoveryRecord, EpochIndex, Grade, Subset, ValidatorProfileRecord,
+    grade, BitfieldsRecord, BlockNumber, DiscoveryRecord, EpochIndex, Grade, Subset,
+    ValidatorProfileRecord,
 };
 use redis::aio::MultiplexedConnection as Connection;
 use serde::{de::Deserializer, Deserialize};
@@ -662,6 +663,7 @@ pub async fn get_validators(
     let mut conn = get_conn(&cache).await?;
     // Note: attached here so cached queries, like the ranking, do not keep the slot
     attach_collation_live(&mut conn as &mut Connection, &mut result.data).await?;
+    attach_last_authored_block(&mut conn as &mut Connection, &mut result.data).await?;
     if show_preds {
         attach_validators_predictions(&mut conn as &mut Connection, &mut result.data).await?;
     }
@@ -1172,6 +1174,38 @@ async fn get_validators_by_params(
     respond_json(res)
 }
 
+/// Set the last block ever authored by each validator on the relay chain.
+pub async fn attach_last_authored_block(
+    conn: &mut Connection,
+    validators: &mut [ValidatorResult],
+) -> Result<(), ApiError> {
+    let addresses: Vec<String> = validators
+        .iter()
+        .filter(|v| !v.address.is_empty())
+        .map(|v| v.address.clone())
+        .collect();
+    if addresses.is_empty() {
+        return Ok(());
+    }
+    let last: Vec<Option<BlockNumber>> = redis::cmd("HMGET")
+        .arg(CacheKey::LastAuthoredBlock(ChainKey::RC))
+        .arg(&addresses)
+        .query_async(&mut *conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    let last: BTreeMap<&String, BlockNumber> = addresses
+        .iter()
+        .zip(last)
+        .filter_map(|(address, block)| block.map(|b| (address, b)))
+        .collect();
+    for validator in validators.iter_mut() {
+        validator
+            .auth
+            .set_last_authored_block(last.get(&validator.address).copied());
+    }
+    Ok(())
+}
+
 /// Get a validator by stash
 pub async fn get_validator_by_stash(
     stash: Path<String>,
@@ -1217,6 +1251,11 @@ pub async fn get_validator_by_stash(
     .await?;
 
     attach_collation_live(
+        &mut conn as &mut Connection,
+        std::slice::from_mut(&mut data),
+    )
+    .await?;
+    attach_last_authored_block(
         &mut conn as &mut Connection,
         std::slice::from_mut(&mut data),
     )

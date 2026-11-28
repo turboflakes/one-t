@@ -214,6 +214,12 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                 .do_send(server::Subscribe { id: self.id, topic });
                         }
                     }
+                    Methods::SubscribeCollator => {
+                        for topic in collator_topics(&req.params) {
+                            self.server_addr
+                                .do_send(server::Subscribe { id: self.id, topic });
+                        }
+                    }
                     Methods::UnsubscribeBlock => {
                         if let Some(topic) = block_topic(&req.params) {
                             self.server_addr
@@ -280,6 +286,12 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                 .do_send(server::Unsubscribe { id: self.id, topic });
                         }
                     }
+                    Methods::UnsubscribeCollator => {
+                        for topic in collator_topics(&req.params) {
+                            self.server_addr
+                                .do_send(server::Unsubscribe { id: self.id, topic });
+                        }
+                    }
                     _ => warn!("Not Implemented: {:?}", req),
                 }
             }
@@ -310,6 +322,28 @@ fn collators_topics(params: &[String]) -> Vec<Topic> {
         .map(|c| match slot {
             true => Topic::CollatorSlot(c),
             false => Topic::Collators(c, kind),
+        })
+        .collect()
+}
+
+/// Topics of a collator by stash from the params `[chain_key, ..., stash, ...]`, where chain_key is `ah`, `pp`
+/// or `bu`. There is a topic for each chain and stash given.
+fn collator_topics(params: &[String]) -> Vec<Topic> {
+    let chains: Vec<ChainKey> = params
+        .iter()
+        .filter_map(|p| ChainKey::from_str(p).ok())
+        .filter(|c| matches!(c, ChainKey::AH | ChainKey::PEOPLE | ChainKey::BULLETIN))
+        .collect();
+    let stashes: Vec<&String> = params
+        .iter()
+        .filter(|p| AccountId32::from_str(p).is_ok())
+        .collect();
+    chains
+        .iter()
+        .flat_map(|c| {
+            stashes
+                .iter()
+                .map(move |s| Topic::Collator(c.clone(), s.to_string()))
         })
         .collect()
 }
@@ -362,6 +396,29 @@ mod tests {
 
     fn params(p: &[&str]) -> Vec<String> {
         p.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn collator_topics_are_by_chain_and_stash() {
+        let stash = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+        let topics = |p: &[&str]| -> Vec<String> {
+            collator_topics(&params(p))
+                .iter()
+                .map(|t| t.to_string())
+                .collect()
+        };
+        assert_eq!(topics(&["pp", stash]), [format!("collator:pp:{stash}")]);
+        assert_eq!(
+            topics(&["ah", "bu", stash]),
+            [
+                format!("collator:ah:{stash}"),
+                format!("collator:bu:{stash}")
+            ]
+        );
+        // a chain and a valid stash are both needed
+        assert!(topics(&[stash]).is_empty());
+        assert!(topics(&["pp", "not-a-stash"]).is_empty());
+        assert!(topics(&["rc", stash]).is_empty());
     }
 
     #[test]

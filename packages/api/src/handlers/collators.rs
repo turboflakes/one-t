@@ -22,9 +22,9 @@
 use crate::error::ApiError;
 use crate::{
     helpers::respond_json,
-    responses::{CollatorsResult, ValidatorResult},
+    responses::{CollatorByStashResult, CollatorsResult, ValidatorResult},
 };
-use actix_web::web::{Data, Json, Query};
+use actix_web::web::{Data, Json, Path, Query};
 use log::warn;
 use onet_cache::{
     error::CacheError,
@@ -34,11 +34,12 @@ use onet_cache::{
 use onet_config::CONFIG;
 use onet_records::{
     collators::{CollatorKind, CollatorRecord, CollatorSessionStats, LiveSlot},
-    EpochIndex, ParaId,
+    BlockNumber, EpochIndex, ParaId,
 };
 use redis::aio::MultiplexedConnection as Connection;
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, str::FromStr};
+use subxt::utils::AccountId32;
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 pub struct Params {
@@ -52,7 +53,7 @@ pub struct Params {
     // Note: `show_stats` is deprecated, use `stats`
     #[serde(default, alias = "show_stats")]
     stats: bool,
-    // block_numbers indicates whether the produced block numbers (pbn) of each collator should be retrieved or not, default false
+    // block_numbers indicates whether the produced block numbers (ab) of each collator should be retrieved or not, default false
     // Note: `show_block_numbers` is deprecated, use `block_numbers`
     #[serde(default, alias = "show_block_numbers")]
     block_numbers: bool,
@@ -118,6 +119,70 @@ pub async fn get_collators(
     respond_json(result)
 }
 
+/// Get a collator of a parachain session by stash
+pub async fn get_collator_by_stash(
+    stash: Path<String>,
+    params: Query<Params>,
+    cache: Data<RedisPool>,
+) -> Result<Json<CollatorByStashResult>, ApiError> {
+    if params.chain_key == ChainKey::RC {
+        let msg =
+            "Parameter chain_key must be equal to one of the options: [ah, pp, bu]".to_string();
+        warn!("{}", msg);
+        return Err(ApiError::BadRequest(msg));
+    }
+    let stash = stash.into_inner();
+    let account = AccountId32::from_str(&stash)
+        .map_err(|e| ApiError::BadRequest(format!("Invalid account: {stash:?} error: {e:?}")))?;
+
+    let mut conn = get_conn(&cache).await?;
+    let result = get_collators_result(
+        &mut conn as &mut Connection,
+        &params.chain_key,
+        &params.session,
+        params.stats,
+        params.block_numbers,
+        params.missed_slots,
+        params.slot,
+    )
+    .await?;
+
+    respond_json(find_collator(result, &account, &stash)?)
+}
+
+/// Pick a collator from the collators of a parachain session, not found if it is not one of them.
+pub fn find_collator(
+    result: CollatorsResult,
+    account: &AccountId32,
+    stash: &str,
+) -> Result<CollatorByStashResult, ApiError> {
+    let CollatorsResult {
+        chain_key,
+        para_id,
+        session,
+        slot,
+        data,
+        ..
+    } = result;
+    let collator = data
+        .unwrap_or_default()
+        .into_iter()
+        .find(|c| AccountId32::from_str(&c.address).is_ok_and(|a| a == *account))
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "Collator {stash} not found in {} session {}",
+                chain_key, session
+            ))
+        })?;
+    Ok(CollatorByStashResult {
+        chain_key,
+        para_id,
+        session,
+        slot,
+        collator,
+    })
+}
+
 /// Get the collators of a parachain session, the current one if `session` is current
 pub async fn get_collators_result(
     conn: &mut Connection,
@@ -164,10 +229,7 @@ pub async fn get_collators_result(
         }
     }
 
-    let config = CONFIG.clone();
-    let para_id = chain_key
-        .para_id(&config)
-        .unwrap_or(config.asset_hub_para_id);
+    let para_id = get_para_id(conn, chain_key).await?;
 
     // Note: session stats are only retrieved when requested
     let stats: CollatorSessionStats = if show_stats {
@@ -195,6 +257,16 @@ pub async fn get_collators_result(
         show_missed_slots,
     );
 
+    // Note: the last block authored is not bound to the session
+    let last_produced: BTreeMap<String, BlockNumber> = redis::cmd("HGETALL")
+        .arg(CacheKey::LastAuthoredBlock(chain_key.clone()))
+        .query_async(&mut *conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    for collator in result.data.iter_mut().flatten() {
+        collator.lab = last_produced.get(&collator.address).copied();
+    }
+
     // Note: the slot the parachain is in only makes sense for its current session
     if show_slot && current_session == Some(session_index) {
         result.slot = redis::cmd("GET")
@@ -206,6 +278,17 @@ pub async fn get_collators_result(
     }
 
     Ok(result)
+}
+
+/// Parachain id of a chain as followed by the indexer, the configured one if it is not cached yet.
+pub async fn get_para_id(conn: &mut Connection, chain_key: &ChainKey) -> Result<ParaId, ApiError> {
+    let cached = redis::cmd("GET")
+        .arg(CacheKey::ParaId(chain_key.clone()))
+        .query_async::<Option<ParaId>>(&mut *conn)
+        .await
+        .map_err(CacheError::RedisCMDError)?;
+    let config = CONFIG.clone();
+    Ok(cached.unwrap_or(chain_key.para_id(&config).unwrap_or(0)))
 }
 
 /// Slot a parachain is in right now.
@@ -224,21 +307,16 @@ pub async fn get_live_slot(
 /// Slot each parachain is in right now, by parachain id.
 /// Note: the slot a parachain is in changes with every block, so it is not cached with the stats
 pub async fn get_live_slots(conn: &mut Connection) -> Result<BTreeMap<ParaId, LiveSlot>, ApiError> {
-    let config = CONFIG.clone();
     let mut live: BTreeMap<ParaId, LiveSlot> = BTreeMap::new();
-    for (chain_key, para_id) in [
-        (ChainKey::AH, config.asset_hub_para_id),
-        (ChainKey::PEOPLE, config.people_para_id),
-        (ChainKey::BULLETIN, config.bulletin_para_id),
-    ] {
+    for chain_key in [ChainKey::AH, ChainKey::PEOPLE, ChainKey::BULLETIN] {
         let slot = redis::cmd("GET")
-            .arg(CacheKey::CollatorLiveSlot(chain_key))
+            .arg(CacheKey::CollatorLiveSlot(chain_key.clone()))
             .query_async::<Option<String>>(&mut *conn)
             .await
             .map_err(CacheError::RedisCMDError)?
             .and_then(|s| serde_json::from_str::<LiveSlot>(&s).ok());
         if let Some(slot) = slot {
-            live.insert(para_id, slot);
+            live.insert(get_para_id(conn, &chain_key).await?, slot);
         }
     }
     Ok(live)

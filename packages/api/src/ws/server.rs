@@ -47,6 +47,7 @@ pub enum Methods {
     SubscribeParaAuthoritiesSummary,
     SubscribeParachains,
     SubscribeCollators,
+    SubscribeCollator,
     UnsubscribeBlock,
     UnsubscribeSession,
     UnsubscribeValidator,
@@ -54,6 +55,7 @@ pub enum Methods {
     UnsubscribeParaAuthoritiesSummary,
     UnsubscribeParachains,
     UnsubscribeCollators,
+    UnsubscribeCollator,
     #[default]
     NotSupported,
 }
